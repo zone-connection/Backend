@@ -7,10 +7,10 @@
   "scripts": {
     "build": "prisma generate && nest build",
     "format": "prettier --write \"src/**/*.ts\"",
-    "start": "prisma migrate deploy && node dist/src/main",
+    "start": "prisma migrate deploy || prisma migrate resolve --rolled-back 20260905210000_empreendimento_match_resumo; prisma migrate deploy; node dist/src/main",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "prisma migrate deploy && node dist/src/main",
+    "start:prod": "prisma migrate deploy || prisma migrate resolve --rolled-back 20260905210000_empreendimento_match_resumo; prisma migrate deploy; node dist/src/main",
     "lint": "eslint \"{src,test}/**/*.ts\" --fix",
     "test": "node -r ts-node/register --test src/meta/meta-webhook.parser.spec.ts src/meta/meta-signature.spec.ts src/meta/meta.service.spec.ts src/meta/meta-token.crypto.spec.ts src/meta/meta-oauth.util.spec.ts src/meta/meta-oauth.service.spec.ts src/common/utils/user-permissions.spec.ts src/common/utils/last-cookie.util.spec.ts src/common/guards/roles.guard.spec.ts src/catalog/catalog.defaults.spec.ts src/funis/funil-ativo.util.spec.ts src/funis/funil-resolver.service.spec.ts src/equipes/equipe-funis.service.spec.ts src/tenants/tenant-operation.util.spec.ts src/tenants/tenant-plan.spec.ts src/captacao/captacao.util.spec.ts src/captacao/captacao.service.spec.ts src/imoveis-usados/venda-usado.matching.spec.ts src/imoveis-usados/imoveis-usados.service.spec.ts src/imoveis-usados/venda-usado-fluxo.service.spec.ts src/imoveis-usados/venda-usado-fechamento.service.spec.ts src/imoveis-usados/imovel-chave.service.spec.ts src/imoveis-usados/venda-usado-pos-venda.service.spec.ts src/portal-proprietario/portal-proprietario-auth.service.spec.ts src/portal-proprietario/portal-proprietario-imoveis.service.spec.ts",
     "prisma:generate": "prisma generate",
