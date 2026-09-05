@@ -1,7 +1,8 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsDateString,
   IsEmail,
   IsIn,
   IsInt,
@@ -13,8 +14,10 @@ import {
   Min,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { LEAD_INTERESSES, LEAD_PRIORIDADES } from '../lead.constants';
+import { LeadProspeccaoDto } from './lead-prospeccao.dto';
 
 /** Atualização de lead: todos os campos opcionais. */
 export class UpdateLeadDto {
@@ -67,17 +70,25 @@ export class UpdateLeadDto {
   @IsIn(LEAD_PRIORIDADES, { message: 'Prioridade inválida.' })
   prioridade?: string;
 
-  /** Renda mensal do cliente (opcional). null limpa o valor. */
+  /** Renda mensal do cliente (opcional). null limpa o valor. Aceita centavos e arredonda. */
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined)
   @Transform(({ value }) => {
     if (value === undefined) return undefined;
     if (value === null || value === '') return null;
-    return Number(value);
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.round(n) : value;
   })
   @IsInt({ message: 'Renda inválida.' })
   @Min(0, { message: 'Renda não pode ser negativa.' })
   renda?: number | null;
+
+  /** Tipo de renda do cliente (opcional). null limpa o valor. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @MaxLength(60)
+  tipoRenda?: string | null;
 
   /** Estado civil do cliente (opcional). null limpa o valor. */
   @IsOptional()
@@ -86,6 +97,35 @@ export class UpdateLeadDto {
   @MaxLength(40)
   estadoCivil?: string | null;
 
+  /** Orçamento máximo para imóvel (opcional). null limpa o valor. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Transform(({ value }) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.round(n) : value;
+  })
+  @IsInt({ message: 'Orçamento inválido.' })
+  @Min(0, { message: 'Orçamento não pode ser negativo.' })
+  orcamentoMax?: number | null;
+
+  /** Mínimo de quartos desejado (opcional). null limpa o valor. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Type(() => Number)
+  @IsInt({ message: 'Quartos mínimos inválidos.' })
+  @Min(0)
+  quartosMin?: number | null;
+
+  /** Mínimo de vagas desejado (opcional). null limpa o valor. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Type(() => Number)
+  @IsInt({ message: 'Vagas mínimas inválidas.' })
+  @Min(0)
+  vagasMin?: number | null;
+
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(20)
@@ -93,15 +133,27 @@ export class UpdateLeadDto {
   @MaxLength(40, { each: true })
   tags?: string[];
 
-  /** Reatribuição de corretor — permitida apenas para admin/gerente (regra no service). */
+  /**
+   * Corretor dono. null = pool da equipe (se equipeId) ou sem vínculo.
+   * Corretor autenticado não pode alterar (forçado no service).
+   */
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID('4', { message: 'Corretor inválido.' })
   corretorId?: string | null;
 
-  /** Pool da equipe / gerente. null limpa. */
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID('4', { message: 'Equipe inválida.' })
   equipeId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsDateString({}, { message: 'Data de cadastro inválida.' })
+  createdAt?: string | null;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LeadProspeccaoDto)
+  prospeccao?: LeadProspeccaoDto | null;
 }

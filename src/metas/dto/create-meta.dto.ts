@@ -1,7 +1,14 @@
 import { IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
 
 export const META_TIPOS = ['vendas', 'documentacoes', 'vgv'] as const;
-export const META_PERIODOS = ['diaria', 'semanal', 'mensal'] as const;
+export const META_PERIODOS = [
+  'diaria',
+  'semanal',
+  'mensal',
+  'trimestral',
+  'semestral',
+  'anual',
+] as const;
 export const META_ESCOPOS = ['corretor', 'gerente', 'imobiliaria'] as const;
 
 export class CreateMetaDto {

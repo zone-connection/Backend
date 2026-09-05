@@ -82,6 +82,18 @@ export function validateEnv(config: Record<string, unknown>) {
     }
   }
 
+  const cloudinaryName = String(config.CLOUDINARY_CLOUD_NAME ?? '').trim();
+  const cloudinaryKey = String(config.CLOUDINARY_API_KEY ?? '').trim();
+  const cloudinarySecret = String(config.CLOUDINARY_API_SECRET ?? '').trim();
+  const cloudinaryPartial =
+    Boolean(cloudinaryName || cloudinaryKey || cloudinarySecret) &&
+    !(cloudinaryName && cloudinaryKey && cloudinarySecret);
+  if (cloudinaryPartial) {
+    errors.push(
+      'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY e CLOUDINARY_API_SECRET devem ser definidos juntos.',
+    );
+  }
+
   if (isProd && !config.FRONTEND_URL) {
     errors.push('FRONTEND_URL é obrigatório em produção (define o CORS).');
   }

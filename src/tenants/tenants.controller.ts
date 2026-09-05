@@ -21,6 +21,10 @@ import { CreateMetaConnectionDto } from './dto/create-meta-connection.dto';
 import { UpdateMetaConnectionDto } from './dto/update-meta-connection.dto';
 import { CreateOzapConnectionDto } from './dto/create-ozap-connection.dto';
 import { UpdateOzapConnectionDto } from './dto/update-ozap-connection.dto';
+import { UpdateTenantAdminDto } from './dto/update-tenant-admin.dto';
+import { PopulateDemoDataDto } from './dto/populate-demo-data.dto';
+import { UpsertOruloConnectionDto } from '../orulo/dto/upsert-orulo-connection.dto';
+import { OruloService } from '../orulo/orulo.service';
 
 /**
  * Administração de tenants (imobiliárias) da plataforma.
@@ -30,7 +34,10 @@ import { UpdateOzapConnectionDto } from './dto/update-ozap-connection.dto';
 @UseGuards(RolesGuard)
 @Roles(Role.super_admin)
 export class TenantsController {
-  constructor(private readonly tenantsService: TenantsService) {}
+  constructor(
+    private readonly tenantsService: TenantsService,
+    private readonly oruloService: OruloService,
+  ) {}
 
   @Get()
   findAll() {
@@ -40,6 +47,15 @@ export class TenantsController {
   @Post()
   create(@Body() dto: CreateTenantDto) {
     return this.tenantsService.create(dto);
+  }
+
+  /** Popula o tenant com dados fictícios variados (demonstração). */
+  @Post(':id/demo-data')
+  populateDemoData(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: PopulateDemoDataDto = {},
+  ) {
+    return this.tenantsService.populateDemoData(id, dto ?? {});
   }
 
   @Get(':id')
@@ -66,6 +82,14 @@ export class TenantsController {
   @Post(':id/admin/reset-password')
   resetAdminPassword(@Param('id', ParseUUIDPipe) id: string) {
     return this.tenantsService.resetAdminPassword(id);
+  }
+
+  @Patch(':id/admin')
+  updateAdmin(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateTenantAdminDto,
+  ) {
+    return this.tenantsService.updateAdmin(id, dto);
   }
 
   @Patch(':id')
@@ -149,5 +173,31 @@ export class TenantsController {
     @Param('connectionId', ParseUUIDPipe) connectionId: string,
   ) {
     return this.tenantsService.removeOzapConnection(tenantId, connectionId);
+  }
+
+  @Get(':id/orulo-connection')
+  getOruloConnection(@Param('id', ParseUUIDPipe) id: string) {
+    return this.oruloService.statusForTenant(id);
+  }
+
+  @Post(':id/orulo-connection')
+  upsertOruloConnection(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpsertOruloConnectionDto,
+  ) {
+    return this.oruloService.upsertForTenant(id, dto);
+  }
+
+  @Patch(':id/orulo-connection')
+  toggleOruloConnection(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: { ativo: boolean },
+  ) {
+    return this.oruloService.setAtivo(id, dto.ativo);
+  }
+
+  @Delete(':id/orulo-connection')
+  removeOruloConnection(@Param('id', ParseUUIDPipe) id: string) {
+    return this.oruloService.disconnectForTenant(id);
   }
 }

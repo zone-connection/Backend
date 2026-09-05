@@ -5,12 +5,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, Role, UserStatus, ContatoTipo } from '@prisma/client';
+import { Prisma, Role, UserStatus, ContatoTipo, FunilTipo } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import { isCorretorLike } from '../common/utils/roles';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEquipeDto } from './dto/create-equipe.dto';
 import { UpdateEquipeDto } from './dto/update-equipe.dto';
+import { EquipeFunisService } from './equipe-funis.service';
 
 const equipeSelect = {
   id: true,
@@ -32,19 +34,38 @@ const equipeSelect = {
     },
     orderBy: { name: 'asc' as const },
   },
+  funis: {
+    select: {
+      tipo: true,
+      funil: { select: { id: true, name: true, tipo: true, ativo: true } },
+    },
+  },
 } satisfies Prisma.EquipeSelect;
 
 @Injectable()
 export class EquipesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly equipeFunis: EquipeFunisService,
+  ) {}
+
+  private withFunis<
+    T extends {
+      funis?: Array<{
+        tipo: FunilTipo;
+        funil: { id: string; name: string; tipo: FunilTipo; ativo: boolean };
+      }>;
+    },
+  >(equipe: T) {
+    const { funis, ...rest } = equipe;
+    return { ...rest, funis: this.equipeFunis.mapFromRows(funis ?? []) };
+  }
 
   async list(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
 
-    const where: Prisma.EquipeWhereInput =
-      requester.role === Role.admin
-        ? { tenantId }
-        : { tenantId, gerenteId: requester.id };
+    // Admin e gerente listam todas as equipes (gerente precisa delas para distribuir).
+    const where: Prisma.EquipeWhereInput = { tenantId };
 
     const equipes = await this.prisma.equipe.findMany({
       where,
@@ -82,7 +103,7 @@ export class EquipesService {
             },
           }),
         ]);
-        return { ...eq, leadsCount, leadsPool };
+        return { ...this.withFunis(eq), leadsCount, leadsPool };
       }),
     );
 
@@ -98,15 +119,7 @@ export class EquipesService {
     if (!equipe) {
       throw new NotFoundException('Equipe não encontrada.');
     }
-    if (
-      requester.role === Role.gerente &&
-      equipe.gerenteId !== requester.id
-    ) {
-      throw new ForbiddenException(
-        'Você só pode visualizar a equipe que lidera.',
-      );
-    }
-    return equipe;
+    return this.withFunis(equipe);
   }
 
   /** Gerentes ativos ainda sem equipe. */
@@ -141,7 +154,7 @@ export class EquipesService {
     return this.prisma.user.findMany({
       where: {
         tenantId,
-        role: Role.corretor,
+        role: { in: [Role.corretor, Role.treinee] },
         status: UserStatus.ativo,
         OR: [
           { equipeId: null },
@@ -165,7 +178,7 @@ export class EquipesService {
     const membroIds = [...new Set(dto.membroIds ?? [])];
     await this.ensureCorretoresEligible(tenantId, membroIds);
 
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       const equipe = await tx.equipe.create({
         data: {
           tenantId,
@@ -187,6 +200,7 @@ export class EquipesService {
         select: equipeSelect,
       });
     });
+    return this.withFunis(created);
   }
 
   async update(id: string, dto: UpdateEquipeDto, requester: AuthenticatedUser) {
@@ -211,7 +225,7 @@ export class EquipesService {
       await this.ensureCorretoresEligible(tenantId, membroIds, id);
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       await tx.equipe.update({
         where: { id },
         data: {
@@ -247,6 +261,7 @@ export class EquipesService {
         select: equipeSelect,
       });
     });
+    return this.withFunis(updated);
   }
 
   async remove(id: string, requester: AuthenticatedUser) {
@@ -326,9 +341,9 @@ export class EquipesService {
     }
 
     for (const u of users) {
-      if (u.role !== Role.corretor) {
+      if (!isCorretorLike(u.role)) {
         throw new BadRequestException(
-          `"${u.name}" não é corretor e não pode entrar na equipe.`,
+          `"${u.name}" não é corretor/treinee e não pode entrar na equipe.`,
         );
       }
       if (u.status !== UserStatus.ativo) {

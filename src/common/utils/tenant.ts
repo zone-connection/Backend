@@ -13,8 +13,21 @@ export const DEFAULT_TENANT_SLUG = 'new-palace';
 export const PLATFORM_TENANT_ID = '00000000-0000-4000-8000-000000000000';
 export const PLATFORM_TENANT_SLUG = 'zone-connection-platform';
 
-/** Exige tenantId no JWT (usuários de imobiliária). */
+export function isPlatformAdmin(user: AuthenticatedUser): boolean {
+  return String(user.role) === Role.super_admin;
+}
+
+/** Admin da imobiliária ou super_admin da plataforma (leads perdidos do próprio tenant). */
+export function canViewLostLeads(user: AuthenticatedUser): boolean {
+  const role = String(user.role);
+  return role === Role.admin || role === Role.super_admin;
+}
+
+/** Exige tenantId no JWT (usuários de imobiliária). Super admin usa o tenant da plataforma. */
 export function requireTenantId(user: AuthenticatedUser): string {
+  if (isPlatformAdmin(user)) {
+    return PLATFORM_TENANT_ID;
+  }
   if (!user.tenantId) {
     throw new ForbiddenException(
       'Esta operação requer um usuário vinculado a um tenant.',
@@ -28,12 +41,8 @@ export function requireTenantId(user: AuthenticatedUser): string {
  * super_admin opera o livro da plataforma.
  */
 export function resolveFinanceiroTenantId(user: AuthenticatedUser): string {
-  if (user.role === Role.super_admin) {
+  if (isPlatformAdmin(user)) {
     return PLATFORM_TENANT_ID;
   }
   return requireTenantId(user);
-}
-
-export function isPlatformAdmin(user: AuthenticatedUser): boolean {
-  return user.role === Role.super_admin;
 }

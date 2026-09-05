@@ -3,11 +3,12 @@ import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import { isCorretorLike } from '../common/utils/roles';
 
 /**
  * Escopo de dados por equipe, sempre aninhado ao tenant do requester:
  * - admin / analista → todos do tenant
- * - gerente → só corretores da equipe que lidera
+ * - gerente → equipe própria + carteira própria (+ pool do admin, se includeAdminPool)
  * - corretor → só o próprio
  */
 @Injectable()
@@ -20,47 +21,64 @@ export class TeamScopeService {
   ): Promise<string[] | null> {
     const tenantId = requireTenantId(requester);
 
-    if (requester.role === Role.admin || requester.role === Role.analista) {
+    if (
+      requester.role === Role.admin ||
+      requester.role === Role.super_admin ||
+      requester.role === Role.analista
+    ) {
       return null;
     }
 
-    if (requester.role === Role.corretor) {
+    if (isCorretorLike(requester.role)) {
       return [requester.id];
     }
 
-    // gerente
-    const equipe = await this.prisma.equipe.findFirst({
+    // gerente → corretores de todas as equipes + o próprio (carteira/vendas)
+    const equipes = await this.prisma.equipe.findMany({
       where: { gerenteId: requester.id, tenantId },
       select: {
         membros: {
-          where: { role: Role.corretor, tenantId },
+          where: { role: { in: [Role.corretor, Role.treinee] }, tenantId },
           select: { id: true },
         },
       },
     });
 
-    return equipe?.membros.map((m) => m.id) ?? [];
+    const membroIds = equipes.flatMap((e) => e.membros.map((m) => m.id));
+    return [...new Set([requester.id, ...membroIds])];
   }
 
-  /** Filtro Prisma para leads/documentação baseado na equipe + tenant. */
+  /**
+   * Filtro Prisma para leads/documentação baseado na equipe + tenant.
+   * `includeAdminPool` (padrão true) inclui leads sem dono na lista operacional
+   * do gerente (distribuição). No monitoramento de atraso isso fica desligado:
+   * gerente vê só a carteira própria e a da equipe.
+   */
   async leadScope(
     requester: AuthenticatedUser,
+    options?: { includeAdminPool?: boolean },
   ): Promise<Prisma.LeadWhereInput> {
     const tenantId = requireTenantId(requester);
     const ids = await this.getVisibleCorretorIds(requester);
     if (ids === null) return { tenantId };
 
     if (requester.role === Role.gerente) {
-      const equipe = await this.prisma.equipe.findFirst({
+      const equipes = await this.prisma.equipe.findMany({
         where: { gerenteId: requester.id, tenantId },
         select: { id: true },
       });
+      const includeAdminPool = options?.includeAdminPool ?? true;
       return {
         tenantId,
         OR: [
           { corretorId: { in: ids } },
-          ...(equipe
-            ? [{ equipeId: equipe.id, corretorId: null as null }]
+          // Pool das equipes do gerente.
+          ...equipes.map((equipe) => ({
+            equipeId: equipe.id,
+            corretorId: null as null,
+          })),
+          ...(includeAdminPool
+            ? [{ equipeId: null as null, corretorId: null as null }]
             : []),
         ],
       };
@@ -77,11 +95,16 @@ export class TeamScopeService {
   ): Promise<boolean> {
     requireTenantId(requester);
     if (!corretorId) {
-      if (requester.role === Role.admin || requester.role === Role.analista) {
+      if (
+        requester.role === Role.admin ||
+        requester.role === Role.super_admin ||
+        requester.role === Role.analista
+      ) {
         return true;
       }
-      // Gerente vê pool da própria equipe (sem corretor ainda).
-      if (requester.role === Role.gerente && equipeId) {
+      // Gerente: pool do admin (sem equipe) ou pool da própria equipe.
+      if (requester.role === Role.gerente) {
+        if (!equipeId) return true;
         const equipe = await this.prisma.equipe.findFirst({
           where: {
             id: equipeId,
@@ -93,6 +116,15 @@ export class TeamScopeService {
         return Boolean(equipe);
       }
       return false;
+    }
+    // Admin/gerente acessam a própria carteira.
+    if (
+      (requester.role === Role.admin ||
+        requester.role === Role.super_admin ||
+        requester.role === Role.gerente) &&
+      corretorId === requester.id
+    ) {
+      return true;
     }
     const ids = await this.getVisibleCorretorIds(requester);
     if (ids === null) return true;

@@ -1,7 +1,8 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsDateString,
   IsEmail,
   IsIn,
   IsInt,
@@ -13,8 +14,10 @@ import {
   Min,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { LEAD_INTERESSES, LEAD_PRIORIDADES, CONTATO_TIPOS } from '../lead.constants';
+import { LeadProspeccaoDto } from './lead-prospeccao.dto';
 
 export class CreateLeadDto {
   /** lead (padrão) ou cliente da carteira pessoal. */
@@ -67,17 +70,25 @@ export class CreateLeadDto {
   @IsIn(LEAD_PRIORIDADES, { message: 'Prioridade inválida.' })
   prioridade?: string;
 
-  /** Renda mensal do cliente (opcional). */
+  /** Renda mensal do cliente (opcional). Aceita centavos e arredonda para inteiro. */
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined)
   @Transform(({ value }) => {
     if (value === undefined) return undefined;
     if (value === null || value === '') return null;
-    return Number(value);
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.round(n) : value;
   })
   @IsInt({ message: 'Renda inválida.' })
   @Min(0, { message: 'Renda não pode ser negativa.' })
   renda?: number | null;
+
+  /** Tipo de renda do cliente (opcional). */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @MaxLength(60)
+  tipoRenda?: string | null;
 
   /** Estado civil do cliente (opcional). */
   @IsOptional()
@@ -85,6 +96,35 @@ export class CreateLeadDto {
   @IsString()
   @MaxLength(40)
   estadoCivil?: string | null;
+
+  /** Orçamento máximo para imóvel (opcional). */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Transform(({ value }) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.round(n) : value;
+  })
+  @IsInt({ message: 'Orçamento inválido.' })
+  @Min(0, { message: 'Orçamento não pode ser negativo.' })
+  orcamentoMax?: number | null;
+
+  /** Mínimo de quartos desejado (opcional). */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Type(() => Number)
+  @IsInt({ message: 'Quartos mínimos inválidos.' })
+  @Min(0)
+  quartosMin?: number | null;
+
+  /** Mínimo de vagas desejado (opcional). */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Type(() => Number)
+  @IsInt({ message: 'Vagas mínimas inválidas.' })
+  @Min(0)
+  vagasMin?: number | null;
 
   @IsOptional()
   @IsArray()
@@ -95,7 +135,8 @@ export class CreateLeadDto {
 
   /**
    * Corretor dono do lead. Ignorado para o perfil corretor (força o próprio id).
-   * Admin/gerente: opcional — sem corretor + com equipeId = pool da equipe.
+   * Admin/gerente: opcional — pode ficar sem corretor.
+   * Sem corretor + com equipeId = pool da equipe; ambos nulos = sem vínculo.
    */
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
@@ -103,11 +144,23 @@ export class CreateLeadDto {
   corretorId?: string | null;
 
   /**
-   * Equipe/gerente que recebe o lead (pool).
-   * Admin escolhe a equipe do gerente; gerente usa a própria.
+   * Equipe/gerente que recebe o lead (pool). Opcional.
+   * Admin escolhe a equipe do gerente; gerente pode omitir para deixar sem vínculo.
    */
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID('4', { message: 'Equipe inválida.' })
   equipeId?: string | null;
+
+  /** Data de cadastro retroativa (ISO). Se omitida, usa agora. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsDateString({}, { message: 'Data de cadastro inválida.' })
+  createdAt?: string | null;
+
+  /** Prospecção B2B (tenant da plataforma). */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LeadProspeccaoDto)
+  prospeccao?: LeadProspeccaoDto | null;
 }

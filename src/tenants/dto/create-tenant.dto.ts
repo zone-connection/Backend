@@ -1,6 +1,7 @@
 import {
   Allow,
   IsBoolean,
+  IsEnum,
   IsIn,
   IsInt,
   IsOptional,
@@ -51,8 +52,8 @@ export class CreateTenantDto {
   status?: UserStatus;
 
   @IsOptional()
-  @IsIn([TenantPlano.bronze, TenantPlano.prata, TenantPlano.ouro], {
-    message: 'Plano inválido. Use bronze, prata ou ouro.',
+  @IsEnum(TenantPlano, {
+    message: 'Plano inválido. Use solo, bronze, prata ou ouro.',
   })
   plano?: TenantPlano;
 
@@ -73,6 +74,10 @@ export class CreateTenantDto {
   @IsOptional()
   @IsBoolean()
   iaBotEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isTest?: boolean;
 
   @IsOptional()
   @Transform(emptyToNull)

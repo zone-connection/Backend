@@ -1,5 +1,6 @@
 import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsInt,
   IsOptional,
@@ -11,10 +12,13 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+/** Campos Int em reais: aceita decimal (centavos) e arredonda. */
 function toOptionalInt({ value }: { value: unknown }) {
   if (value === undefined) return undefined;
   if (value === null || value === '') return null;
-  return Number(value);
+  const n = Number(value);
+  if (!Number.isFinite(n)) return value;
+  return Math.round(n);
 }
 
 export class UpdateDocumentacaoDto {
@@ -83,4 +87,36 @@ export class UpdateDocumentacaoDto {
   @IsString()
   @MaxLength(2000)
   obs?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  temEntrada?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Transform(toOptionalInt)
+  @IsInt({ message: 'Valor de entrada inválido.' })
+  @Min(0, { message: 'Valor de entrada não pode ser negativo.' })
+  valorEntrada?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  temFgts?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Transform(toOptionalInt)
+  @IsInt({ message: 'Valor de FGTS inválido.' })
+  @Min(0, { message: 'Valor de FGTS não pode ser negativo.' })
+  valorFgts?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  temDependente?: boolean;
+
+  /** Data de cadastro retroativa (ISO). */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsDateString({}, { message: 'Data de cadastro inválida.' })
+  createdAt?: string | null;
 }

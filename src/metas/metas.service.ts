@@ -10,15 +10,17 @@ import {
   MetaTipo,
   Prisma,
   Role,
+  TenantPlano,
   UserStatus,
 } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import {
   isStatusVendido,
+  documentacaoOperacionalWhere,
   documentacaoVendaNoPeriodoWhere,
-  sumVgvVendido,
 } from '../common/utils/documentacao-status';
-import { requireTenantId } from '../common/utils/tenant';
+import { requireTenantId, isPlatformAdmin } from '../common/utils/tenant';
+import { isCorretorLike } from '../common/utils/roles';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMetaDto } from './dto/create-meta.dto';
@@ -139,11 +141,15 @@ export class MetasService {
       fim: { gt: agora },
     };
 
-    if (requester.role === Role.admin) {
+    if (isPlatformAdmin(requester)) {
+      return { ...base, escopo: MetaEscopo.imobiliaria };
+    }
+
+    if (String(requester.role) === Role.admin) {
       return base;
     }
 
-    if (requester.role === Role.corretor) {
+    if (isCorretorLike(requester.role)) {
       return {
         ...base,
         OR: [
@@ -200,7 +206,16 @@ export class MetasService {
     const tenantId = requireTenantId(requester);
     const escopo = (dto.escopo as MetaEscopo | undefined) ?? MetaEscopo.corretor;
 
-    if (requester.role === Role.corretor) {
+    if (isPlatformAdmin(requester)) {
+      return {
+        escopo: MetaEscopo.imobiliaria,
+        origem: MetaOrigem.admin,
+        corretorId: null,
+        gerenteId: null,
+      };
+    }
+
+    if (isCorretorLike(requester.role)) {
       if (escopo !== MetaEscopo.corretor) {
         throw new ForbiddenException(
           'Corretores só podem criar metas pessoais.',
@@ -232,7 +247,7 @@ export class MetasService {
         where: {
           id: dto.corretorId,
           tenantId,
-          role: Role.corretor,
+          role: { in: [Role.corretor, Role.treinee] },
           status: UserStatus.ativo,
         },
         select: { id: true },
@@ -248,10 +263,24 @@ export class MetasService {
       };
     }
 
-    if (requester.role !== Role.admin) {
+    if (String(requester.role) !== Role.admin) {
       throw new ForbiddenException(
         'Somente administradores, gerentes e corretores criam metas.',
       );
+    }
+
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { plano: true },
+    });
+    // Solo: sem escopo de imobiliária/equipe/corretor — meta única do tenant.
+    if (tenant?.plano === TenantPlano.solo) {
+      return {
+        escopo: MetaEscopo.imobiliaria,
+        origem: MetaOrigem.admin,
+        corretorId: null,
+        gerenteId: null,
+      };
     }
 
     if (escopo === MetaEscopo.imobiliaria) {
@@ -294,7 +323,7 @@ export class MetasService {
       where: {
         id: dto.corretorId,
         tenantId,
-        role: Role.corretor,
+        role: { in: [Role.corretor, Role.treinee] },
         status: UserStatus.ativo,
       },
       select: { id: true },
@@ -317,12 +346,24 @@ export class MetasService {
     });
     if (!meta) throw new NotFoundException('Meta não encontrada.');
 
-    if (requester.role === Role.admin && meta.origem === MetaOrigem.admin) {
+    if (isPlatformAdmin(requester)) {
+      if (meta.escopo !== MetaEscopo.imobiliaria) {
+        throw new ForbiddenException(
+          'O super admin só edita metas da empresa.',
+        );
+      }
+      return meta;
+    }
+
+    if (
+      String(requester.role) === Role.admin &&
+      meta.origem === MetaOrigem.admin
+    ) {
       return meta;
     }
 
     const podeEditarPessoal =
-      requester.role === Role.corretor &&
+      isCorretorLike(requester.role) &&
       meta.escopo === MetaEscopo.corretor &&
       meta.corretorId === requester.id &&
       meta.origem === MetaOrigem.pessoal;
@@ -356,7 +397,19 @@ export class MetasService {
       const segunda = dia - ((dataBrasil.getUTCDay() + 6) % 7);
       inicioLocal = new Date(Date.UTC(ano, mes, segunda));
       fimLocal = new Date(Date.UTC(ano, mes, segunda + 7));
+    } else if (periodo === MetaPeriodo.trimestral) {
+      const mesInicioTrimestre = Math.floor(mes / 3) * 3;
+      inicioLocal = new Date(Date.UTC(ano, mesInicioTrimestre, 1));
+      fimLocal = new Date(Date.UTC(ano, mesInicioTrimestre + 3, 1));
+    } else if (periodo === MetaPeriodo.semestral) {
+      const mesInicioSemestre = mes < 6 ? 0 : 6;
+      inicioLocal = new Date(Date.UTC(ano, mesInicioSemestre, 1));
+      fimLocal = new Date(Date.UTC(ano, mesInicioSemestre + 6, 1));
+    } else if (periodo === MetaPeriodo.anual) {
+      inicioLocal = new Date(Date.UTC(ano, 0, 1));
+      fimLocal = new Date(Date.UTC(ano + 1, 0, 1));
     } else {
+      // mensal (padrão)
       inicioLocal = new Date(Date.UTC(ano, mes, 1));
       fimLocal = new Date(Date.UTC(ano, mes + 1, 1));
     }
@@ -367,6 +420,10 @@ export class MetasService {
     };
   }
 
+  /**
+   * IDs cujas vendas contam na meta.
+   * `null` = imobiliária: todas as vendas do tenant (alinhado à tela Vendas).
+   */
   private async resolveCorretorIdsForMeta(meta: {
     escopo: MetaEscopo;
     corretorId: string | null;
@@ -382,19 +439,20 @@ export class MetasService {
         where: { tenantId, gerenteId: meta.gerenteId },
         select: {
           membros: {
-            where: { role: Role.corretor, status: UserStatus.ativo },
+            where: {
+              role: { in: [Role.corretor, Role.treinee] },
+              status: UserStatus.ativo,
+            },
             select: { id: true },
           },
         },
       });
-      return equipe?.membros.map((m) => m.id) ?? [];
+      const memberIds = equipe?.membros.map((m) => m.id) ?? [];
+      // Inclui o próprio gerente (vendas creditadas a ele)
+      return Array.from(new Set([meta.gerenteId, ...memberIds]));
     }
-    // imobiliaria → todos os corretores ativos do tenant
-    const corretores = await this.prisma.user.findMany({
-      where: { tenantId, role: Role.corretor, status: UserStatus.ativo },
-      select: { id: true },
-    });
-    return corretores.map((c) => c.id);
+    // imobiliaria → todo o tenant (admin/gerente/corretor/treinee)
+    return null;
   }
 
   private async withProgress<
@@ -408,10 +466,11 @@ export class MetasService {
       valor: number;
     },
   >(meta: T, tenantId: string) {
+    // null = escopo imobiliária: todas as vendas do tenant
     const corretorIds = await this.resolveCorretorIdsForMeta(meta, tenantId);
     let atual = 0;
 
-    if (!corretorIds || corretorIds.length === 0) {
+    if (corretorIds !== null && corretorIds.length === 0) {
       return {
         ...meta,
         atual: 0,
@@ -419,23 +478,39 @@ export class MetasService {
       };
     }
 
+    const creditedTo =
+      corretorIds === null
+        ? {}
+        : {
+            OR: [
+              { corretorId: { in: corretorIds } },
+              { lead: { corretorId: { in: corretorIds } } },
+            ],
+          };
+
     if (meta.tipo === MetaTipo.documentacoes) {
       atual = await this.prisma.documentacao.count({
         where: {
           tenantId,
-          corretorId: { in: corretorIds },
           createdAt: { gte: meta.inicio, lt: meta.fim },
+          AND: [documentacaoOperacionalWhere()],
+          ...(corretorIds === null
+            ? {}
+            : { corretorId: { in: corretorIds } }),
         },
       });
     } else if (meta.tipo === MetaTipo.vendas) {
       const docs = await this.prisma.documentacao.findMany({
         where: {
           tenantId,
-          corretorId: { in: corretorIds },
-          ...documentacaoVendaNoPeriodoWhere({
-            inicio: meta.inicio,
-            fim: meta.fim,
-          }),
+          AND: [
+            documentacaoOperacionalWhere(),
+            ...(corretorIds === null ? [] : [creditedTo]),
+            documentacaoVendaNoPeriodoWhere({
+              inicio: meta.inicio,
+              fim: meta.fim,
+            }),
+          ],
         },
         select: { id: true, status2: true },
       });
@@ -447,19 +522,23 @@ export class MetasService {
         atual += 1;
       }
     } else {
-      const resultado = await this.prisma.documentacao.groupBy({
-        by: ['status2'],
+      const docsVgv = await this.prisma.documentacao.findMany({
         where: {
           tenantId,
-          corretorId: { in: corretorIds },
-          ...documentacaoVendaNoPeriodoWhere({
-            inicio: meta.inicio,
-            fim: meta.fim,
-          }),
+          AND: [
+            documentacaoOperacionalWhere(),
+            ...(corretorIds === null ? [] : [creditedTo]),
+            documentacaoVendaNoPeriodoWhere({
+              inicio: meta.inicio,
+              fim: meta.fim,
+            }),
+          ],
         },
-        _sum: { vgv: true },
+        select: { status2: true, vgv: true },
       });
-      atual = sumVgvVendido(resultado);
+      atual = docsVgv
+        .filter((row) => isStatusVendido(row.status2))
+        .reduce((total, row) => total + (row.vgv ?? 0), 0);
     }
 
     return {

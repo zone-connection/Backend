@@ -23,7 +23,7 @@ import { AgendaService } from './agenda.service';
 
 @Controller('agenda')
 @UseGuards(RolesGuard)
-@Roles(Role.admin, Role.gerente, Role.corretor)
+@Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.super_admin)
 export class AgendaController {
   constructor(private readonly agendaService: AgendaService) {}
 
@@ -46,6 +46,7 @@ export class AgendaController {
   }
 
   @Get('lembretes')
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.analista, Role.super_admin)
   syncLembretes(@CurrentUser() requester: AuthenticatedUser) {
     return this.agendaService.syncLembretes(requester);
   }
@@ -95,8 +96,10 @@ export class AgendaController {
   @Delete(':id')
   remove(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('series') series: string | undefined,
     @CurrentUser() requester: AuthenticatedUser,
   ) {
-    return this.agendaService.remove(id, requester);
+    const seriesMode = series === 'all' ? 'all' : 'one';
+    return this.agendaService.remove(id, requester, seriesMode);
   }
 }

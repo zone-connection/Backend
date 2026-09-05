@@ -1,5 +1,32 @@
 import { Prisma } from '@prisma/client';
 
+/** Fichas sintéticas criadas ao lançar comissão de cliente fora do CRM. */
+export const DOCUMENTACAO_FONTE_COMISSAO = 'Comissão';
+
+/** Lista operacional: esconde documentação gerada só para comissão. */
+export function documentacaoOperacionalWhere(): Prisma.DocumentacaoWhereInput {
+  return {
+    NOT: {
+      OR: [
+        {
+          fonte: {
+            equals: DOCUMENTACAO_FONTE_COMISSAO,
+            mode: 'insensitive',
+          },
+        },
+        {
+          lead: {
+            origem: {
+              equals: DOCUMENTACAO_FONTE_COMISSAO,
+              mode: 'insensitive',
+            },
+          },
+        },
+      ],
+    },
+  };
+}
+
 /** Remove acentos, caixa e caracteres não alfanuméricos. */
 export function normalizeDocStatus(
   status: string | null | undefined,
@@ -13,7 +40,11 @@ export function normalizeDocStatus(
     .replace(/[^a-z0-9]+/g, '');
 }
 
-export type DocStatus1Group = 'aprovado' | 'reprovado' | 'analise';
+export type DocStatus1Group =
+  | 'aprovado'
+  | 'reprovado'
+  | 'pre_analise'
+  | 'analise';
 export type DocStatus2Group = 'vendido' | 'andamento' | 'bacen';
 
 /** Agrupa variantes de Status 1 (ex.: ANALISE / em analise). */
@@ -31,6 +62,14 @@ export function status1Group(
     n === 'aprovadas'
   ) {
     return 'aprovado';
+  }
+  // Antes de "analise": "preanalise" contém a substring "analise".
+  if (
+    n.startsWith('preanalise') ||
+    n.includes('preanalise') ||
+    n === 'preanalise'
+  ) {
+    return 'pre_analise';
   }
   if (n.includes('analise')) return 'analise';
   return null;
@@ -66,7 +105,34 @@ export function isStatusVendido(
 export function isStatusAnalise(
   status: string | null | undefined,
 ): boolean {
-  return status1Group(status) === 'analise';
+  const g = status1Group(status);
+  return g === 'analise' || g === 'pre_analise';
+}
+
+export function isStatusPreAnalise(
+  status: string | null | undefined,
+): boolean {
+  return status1Group(status) === 'pre_analise';
+}
+
+/** Parecer final do Status 1 (aprovado ou reprovado) — já saiu da fila. */
+export function isStatusParecerFinal(
+  status: string | null | undefined,
+): boolean {
+  const g = status1Group(status);
+  return g === 'aprovado' || g === 'reprovado';
+}
+
+export function isStatusReprovado(
+  status: string | null | undefined,
+): boolean {
+  return status1Group(status) === 'reprovado';
+}
+
+export function isStatusAprovado(
+  status: string | null | undefined,
+): boolean {
+  return status1Group(status) === 'aprovado';
 }
 
 /** Compara status considerando variantes semânticas. */
@@ -88,6 +154,7 @@ export function canonicalizeStatus1(status: string): string {
   const g = status1Group(status);
   if (g === 'aprovado') return 'Aprovado';
   if (g === 'reprovado') return 'Reprovado';
+  if (g === 'pre_analise') return 'Pré-análise';
   if (g === 'analise') return 'Em análise';
   return status.trim();
 }
@@ -130,8 +197,9 @@ export function status2VendidoWhere(): Prisma.DocumentacaoWhereInput {
 
 /**
  * Documentações cuja venda cai no período.
- * Usa dataVenda quando existe; se estiver vazia, usa createdAt.
- * Também inclui cadastros do período (evita VGV zerado em imports sem data de venda).
+ * Usa dataVenda quando existe; se estiver vazia, usa createdAt
+ * (evita VGV zerado em imports sem data de venda e evita contar a mesma
+ * ficha em dois meses quando as datas divergem).
  */
 export function documentacaoVendaNoPeriodoWhere(periodo: {
   inicio: Date;
@@ -140,7 +208,12 @@ export function documentacaoVendaNoPeriodoWhere(periodo: {
   return {
     OR: [
       { dataVenda: { gte: periodo.inicio, lt: periodo.fim } },
-      { createdAt: { gte: periodo.inicio, lt: periodo.fim } },
+      {
+        AND: [
+          { dataVenda: null },
+          { createdAt: { gte: periodo.inicio, lt: periodo.fim } },
+        ],
+      },
     ],
   };
 }

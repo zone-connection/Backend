@@ -1,9 +1,14 @@
-import { IsNumber, IsUUID, Max, Min } from 'class-validator';
+import { FinanceiroComissaoStatus } from '@prisma/client';
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PremiacaoComissaoDto } from './premiacao-comissao.dto';
 
-export class CreateComissaoDto {
+export class CreateComissaoDto extends PremiacaoComissaoDto {
   @IsUUID()
   documentacaoId!: string;
+
+  @IsDateString({}, { message: 'Data prevista de recebimento inválida.' })
+  dataPrevistaRecebimento!: string;
 
   @Type(() => Number)
   @IsNumber()
@@ -40,4 +45,8 @@ export class CreateComissaoDto {
   @Min(0)
   @Max(100)
   percentualSocios!: number;
+
+  @IsOptional()
+  @IsEnum(FinanceiroComissaoStatus)
+  status?: FinanceiroComissaoStatus;
 }

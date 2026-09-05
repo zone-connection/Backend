@@ -27,6 +27,7 @@ import { UpdateStatusDto } from './dto/update-status.dto';
 /**
  * Gestão de usuários.
  * - Admin: CRUD completo + reset de senha.
+ * - Gerente e analista: podem cadastrar corretores.
  * - Gerente: lista/consulta membros da própria equipe + reset de senha (e-mail visível).
  */
 @Controller('users')
@@ -35,7 +36,7 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  @Roles(Role.admin)
+  @Roles(Role.admin, Role.gerente, Role.analista)
   create(
     @Body() dto: CreateUserDto,
     @CurrentUser() requester: AuthenticatedUser,
@@ -50,7 +51,7 @@ export class UsersController {
   }
 
   @Get()
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.analista, Role.super_admin)
   findAll(
     @Query() query: QueryUsersDto,
     @CurrentUser() requester: AuthenticatedUser,
@@ -58,13 +59,28 @@ export class UsersController {
     return this.usersService.findAll(query, requester);
   }
 
+  @Get('presence/today')
+  @Roles(Role.admin, Role.gerente, Role.analista)
+  presenceToday(@CurrentUser() requester: AuthenticatedUser) {
+    return this.usersService.presenceToday(requester);
+  }
+
   @Get(':id')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.analista)
   findOne(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.usersService.findOne(id, requester);
+  }
+
+  @Get(':id/presence/week')
+  @Roles(Role.admin, Role.gerente, Role.analista)
+  presenceWeek(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.usersService.presenceWeek(id, requester);
   }
 
   @Patch(':id')
@@ -107,7 +123,7 @@ export class UsersController {
   }
 
   @Delete(':id')
-  @Roles(Role.admin)
+  @Roles(Role.admin, Role.gerente)
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
     @Param('id', ParseUUIDPipe) id: string,

@@ -2,25 +2,24 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { MetaWebhookDto } from './dto/meta-webhook.dto';
 import {
   MetaGraphApiService,
   MetaLeadField,
   MetaLeadPayload,
 } from './meta-graph-api.service';
-
-type LeadgenEvent = {
-  leadgenId: string;
-  pageId: string;
-  formId: string | null;
-  adId: string | null;
-  adgroupId: string | null;
-};
+import {
+  extractLeadgenEvents,
+  type LeadgenEvent,
+} from './meta-webhook.parser';
+import { decryptPageAccessToken, metaTokenKey } from './meta-token.crypto';
 
 type TenantMetaConn = {
   tenantId: string;
   pageAccessToken: string;
 };
+
+/** Ping da Lead Ads Testing Tool — não é a Página real nem um lead buscável. */
+const META_DUMMY_ID = '444444444444';
 
 @Injectable()
 export class MetaService {
@@ -46,18 +45,34 @@ export class MetaService {
     return null;
   }
 
-  async handleWebhook(payload: MetaWebhookDto) {
-    const events = this.extractLeadgenEvents(payload);
+  async handleWebhook(payload: unknown) {
+    const extracted = extractLeadgenEvents(payload);
+
+    this.logger.log(
+      `Webhook recebido object=${String(extracted.object)} entries=${extracted.entryCount} leadgenEvents=${extracted.events.length} skipped=${extracted.skipped.length}`,
+    );
+
+    for (const skip of extracted.skipped) {
+      this.logger.warn(
+        `Evento webhook ignorado: ${skip.reason}${skip.field ? ` (${skip.field})` : ''}`,
+      );
+    }
+
     const leadIds: string[] = [];
 
-    for (const event of events) {
-      const connection = await this.resolveConnection(event.pageId);
+    for (const event of extracted.events) {
+      this.logger.log(
+        `Evento leadgen leadgen_id=${event.leadgenId} page_id=${event.pageId} form_id=${event.formId ?? 'n/a'} page_id_source=${event.pageIdSource}`,
+      );
+
+      const connection = await this.resolveConnection(event);
       if (!connection) {
-        this.logger.warn(
-          `Ignorando leadgen ${event.leadgenId}: page_id ${event.pageId} sem TenantMetaConnection ativa.`,
-        );
         continue;
       }
+
+      this.logger.log(
+        `TenantMetaConnection encontrada page_id=${event.pageId} tenantId=${connection.tenantId}`,
+      );
 
       const result = await this.processLeadgenEvent(
         event,
@@ -70,42 +85,210 @@ export class MetaService {
     return { ok: true, leadIds };
   }
 
-  private async resolveConnection(
-    pageId: string,
-  ): Promise<TenantMetaConn | null> {
-    const connection = await this.prisma.tenantMetaConnection.findFirst({
-      where: { pageId, ativo: true },
-      select: { tenantId: true, pageAccessToken: true },
+  /**
+   * App em Development Mode não dispara webhook para lead de anúncio de
+   * quem não tem papel no app. A Graph API (token da Página) ainda lista
+   * esses leads — puxamos periodicamente e gravamos no CRM.
+   */
+  async syncActiveConnections(): Promise<{
+    created: number;
+    skipped: number;
+    failed: number;
+  }> {
+    const connections = await this.prisma.tenantMetaConnection.findMany({
+      where: { ativo: true },
+      select: { tenantId: true, pageAccessToken: true, pageId: true },
     });
-    return connection;
+
+    const totals = { created: 0, skipped: 0, failed: 0 };
+    for (const connection of connections) {
+      const result = await this.syncConnection({
+        ...connection,
+        pageAccessToken: this.decryptToken(connection.pageAccessToken),
+      });
+      totals.created += result.created;
+      totals.skipped += result.skipped;
+      totals.failed += result.failed;
+    }
+    return totals;
   }
 
-  private extractLeadgenEvents(payload: MetaWebhookDto): LeadgenEvent[] {
-    const events: LeadgenEvent[] = [];
+  private async syncConnection(connection: TenantMetaConn & { pageId: string }) {
+    const result = { created: 0, skipped: 0, failed: 0 };
+    let forms: { id: string }[];
+    try {
+      forms = await this.graphApi.listLeadgenForms(
+        connection.pageId,
+        connection.pageAccessToken,
+      );
+    } catch (error) {
+      result.failed += 1;
+      this.logger.error(
+        `Falha ao listar formulários page_id=${connection.pageId}: ${
+          error instanceof Error ? error.message : 'erro'
+        }`,
+      );
+      return result;
+    }
 
-    for (const entry of payload.entry ?? []) {
-      for (const change of entry.changes ?? []) {
-        if (change.field !== 'leadgen') continue;
-        const leadgenId = this.asId(change.value?.leadgen_id);
-        const pageId = this.asId(change.value?.page_id);
-        if (!leadgenId || !pageId) continue;
+    for (const form of forms) {
+      let leads: MetaLeadPayload[];
+      try {
+        leads = await this.graphApi.listFormLeads(
+          form.id,
+          connection.pageAccessToken,
+        );
+      } catch (error) {
+        result.failed += 1;
+        this.logger.error(
+          `Falha ao listar leads form_id=${form.id}: ${
+            error instanceof Error ? error.message : 'erro'
+          }`,
+        );
+        continue;
+      }
 
-        events.push({
-          leadgenId,
-          pageId,
-          formId: this.asId(change.value?.form_id),
-          adId: this.asId(change.value?.ad_id),
-          adgroupId: this.asId(change.value?.adgroup_id),
-        });
+      for (const metaLead of leads) {
+        try {
+          const outcome = await this.importGraphLead(
+            connection,
+            form.id,
+            metaLead,
+          );
+          if (outcome === 'created') result.created += 1;
+          else result.skipped += 1;
+        } catch (error) {
+          result.failed += 1;
+          this.logger.error(
+            `Falha ao importar leadgen_id=${metaLead.id}: ${
+              error instanceof Error ? error.message : 'erro'
+            }`,
+          );
+        }
       }
     }
 
-    return events;
+    this.logger.log(
+      `Sync Graph page_id=${connection.pageId} tenantId=${connection.tenantId} created=${result.created} skipped=${result.skipped} failed=${result.failed}`,
+    );
+    return result;
+  }
+
+  private async importGraphLead(
+    connection: TenantMetaConn & { pageId: string },
+    formId: string,
+    metaLead: MetaLeadPayload,
+  ): Promise<'created' | 'skipped'> {
+    const leadgenId = String(metaLead.id ?? '').trim();
+    if (!leadgenId || leadgenId === META_DUMMY_ID) return 'skipped';
+    if (this.isMetaPlaceholderLead(metaLead.field_data ?? [])) return 'skipped';
+
+    const existingLink = await this.prisma.leadMetaLink.findUnique({
+      where: { leadgenId },
+      select: { leadId: true },
+    });
+    if (existingLink) return 'skipped';
+
+    const event: LeadgenEvent = {
+      leadgenId,
+      pageId: connection.pageId,
+      formId: metaLead.form_id ?? formId,
+      adId: metaLead.ad_id ?? null,
+      adgroupId: null,
+      pageIdSource: 'value',
+    };
+    const mapped = this.mapFieldData(metaLead.field_data ?? []);
+
+    this.logger.log(
+      `Importando lead da Graph leadgen_id=${leadgenId} tenantId=${connection.tenantId}`,
+    );
+
+    const lead = await this.findOrCreateLead(
+      mapped,
+      event,
+      metaLead,
+      connection.tenantId,
+    );
+
+    await this.prisma.leadMetaLink.upsert({
+      where: { leadgenId },
+      create: {
+        leadId: lead.id,
+        leadgenId,
+        pageId: connection.pageId,
+        formId: event.formId ?? null,
+        adId: event.adId ?? null,
+      },
+      update: {},
+    });
+
+    this.logger.log(
+      `Lead importado leadgen_id=${leadgenId} crmLeadId=${lead.id} tenantId=${connection.tenantId}`,
+    );
+    return 'created';
+  }
+
+  /**
+   * HTTP 200 mesmo sem connection: a Meta reenvia 4xx/5xx. Retry não cria a
+   * connection; o teste dummy (page_id 444444444444) ficaria em loop.
+   * O isolamento de tenant continua: sem connection, nenhum lead é gravado.
+   *
+   * O ping da ferramenta de teste usa page_id 444444444444. Nesse caso a
+   * connection é a Página real (META_PAGE_ID ou a única conexão ativa).
+   */
+  private async resolveConnection(
+    event: LeadgenEvent,
+  ): Promise<TenantMetaConn | null> {
+    const pageId = this.isDummyEvent(event)
+      ? this.config.get<string>('META_PAGE_ID')?.trim() || null
+      : event.pageId;
+
+    if (this.isDummyEvent(event) && !pageId) {
+      const actives = await this.prisma.tenantMetaConnection.findMany({
+        where: { ativo: true },
+        select: { tenantId: true, pageAccessToken: true, pageId: true },
+        take: 2,
+      });
+      if (actives.length === 1) {
+        this.logger.log(
+          `Teste dummy da Meta roteado para a única Página ativa page_id=${actives[0].pageId} tenantId=${actives[0].tenantId}`,
+        );
+        return this.withDecryptedToken(actives[0]);
+      }
+      this.logger.warn(
+        'Ignorando leadgen dummy (444444444444): defina META_PAGE_ID ou mantenha só uma Página Meta ativa no CRM.',
+      );
+      return null;
+    }
+
+    if (!pageId) return null;
+
+    const active = await this.prisma.tenantMetaConnection.findFirst({
+      where: { pageId, ativo: true },
+      select: { tenantId: true, pageAccessToken: true },
+    });
+    if (active) return this.withDecryptedToken(active);
+
+    const inactive = await this.prisma.tenantMetaConnection.findFirst({
+      where: { pageId },
+      select: { tenantId: true, ativo: true },
+    });
+    if (inactive) {
+      this.logger.warn(
+        `Ignorando leadgen: page_id ${pageId} tem TenantMetaConnection inativa (tenant ${inactive.tenantId}).`,
+      );
+      return null;
+    }
+
+    this.logger.warn(
+      `Ignorando leadgen: page_id ${pageId} sem TenantMetaConnection.`,
+    );
+    return null;
   }
 
   private async processLeadgenEvent(
     event: LeadgenEvent,
-    payload: MetaWebhookDto,
+    payload: unknown,
     connection: TenantMetaConn,
   ) {
     const deliveryKey = `leadgen:${event.leadgenId}`;
@@ -117,7 +300,7 @@ export class MetaService {
           leadgenId: event.leadgenId,
           pageId: event.pageId,
           formId: event.formId,
-          payload: payload as unknown as Prisma.InputJsonValue,
+          payload: payload as Prisma.InputJsonValue,
         },
       });
     } catch (error) {
@@ -129,6 +312,9 @@ export class MetaService {
           where: { leadgenId: event.leadgenId },
           select: { leadId: true },
         });
+        this.logger.log(
+          `Lead duplicado (idempotência) leadgen_id=${event.leadgenId} leadId=${existing?.leadId ?? 'n/a'}`,
+        );
         return { ok: true, duplicate: true, leadId: existing?.leadId };
       }
       throw error;
@@ -140,14 +326,37 @@ export class MetaService {
         select: { leadId: true },
       });
       if (existingLink) {
+        this.logger.log(
+          `Lead duplicado (LeadMetaLink) leadgen_id=${event.leadgenId} leadId=${existingLink.leadId}`,
+        );
         return { ok: true, duplicate: true, leadId: existingLink.leadId };
       }
 
-      const metaLead = await this.graphApi.fetchLead(
-        event.leadgenId,
-        connection.pageAccessToken,
+      const dummy = this.isDummyEvent(event);
+      const metaLead = dummy
+        ? {
+            id: event.leadgenId,
+            field_data: [] as MetaLeadField[],
+          }
+        : await this.graphApi.fetchLead(
+            event.leadgenId,
+            connection.pageAccessToken,
+          );
+      const mapped = dummy
+        ? {
+            nome: 'Lead de teste Meta',
+            telefone: '(00) 44444-4444',
+            email: 'teste-meta@facebook.meta.local',
+            cidade: null,
+            bairro: null,
+            extraTags: ['Teste Meta'],
+          }
+        : this.mapFieldData(metaLead.field_data ?? []);
+
+      this.logger.log(
+        `Criando lead no CRM leadgen_id=${event.leadgenId} tenantId=${connection.tenantId}`,
       );
-      const mapped = this.mapFieldData(metaLead.field_data ?? []);
+
       const lead = await this.findOrCreateLead(
         mapped,
         event,
@@ -169,7 +378,7 @@ export class MetaService {
       });
 
       this.logger.log(
-        `Lead Meta ${event.leadgenId} → CRM lead ${lead.id} (tenant ${connection.tenantId})`,
+        `Lead criado leadgen_id=${event.leadgenId} crmLeadId=${lead.id} tenantId=${connection.tenantId}`,
       );
       return { ok: true, leadId: lead.id };
     } catch (error) {
@@ -190,6 +399,9 @@ export class MetaService {
     const reusable = await this.findReusableLead(mapped, tenantId);
     if (reusable) {
       await this.mergeTags(reusable.id, reusable.tags, mapped.extraTags);
+      this.logger.log(
+        `Lead reutilizado crmLeadId=${reusable.id} tenantId=${tenantId} leadgen_id=${event.leadgenId}`,
+      );
       return reusable;
     }
 
@@ -345,7 +557,6 @@ export class MetaService {
         ? `(${ddd}) ${local.slice(0, 5)}-${local.slice(5)}`
         : `(${ddd}) ${local.slice(0, 4)}-${local.slice(4)}`;
     }
-    // Mantém algum valor legível quando o número não é BR padrão.
     const fallback = digits.slice(-11) || '00000000000';
     const padded = fallback.padStart(11, '0').slice(-11);
     return `(${padded.slice(0, 2)}) ${padded.slice(2, 7)}-${padded.slice(7)}`;
@@ -355,11 +566,25 @@ export class MetaService {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
   }
 
-  private asId(value: unknown): string | null {
-    if (typeof value === 'string' && value.trim()) return value.trim();
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return String(value);
-    }
-    return null;
+  private isDummyEvent(event: LeadgenEvent) {
+    return (
+      event.pageId === META_DUMMY_ID || event.leadgenId === META_DUMMY_ID
+    );
+  }
+
+  private isMetaPlaceholderLead(fields: MetaLeadField[]) {
+    return fields.some((field) =>
+      (field.values ?? []).some((value) =>
+        value.toLowerCase().includes('<test lead:'),
+      ),
+    );
+  }
+
+  private decryptToken(stored: string) {
+    return decryptPageAccessToken(stored, metaTokenKey(this.config));
+  }
+
+  private withDecryptedToken<T extends { pageAccessToken: string }>(row: T): T {
+    return { ...row, pageAccessToken: this.decryptToken(row.pageAccessToken) };
   }
 }

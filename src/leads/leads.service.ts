@@ -15,24 +15,89 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
-import { requireTenantId } from '../common/utils/tenant';
+import {
+  PLATFORM_TENANT_ID,
+  requireTenantId,
+  canViewLostLeads,
+} from '../common/utils/tenant';
+import { prismaTableOrderBy } from '../common/utils/table-sort';
+import { isCorretorLike } from '../common/utils/roles';
+import { hasUserAction } from '../common/utils/user-permissions';
 import { CatalogService } from '../catalog/catalog.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { AnaliseService } from '../analise/analise.service';
 import { FunisService } from '../funis/funis.service';
+import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.service';
+import { DocumentacaoService } from '../documentacao/documentacao.service';
 import { leadSelect, LeadEntity } from './lead-select';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
 import { QueryLeadsDto } from './dto/query-leads.dto';
-import { ImportLeadsDto } from './dto/import-leads.dto';
+import { CheckImportLeadsDto, ImportLeadsDto } from './dto/import-leads.dto';
+import { AdiarPrazoDto } from './dto/adiar-prazo.dto';
+import type { LeadMonitoramento } from './monitoramento/lead-monitoramento.types';
 import {
   DistribuirCorretoresDto,
   DistribuirEquipesDto,
 } from './dto/distribuir-leads.dto';
+import { sanitizeProspeccao } from './lead-prospeccao';
+
+/** Dígitos nacionais (DDD + número), ignora DDI 55. */
+function nationalPhoneKey(value: string): string {
+  let digits = value.replace(/\D/g, '');
+  if (digits.startsWith('55') && digits.length >= 12) {
+    digits = digits.slice(2);
+  }
+  return digits.slice(0, 11);
+}
+
+function isSyntheticEmail(email: string | null | undefined): boolean {
+  const n = (email ?? '').trim().toLowerCase();
+  return (
+    !n ||
+    n.endsWith('@sem-email.local') ||
+    n.endsWith('@pendente.local') ||
+    n.endsWith('@sememail.local')
+  );
+}
+
+export type LeadWithDocStatus = LeadEntity & {
+  documentacaoStatus1: string | null;
+  documentacaoStatus2: string | null;
+};
+
+export type LeadWithMonitoramento = LeadWithDocStatus & {
+  monitoramento: LeadMonitoramento;
+};
 
 export interface PaginatedLeads {
-  data: LeadEntity[];
+  data: Array<LeadWithDocStatus & { monitoramento?: LeadMonitoramento }>;
   meta: { total: number; page: number; limit: number; totalPages: number };
+}
+
+/** Expõe Status 1/2 da ficha mais recente no root do lead (cards do funil). */
+function withDocumentacaoStatus<T extends LeadEntity>(lead: T): T & {
+  documentacaoStatus1: string | null;
+  documentacaoStatus2: string | null;
+} {
+  const latest = lead.documentacoes?.[0];
+  return {
+    ...lead,
+    documentacaoStatus1: latest?.status1 ?? null,
+    documentacaoStatus2: latest?.status2 ?? null,
+  };
+}
+
+/** Aceita ISO ou YYYY-MM-DD para cadastro retroativo. */
+function parseOptionalCreatedAt(value?: string | null): Date | null {
+  if (value === undefined || value === null || value === '') return null;
+  const raw = value.trim();
+  const date =
+    /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T12:00:00.000Z`) : new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw new BadRequestException('Data de cadastro inválida.');
+  }
+  return date;
 }
 
 @Injectable()
@@ -43,6 +108,8 @@ export class LeadsService {
     private readonly teamScope: TeamScopeService,
     private readonly analiseService: AnaliseService,
     private readonly funis: FunisService,
+    private readonly monitoramento: LeadMonitoramentoService,
+    private readonly documentacao: DocumentacaoService,
   ) {}
 
   async create(
@@ -51,9 +118,13 @@ export class LeadsService {
   ): Promise<LeadEntity> {
     const tenantId = requireTenantId(requester);
 
-    if (requester.role === Role.analista) {
+    if (
+      requester.role === Role.analista &&
+      dto.tipo !== 'cliente' &&
+      !hasUserAction(requester.role, requester.permissions, 'leads.create')
+    ) {
       throw new ForbiddenException(
-        'Analistas não podem criar leads ou clientes.',
+        'Analistas podem criar somente clientes para documentação.',
       );
     }
 
@@ -74,7 +145,15 @@ export class LeadsService {
       emailRaw ||
       `contato.${phoneDigits || Date.now()}@sem-email.local`;
 
-    return this.prisma.lead.create({
+    const createdAt = parseOptionalCreatedAt(dto.createdAt);
+    const timing = await this.monitoramento.stageChangeData(
+      tenantId,
+      stage,
+      createdAt ?? new Date(),
+    );
+    const prospeccao = sanitizeProspeccao(dto.prospeccao);
+
+    const created = await this.prisma.lead.create({
       data: {
         tenantId,
         tipo: dto.tipo === 'cliente' ? ContatoTipo.cliente : ContatoTipo.lead,
@@ -88,36 +167,115 @@ export class LeadsService {
         stage,
         prioridade: dto.prioridade ?? 'Média',
         renda: dto.renda ?? null,
+        tipoRenda: dto.tipoRenda?.trim() || null,
         estadoCivil: dto.estadoCivil?.trim() || null,
+        orcamentoMax: dto.orcamentoMax ?? null,
+        quartosMin: dto.quartosMin ?? null,
+        vagasMin: dto.vagasMin ?? null,
+        ...(prospeccao !== undefined ? { prospeccao } : {}),
         tags: dto.tags ?? [],
         corretorId: assignment.corretorId,
         equipeId: assignment.equipeId,
+        ...(createdAt ? { createdAt } : {}),
+        ...timing,
       },
       select: leadSelect,
     });
+    return this.decorateOne(created, requester);
   }
 
   async importMany(dto: ImportLeadsDto, requester: AuthenticatedUser) {
-    if (requester.role === Role.analista) {
-      throw new ForbiddenException('Analistas não podem importar leads.');
+    if (
+      requester.role === Role.analista &&
+      !hasUserAction(requester.role, requester.permissions, 'leads.create')
+    ) {
+      throw new ForbiddenException('Analistas não podem importar contatos.');
     }
 
     const tenantId = requireTenantId(requester);
     const defaultStage = await this.catalog.getDefaultStageSlug(tenantId);
     await this.ensureStageIsValid(tenantId, defaultStage);
+    const tipo =
+      dto.tipo === 'cliente' ? ContatoTipo.cliente : ContatoTipo.lead;
+    const importTiming = await this.monitoramento.stageChangeData(
+      tenantId,
+      defaultStage,
+    );
+    const origemByLabel = await this.catalog.ensureOrigensForImport(
+      tenantId,
+      dto.leads.map(
+        (item) => (item.origem?.trim() || 'Importação').slice(0, 60),
+      ),
+    );
+
+    const kindLabel = tipo === ContatoTipo.cliente ? 'cliente' : 'lead';
+    const existing = await this.loadImportExistingIndex(tenantId, tipo);
 
     const created: LeadEntity[] = [];
     const errors: Array<{ index: number; nome: string; message: string }> = [];
+    const seenPhones = new Set<string>(existing.phone.keys());
+    const seenEmails = new Set<string>(existing.email.keys());
 
     for (let index = 0; index < dto.leads.length; index++) {
       const item = dto.leads[index];
+      const phoneKey = nationalPhoneKey(item.telefone);
+      const emailKey = item.email?.trim().toLowerCase() || '';
+      if (phoneKey && existing.phone.has(phoneKey)) {
+        const nomeExistente = existing.phone.get(phoneKey) ?? '';
+        errors.push({
+          index,
+          nome: item.nome,
+          message: `Já existe um ${kindLabel} na base com este telefone${
+            nomeExistente ? ` (${nomeExistente})` : ''
+          }.`,
+        });
+        continue;
+      }
+      if (phoneKey && seenPhones.has(phoneKey)) {
+        errors.push({
+          index,
+          nome: item.nome,
+          message: 'Telefone repetido nesta importação.',
+        });
+        continue;
+      }
+      if (emailKey && !isSyntheticEmail(emailKey) && existing.email.has(emailKey)) {
+        const nomeExistente = existing.email.get(emailKey) ?? '';
+        errors.push({
+          index,
+          nome: item.nome,
+          message: `Já existe um ${kindLabel} na base com este e-mail${
+            nomeExistente ? ` (${nomeExistente})` : ''
+          }.`,
+        });
+        continue;
+      }
+      if (emailKey && !isSyntheticEmail(emailKey) && seenEmails.has(emailKey)) {
+        errors.push({
+          index,
+          nome: item.nome,
+          message: 'E-mail repetido nesta importação.',
+        });
+        continue;
+      }
+      if (phoneKey) seenPhones.add(phoneKey);
+      if (emailKey && !isSyntheticEmail(emailKey)) seenEmails.add(emailKey);
+
       try {
-        /** Importação começa sem dono; só atribui se vier corretorId explícito. */
+        /**
+         * Importação de leads começa sem dono (pool).
+         * Clientes vão para a carteira de quem importa (ou corretor explícito).
+         */
         let corretorId: string | null = null;
         if (item.corretorId) {
           await this.ensureCorretorAssignable(item.corretorId, requester);
           corretorId = item.corretorId;
         } else if (this.isCorretor(requester)) {
+          corretorId = requester.id;
+        } else if (
+          tipo === ContatoTipo.cliente &&
+          (requester.role === Role.admin || requester.role === Role.gerente)
+        ) {
           corretorId = requester.id;
         }
 
@@ -125,31 +283,38 @@ export class LeadsService {
         const email =
           item.email?.trim().toLowerCase() ||
           `import.${digits || index}@sem-email.local`;
+        const origemRaw = (item.origem?.trim() || 'Importação').slice(0, 60);
+        const prospeccao = sanitizeProspeccao(item.prospeccao);
 
         const lead = await this.prisma.lead.create({
           data: {
             tenantId,
-            tipo: ContatoTipo.lead,
+            tipo,
             nome: item.nome.trim(),
             telefone: item.telefone.trim(),
             email,
-            origem: (item.origem?.trim() || 'Importação').slice(0, 60),
+            origem: origemByLabel.get(origemRaw) ?? origemRaw,
             interesse: item.interesse ?? 'Comprar',
             cidade: (item.cidade?.trim() || 'Não informado').slice(0, 80),
             bairro: (item.bairro?.trim() || 'Não informado').slice(0, 80),
             stage: defaultStage,
             prioridade: item.prioridade ?? 'Média',
             renda: item.renda ?? null,
+            tipoRenda: item.tipoRenda?.trim() || null,
             estadoCivil: item.estadoCivil?.trim() || null,
+            ...(prospeccao !== undefined ? { prospeccao } : {}),
             tags: ['Importação'],
             corretorId,
+            ...importTiming,
           },
           select: leadSelect,
         });
         created.push(lead);
       } catch (err) {
         const message =
-          err instanceof Error ? err.message : 'Falha ao importar este lead.';
+          err instanceof Error
+            ? err.message
+            : 'Falha ao importar este registro.';
         errors.push({
           index,
           nome: item.nome,
@@ -168,21 +333,30 @@ export class LeadsService {
     };
   }
 
-  /** Resumo para o diálogo de distribuição. */
+  /** Resumo para o diálogo de distribuição (pool do admin → equipes e/ou corretores). */
   async distribuirResumo(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
 
-    if (requester.role === Role.admin) {
-      const disponiveis = await this.prisma.lead.count({
-        where: {
-          tenantId,
-          tipo: ContatoTipo.lead,
-          perdidoAt: null,
-          corretorId: null,
-          equipeId: null,
-        },
-      });
-      const equipes = await this.prisma.equipe.findMany({
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.gerente
+    ) {
+      throw new ForbiddenException(
+        'Somente admin e gerente podem distribuir leads.',
+      );
+    }
+
+    const disponiveis = await this.prisma.lead.count({
+      where: {
+        tenantId,
+        tipo: ContatoTipo.lead,
+        perdidoAt: null,
+        corretorId: null,
+        equipeId: null,
+      },
+    });
+    const [equipes, corretores] = await Promise.all([
+      this.prisma.equipe.findMany({
         where: { tenantId },
         select: {
           id: true,
@@ -190,96 +364,59 @@ export class LeadsService {
           status: true,
           gerente: { select: { id: true, name: true } },
           membros: {
-            where: { role: Role.corretor, status: UserStatus.ativo },
+            where: {
+              role: { in: [Role.corretor, Role.treinee] },
+              status: UserStatus.ativo,
+            },
             select: { id: true },
           },
         },
         orderBy: { name: 'asc' },
-      });
-
-      // Com equipes: admin divide o pool entre elas.
-      if (equipes.length > 0) {
-        return {
-          modo: 'equipes' as const,
-          disponiveis,
-          equipes: equipes.map((e) => ({
-            equipeId: e.id,
-            nome: e.name,
-            gerente: e.gerente.name,
-            corretores: e.membros.length,
-            status: e.status,
-          })),
-        };
-      }
-
-      // Sem equipes: admin pode distribuir direto aos corretores (fila).
-      const corretores = await this.prisma.user.findMany({
+      }),
+      this.prisma.user.findMany({
         where: {
           tenantId,
-          role: Role.corretor,
+          role: { in: [Role.corretor, Role.treinee] },
           status: UserStatus.ativo,
         },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      });
-      return {
-        modo: 'corretores' as const,
-        disponiveis,
-        equipeId: null,
-        equipeNome: 'Todos os corretores',
-        corretores: corretores.map((c) => ({ id: c.id, nome: c.name })),
-      };
-    }
-
-    if (requester.role === Role.gerente) {
-      const equipe = await this.prisma.equipe.findFirst({
-        where: { gerenteId: requester.id, tenantId },
         select: {
           id: true,
           name: true,
-          membros: {
-            where: { role: Role.corretor, status: UserStatus.ativo },
-            select: { id: true, name: true },
-            orderBy: { name: 'asc' },
-          },
+          equipe: { select: { id: true, name: true } },
         },
-      });
-      if (!equipe) {
-        throw new ForbiddenException('Você não lidera uma equipe.');
-      }
-      const disponiveis = await this.prisma.lead.count({
-        where: {
-          tenantId,
-          tipo: ContatoTipo.lead,
-          perdidoAt: null,
-          equipeId: equipe.id,
-          corretorId: null,
-        },
-      });
-      return {
-        modo: 'corretores' as const,
-        disponiveis,
-        equipeId: equipe.id,
-        equipeNome: equipe.name,
-        corretores: equipe.membros.map((m) => ({
-          id: m.id,
-          nome: m.name,
-        })),
-      };
-    }
+        orderBy: { name: 'asc' },
+      }),
+    ]);
 
-    throw new ForbiddenException(
-      'Somente admin e gerente podem distribuir leads.',
-    );
+    return {
+      disponiveis,
+      equipes: equipes.map((e) => ({
+        equipeId: e.id,
+        nome: e.name,
+        gerente: e.gerente.name,
+        corretores: e.membros.length,
+        status: e.status,
+      })),
+      corretores: corretores.map((c) => ({
+        id: c.id,
+        nome: c.name,
+        equipeNome: c.equipe?.name ?? null,
+      })),
+    };
   }
 
-  /** Admin: aloca leads sem dono para o pool das equipes. */
+  /** Admin/gerente: aloca leads sem dono (pool do admin) para o pool das equipes. */
   async distribuirEquipes(
     dto: DistribuirEquipesDto,
     requester: AuthenticatedUser,
   ) {
-    if (requester.role !== Role.admin) {
-      throw new ForbiddenException('Somente admin distribui entre equipes.');
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.gerente
+    ) {
+      throw new ForbiddenException(
+        'Somente admin ou gerente distribuem entre equipes.',
+      );
     }
     const tenantId = requireTenantId(requester);
     const totalPedido = dto.alocacoes.reduce((s, a) => s + a.quantidade, 0);
@@ -347,8 +484,9 @@ export class LeadsService {
   }
 
   /**
-   * Fila round-robin — cada corretor recebe `porCorretor` leads por rodada.
-   * Gerente: pool da equipe. Admin (sem equipes): leads sem dono do tenant.
+   * Admin/gerente: pool do admin → corretores.
+   * Com `alocacoes`: quantidades explícitas por corretor.
+   * Sem `alocacoes`: round-robin com `porCorretor` entre todos os ativos.
    */
   async distribuirCorretores(
     dto: DistribuirCorretoresDto,
@@ -363,53 +501,97 @@ export class LeadsService {
       );
     }
     const tenantId = requireTenantId(requester);
+    const leadWhere: Prisma.LeadWhereInput = {
+      tenantId,
+      tipo: ContatoTipo.lead,
+      perdidoAt: null,
+      corretorId: null,
+      equipeId: null,
+    };
 
-    let corretores: Array<{ id: string; name: string }>;
-    let leadWhere: Prisma.LeadWhereInput;
-
-    if (requester.role === Role.admin) {
-      corretores = await this.prisma.user.findMany({
-        where: {
-          tenantId,
-          role: Role.corretor,
-          status: UserStatus.ativo,
-        },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      });
-      leadWhere = {
-        tenantId,
-        tipo: ContatoTipo.lead,
-        perdidoAt: null,
-        corretorId: null,
-        equipeId: null,
-      };
-    } else {
-      const equipe = await this.prisma.equipe.findFirst({
-        where: { gerenteId: requester.id, tenantId },
-        select: {
-          id: true,
-          membros: {
-            where: { role: Role.corretor, status: UserStatus.ativo },
-            select: { id: true, name: true },
-            orderBy: { name: 'asc' },
-          },
-        },
-      });
-      if (!equipe || equipe.membros.length === 0) {
+    if (dto.alocacoes?.length) {
+      const totalPedido = dto.alocacoes.reduce((s, a) => s + a.quantidade, 0);
+      if (totalPedido <= 0) {
         throw new BadRequestException(
-          'Sua equipe não tem corretores ativos para receber leads.',
+          'Informe ao menos 1 lead para distribuir.',
         );
       }
-      corretores = equipe.membros;
-      leadWhere = {
-        tenantId,
-        tipo: ContatoTipo.lead,
-        perdidoAt: null,
-        equipeId: equipe.id,
-        corretorId: null,
+
+      const corretorIds = dto.alocacoes.map((a) => a.corretorId);
+      const corretores = await this.prisma.user.findMany({
+        where: {
+          tenantId,
+          id: { in: corretorIds },
+          role: { in: [Role.corretor, Role.treinee] },
+          status: UserStatus.ativo,
+        },
+        select: { id: true, name: true, equipeId: true },
+      });
+      if (corretores.length !== new Set(corretorIds).size) {
+        throw new BadRequestException(
+          'Um ou mais corretores são inválidos ou inativos.',
+        );
+      }
+
+      const leads = await this.prisma.lead.findMany({
+        where: leadWhere,
+        select: { id: true },
+        orderBy: { createdAt: 'asc' },
+        take: totalPedido,
+      });
+      if (leads.length < totalPedido) {
+        throw new BadRequestException(
+          `Há apenas ${leads.length} lead(s) disponíveis para distribuir (pedido: ${totalPedido}).`,
+        );
+      }
+
+      let offset = 0;
+      const resultado: Array<{
+        corretorId: string;
+        nome: string;
+        quantidade: number;
+      }> = [];
+      const byId = new Map(corretores.map((c) => [c.id, c]));
+
+      await this.prisma.$transaction(async (tx) => {
+        for (const aloc of dto.alocacoes!) {
+          if (aloc.quantidade <= 0) continue;
+          const slice = leads.slice(offset, offset + aloc.quantidade);
+          offset += aloc.quantidade;
+          const corretor = byId.get(aloc.corretorId)!;
+          await tx.lead.updateMany({
+            where: { id: { in: slice.map((l) => l.id) } },
+            data: {
+              corretorId: corretor.id,
+              equipeId: corretor.equipeId,
+            },
+          });
+          resultado.push({
+            corretorId: corretor.id,
+            nome: corretor.name,
+            quantidade: slice.length,
+          });
+        }
+      });
+
+      return {
+        ok: true,
+        total: totalPedido,
+        porCorretor: null,
+        distribuicao: resultado,
       };
     }
+
+    const porCorretor = dto.porCorretor ?? 1;
+    const corretores = await this.prisma.user.findMany({
+      where: {
+        tenantId,
+        role: { in: [Role.corretor, Role.treinee] },
+        status: UserStatus.ativo,
+      },
+      select: { id: true, name: true, equipeId: true },
+      orderBy: { name: 'asc' },
+    });
 
     if (corretores.length === 0) {
       throw new BadRequestException(
@@ -425,15 +607,16 @@ export class LeadsService {
 
     if (leads.length === 0) {
       throw new BadRequestException(
-        requester.role === Role.admin
-          ? 'Não há leads sem dono para distribuir.'
-          : 'Não há leads no pool da sua equipe para distribuir.',
+        'Não há leads sem dono para distribuir.',
       );
     }
 
-    const porCorretor = dto.porCorretor;
     const counts = new Map(corretores.map((c) => [c.id, 0]));
-    const assignments: Array<{ leadId: string; corretorId: string }> = [];
+    const assignments: Array<{
+      leadId: string;
+      corretorId: string;
+      equipeId: string | null;
+    }> = [];
 
     let leadIdx = 0;
     let corretorIdx = 0;
@@ -442,7 +625,11 @@ export class LeadsService {
       const take = Math.min(porCorretor, leads.length - leadIdx);
       for (let i = 0; i < take; i++) {
         const lead = leads[leadIdx++]!;
-        assignments.push({ leadId: lead.id, corretorId: corretor.id });
+        assignments.push({
+          leadId: lead.id,
+          corretorId: corretor.id,
+          equipeId: corretor.equipeId,
+        });
         counts.set(corretor.id, (counts.get(corretor.id) ?? 0) + 1);
       }
       corretorIdx += 1;
@@ -452,7 +639,7 @@ export class LeadsService {
       assignments.map((a) =>
         this.prisma.lead.update({
           where: { id: a.leadId },
-          data: { corretorId: a.corretorId },
+          data: { corretorId: a.corretorId, equipeId: a.equipeId },
         }),
       ),
     );
@@ -489,31 +676,70 @@ export class LeadsService {
       phoneMatchIds = rows.map((r) => r.id);
     }
 
-    const leadScope = await this.teamScope.leadScope(requester);
+    const leadScope =
+      isCorretorLike(requester.role) &&
+      hasUserAction(requester.role, requester.permissions, 'leads.viewOthers')
+        ? { tenantId: requireTenantId(requester) }
+        : await this.teamScope.leadScope(requester);
+    const tipoFiltro = query.tipo as ContatoTipo | undefined;
+    const adminVeClientesCorretor =
+      requester.role === Role.admin &&
+      requester.tenantModules?.adminVerClientesCorretor === true;
+    const isGestorCarteira =
+      (requester.role === Role.admin && !adminVeClientesCorretor) ||
+      requester.role === Role.gerente;
 
     const where: Prisma.LeadWhereInput = {
       perdidoAt: null,
-      ...(query.tipo ? { tipo: query.tipo as ContatoTipo } : {}),
+      ...(tipoFiltro ? { tipo: tipoFiltro } : {}),
       ...leadScope,
       ...(query.stage ? { stage: query.stage } : {}),
       ...(query.interesse ? { interesse: query.interesse } : {}),
       ...(query.prioridade ? { prioridade: query.prioridade } : {}),
       ...(query.origem ? { origem: query.origem } : {}),
-      ...(search
-        ? {
-            OR: [
-              { nome: { contains: search, mode: 'insensitive' } },
-              { email: { contains: search, mode: 'insensitive' } },
-              { telefone: { contains: search, mode: 'insensitive' } },
-              { bairro: { contains: search, mode: 'insensitive' } },
-              { cidade: { contains: search, mode: 'insensitive' } },
-              ...(phoneMatchIds.length > 0
-                ? [{ id: { in: phoneMatchIds } }]
-                : []),
-            ],
-          }
-        : {}),
     };
+
+    const andExtra: Prisma.LeadWhereInput[] = [];
+
+    // Cliente = carteira pessoal: admin/gerente nunca listam clientes do corretor.
+    if (isGestorCarteira) {
+      if (tipoFiltro === ContatoTipo.cliente) {
+        where.corretorId = requester.id;
+      } else if (!tipoFiltro) {
+        andExtra.push({
+          OR: [
+            { tipo: ContatoTipo.lead },
+            { tipo: ContatoTipo.cliente, corretorId: requester.id },
+          ],
+        });
+      }
+    }
+
+    if (search) {
+      andExtra.push({
+        OR: [
+          { nome: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { telefone: { contains: search, mode: 'insensitive' } },
+          { bairro: { contains: search, mode: 'insensitive' } },
+          { cidade: { contains: search, mode: 'insensitive' } },
+          ...(phoneMatchIds.length > 0
+            ? [{ id: { in: phoneMatchIds } }]
+            : []),
+        ],
+      });
+    }
+
+    if (andExtra.length > 0) {
+      where.AND = [
+        ...(Array.isArray(where.AND)
+          ? where.AND
+          : where.AND
+            ? [where.AND]
+            : []),
+        ...andExtra,
+      ];
+    }
 
     if (query.corretorId && !this.isCorretor(requester)) {
       const allowed = await this.teamScope.canAccessCorretor(
@@ -567,19 +793,75 @@ export class LeadsService {
       ];
     }
 
+    const tenantId = requireTenantId(requester);
+    const monCtx = await this.monitoramento.loadFunilContext(tenantId);
+    const monWhere = this.monitoramento.monitoramentoWhere(
+      query.monitoramento,
+      new Date(),
+      monCtx,
+    );
+    if (monWhere) {
+      where.AND = [
+        ...(Array.isArray(where.AND)
+          ? where.AND
+          : where.AND
+            ? [where.AND]
+            : []),
+        monWhere,
+      ];
+    }
+
     const [data, total] = await this.prisma.$transaction([
       this.prisma.lead.findMany({
         where,
         select: leadSelect,
-        orderBy: { updatedAt: 'desc' },
+        orderBy: prismaTableOrderBy(query.sort, 'nome'),
         skip: (page - 1) * limit,
         take: limit,
       }),
       this.prisma.lead.count({ where }),
     ]);
 
-    return {
+    const decorated = await this.monitoramento.decorateLeadsWithTarefas(
       data,
+      monCtx,
+      requester,
+    );
+
+    const leadIds = decorated.map((lead) => lead.id);
+    const docs =
+      leadIds.length === 0
+        ? []
+        : await this.prisma.documentacao.findMany({
+            where: { tenantId, leadId: { in: leadIds } },
+            orderBy: { updatedAt: 'desc' },
+            select: { leadId: true, status1: true, status2: true },
+          });
+    const latestDoc = new Map<
+      string,
+      { status1: string; status2: string }
+    >();
+    for (const doc of docs) {
+      if (!latestDoc.has(doc.leadId)) {
+        latestDoc.set(doc.leadId, {
+          status1: doc.status1,
+          status2: doc.status2,
+        });
+      }
+    }
+
+    return {
+      data: decorated.map((lead) => {
+        const fromBatch = latestDoc.get(lead.id);
+        const fromNested = lead.documentacoes?.[0];
+        return {
+          ...lead,
+          documentacaoStatus1:
+            fromBatch?.status1 ?? fromNested?.status1 ?? null,
+          documentacaoStatus2:
+            fromBatch?.status2 ?? fromNested?.status2 ?? null,
+        };
+      }),
       meta: {
         total,
         page,
@@ -603,16 +885,22 @@ export class LeadsService {
       throw new NotFoundException('Lead não encontrado.');
     }
 
-    // Leads perdidos só o admin consulta (módulo dedicado).
+    // Perdidos: admin vê leads; corretor vê os próprios clientes.
     if (lead.perdidoAt) {
-      if (requester.role !== Role.admin) {
+      const adminLead =
+        canViewLostLeads(requester) && lead.tipo === ContatoTipo.lead;
+      const corretorCliente =
+        isCorretorLike(requester.role) &&
+        lead.tipo === ContatoTipo.cliente &&
+        lead.corretorId === requester.id;
+      if (!adminLead && !corretorCliente) {
         throw new NotFoundException('Lead não encontrado.');
       }
-      return lead;
+      return this.decorateOne(lead, requester);
     }
 
     await this.ensureCanAccess(lead, requester);
-    return lead;
+    return this.decorateOne(lead, requester);
   }
 
   /**
@@ -623,23 +911,55 @@ export class LeadsService {
     requester: AuthenticatedUser,
   ): Promise<PaginatedLeads> {
     const tenantId = requireTenantId(requester);
-    if (requester.role !== Role.admin) {
+    if (!canViewLostLeads(requester)) {
       throw new ForbiddenException(
         'Apenas administradores podem ver leads perdidos.',
       );
     }
 
+    return this.findLostByTipo(tenantId, ContatoTipo.lead, query);
+  }
+
+  /**
+   * Lista clientes marcados como perdidos — exclusivo do corretor (própria carteira).
+   */
+  async findLostClientes(
+    query: QueryLeadsDto,
+    requester: AuthenticatedUser,
+  ): Promise<PaginatedLeads> {
+    const tenantId = requireTenantId(requester);
+    if (!isCorretorLike(requester.role)) {
+      throw new ForbiddenException(
+        'Apenas corretores e treinees podem ver perda de cliente.',
+      );
+    }
+
+    return this.findLostByTipo(tenantId, ContatoTipo.cliente, query, {
+      corretorId: requester.id,
+    });
+  }
+
+  private async findLostByTipo(
+    tenantId: string,
+    tipo: ContatoTipo,
+    query: QueryLeadsDto,
+    force?: { corretorId?: string },
+  ): Promise<PaginatedLeads> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const search = query.search?.trim();
 
     const where: Prisma.LeadWhereInput = {
       tenantId,
-      tipo: ContatoTipo.lead,
+      tipo,
       perdidoAt: { not: null },
+      ...(force?.corretorId
+        ? { corretorId: force.corretorId }
+        : query.corretorId
+          ? { corretorId: query.corretorId }
+          : {}),
       ...(query.origem ? { origem: query.origem } : {}),
       ...(query.interesse ? { interesse: query.interesse } : {}),
-      ...(query.corretorId ? { corretorId: query.corretorId } : {}),
       ...(search
         ? {
             OR: [
@@ -656,7 +976,7 @@ export class LeadsService {
       this.prisma.lead.findMany({
         where,
         select: leadSelect,
-        orderBy: { perdidoAt: 'desc' },
+        orderBy: prismaTableOrderBy(query.sort, 'nome'),
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -664,7 +984,7 @@ export class LeadsService {
     ]);
 
     return {
-      data,
+      data: data.map(withDocumentacaoStatus),
       meta: {
         total,
         page,
@@ -724,7 +1044,20 @@ export class LeadsService {
       await this.ensureStageIsValid(tenantId, dto.stage);
     }
 
-    return this.prisma.lead.update({
+    const currentStage =
+      dto.stage !== undefined
+        ? await this.prisma.lead.findFirst({
+            where: { id, tenantId },
+            select: { stage: true },
+          })
+        : null;
+    const stageChanged =
+      dto.stage !== undefined && currentStage && currentStage.stage !== dto.stage;
+    const timing = stageChanged
+      ? await this.monitoramento.stageChangeData(tenantId, dto.stage!)
+      : null;
+
+    const updated = await this.prisma.lead.update({
       where: { id },
       data: {
         ...(dto.nome !== undefined ? { nome: dto.nome.trim() } : {}),
@@ -745,6 +1078,12 @@ export class LeadsService {
         ...(dto.stage !== undefined ? { stage: dto.stage } : {}),
         ...(dto.prioridade !== undefined ? { prioridade: dto.prioridade } : {}),
         ...(dto.renda !== undefined ? { renda: dto.renda } : {}),
+        ...(dto.tipoRenda !== undefined
+          ? {
+              tipoRenda:
+                dto.tipoRenda === null ? null : dto.tipoRenda.trim() || null,
+            }
+          : {}),
         ...(dto.estadoCivil !== undefined
           ? {
               estadoCivil:
@@ -753,6 +1092,14 @@ export class LeadsService {
                   : dto.estadoCivil.trim() || null,
             }
           : {}),
+        ...(dto.orcamentoMax !== undefined
+          ? { orcamentoMax: dto.orcamentoMax }
+          : {}),
+        ...(dto.quartosMin !== undefined ? { quartosMin: dto.quartosMin } : {}),
+        ...(dto.vagasMin !== undefined ? { vagasMin: dto.vagasMin } : {}),
+        ...(dto.prospeccao !== undefined
+          ? { prospeccao: sanitizeProspeccao(dto.prospeccao) }
+          : {}),
         ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
         ...(assignment
           ? {
@@ -760,14 +1107,35 @@ export class LeadsService {
               equipeId: assignment.equipeId,
             }
           : {}),
+        ...(dto.createdAt !== undefined
+          ? {
+              createdAt:
+                parseOptionalCreatedAt(dto.createdAt) ?? undefined,
+            }
+          : {}),
+        ...(timing ?? {}),
       },
       select: leadSelect,
     });
+    if (!stageChanged) {
+      await this.monitoramento.recordMovement(id, 'edicao');
+    }
+    return this.decorateOne(updated, requester);
   }
 
   async updateStage(
     id: string,
-    dto: { stage: string; construtoraId?: string; empreendimentoId?: string },
+    dto: {
+      stage: string;
+      construtoraId?: string;
+      empreendimentoId?: string;
+      omitTriagem?: boolean;
+      temEntrada?: boolean;
+      valorEntrada?: number | null;
+      temFgts?: boolean;
+      valorFgts?: number | null;
+      temDependente?: boolean;
+    },
     requester: AuthenticatedUser,
   ): Promise<LeadEntity> {
     const tenantId = requireTenantId(requester);
@@ -799,26 +1167,38 @@ export class LeadsService {
     const isAnalise = stagePapel === FunilEtapaPapel.analise;
 
     if (isAnalise) {
-      construtoraId = dto.construtoraId ?? construtoraId;
-      empreendimentoId = dto.empreendimentoId ?? empreendimentoId;
-      if (!construtoraId || !empreendimentoId) {
-        throw new BadRequestException(
-          'Informe a construtora e o empreendimento ao enviar para análise.',
-        );
-      }
+      if (dto.construtoraId) construtoraId = dto.construtoraId;
+      if (dto.empreendimentoId) empreendimentoId = dto.empreendimentoId;
     }
+
+    const stageChanged = Boolean(stageAnterior && stageAnterior !== stage);
+    const timing = stageChanged
+      ? await this.monitoramento.stageChangeData(tenantId, stage)
+      : null;
 
     const lead = await this.prisma.lead.update({
       where: { id },
       data: {
         stage,
-        ...(isAnalise ? { construtoraId, empreendimentoId } : {}),
+        ...(isAnalise && (dto.construtoraId || dto.empreendimentoId)
+          ? { construtoraId, empreendimentoId }
+          : {}),
+        ...(timing ?? {}),
       },
       select: leadSelect,
     });
 
-    // Sempre registra na Triagem a mudança de etapa (mesmo sem relato manual).
+    // Alinha o snapshot de etapa nas fichas de documentação do lead.
     if (stageAnterior && stageAnterior !== stage) {
+      await this.prisma.documentacao.updateMany({
+        where: { tenantId, leadId: id },
+        data: { stageSituacao: stage },
+      });
+    }
+
+    // Registra na Triagem a mudança de etapa, salvo quando o funil vai
+    // consolidar um único evento após o modal de relato.
+    if (!dto.omitTriagem && stageAnterior && stageAnterior !== stage) {
       const [fromLabel, toLabel] = await Promise.all([
         this.resolveStageLabel(tenantId, stageAnterior),
         this.resolveStageLabel(tenantId, stage),
@@ -833,13 +1213,33 @@ export class LeadsService {
           origem: TriagemOrigem.funil,
         },
       });
+      await this.monitoramento.recordMovement(id, 'triagem');
     }
 
     if (isAnalise) {
-      await this.analiseService.ensureForLead(id, requester.id, tenantId);
+      await this.analiseService.ensureForLead(id, requester.id, tenantId, {
+        temEntrada: dto.temEntrada,
+        valorEntrada: dto.valorEntrada,
+        temFgts: dto.temFgts,
+        valorFgts: dto.valorFgts,
+        temDependente: dto.temDependente,
+      });
     }
 
-    return lead;
+    if (
+      tenantId === PLATFORM_TENANT_ID &&
+      stageChanged &&
+      stagePapel === FunilEtapaPapel.venda
+    ) {
+      await this.documentacao.ensureVendaFromFunilStage(
+        tenantId,
+        id,
+        requester.id,
+        stage,
+      );
+    }
+
+    return this.decorateOne(lead, requester);
   }
 
   /** Label amigável da etapa do funil (fallback para o slug). */
@@ -871,6 +1271,23 @@ export class LeadsService {
       throw new BadRequestException('Informe o motivo da exclusão.');
     }
 
+    if (isCorretorLike(requester.role)) {
+      const catalogMotivo = await this.prisma.catalogItem.findFirst({
+        where: {
+          tenantId,
+          type: CatalogType.motivo_perda,
+          label: motivoTrim,
+          active: true,
+        },
+        select: { id: true },
+      });
+      if (!catalogMotivo) {
+        throw new BadRequestException(
+          'Use um motivo de perda cadastrado pela gerência.',
+        );
+      }
+    }
+
     const existing = await this.prisma.lead.findFirst({
       where: { id, tenantId },
       select: leadSelect,
@@ -879,38 +1296,110 @@ export class LeadsService {
       throw new NotFoundException('Lead não encontrado.');
     }
 
-    if (existing.tipo === ContatoTipo.cliente) {
-      await this.prisma.lead.delete({ where: { id } });
-      return {
-        ...existing,
-        perdidoAt: new Date(),
-        motivoPerda: motivoTrim,
-        perdidoPorId: requester.id,
-        perdidoPor: { id: requester.id, name: requester.name },
-      };
-    }
-
     // Move para a etapa com papel perdido (fallback slug legado).
+    // Clientes e leads usam soft-delete (perdidoAt) — clientes vão para
+    // "Perda de cliente" (corretor); leads para "Leads Perdidos" (admin).
     const perdidoStage =
       (await this.funis.getSlugByPapel(tenantId, FunilEtapaPapel.perdido)) ??
       undefined;
 
-    return this.prisma.lead.update({
+    const timing = perdidoStage
+      ? await this.monitoramento.stageChangeData(tenantId, perdidoStage)
+      : null;
+
+    const updated = await this.prisma.lead.update({
       where: { id },
       data: {
         perdidoAt: new Date(),
         motivoPerda: motivoTrim,
         perdidoPorId: requester.id,
         ...(perdidoStage ? { stage: perdidoStage } : {}),
+        ...(timing ?? {}),
       },
       select: leadSelect,
     });
+    return this.decorateOne(updated, requester);
+  }
+
+  /**
+   * Soft-delete em lote: um único update, sem decorate por item
+   * (o decorate individual estoura timeout/CPU em dezenas de leads).
+   */
+  async markLostMany(
+    ids: string[],
+    motivo: string,
+    requester: AuthenticatedUser,
+  ): Promise<{ ok: true; updated: number; skipped: number; ids: string[] }> {
+    const tenantId = requireTenantId(requester);
+    const unique = [...new Set(ids)];
+    const motivoTrim = motivo.trim();
+    if (!motivoTrim) {
+      throw new BadRequestException('Informe o motivo da exclusão.');
+    }
+
+    if (isCorretorLike(requester.role)) {
+      const catalogMotivo = await this.prisma.catalogItem.findFirst({
+        where: {
+          tenantId,
+          type: CatalogType.motivo_perda,
+          label: motivoTrim,
+          active: true,
+        },
+        select: { id: true },
+      });
+      if (!catalogMotivo) {
+        throw new BadRequestException(
+          'Use um motivo de perda cadastrado pela gerência.',
+        );
+      }
+    }
+
+    const rows = await this.prisma.lead.findMany({
+      where: {
+        tenantId,
+        id: { in: unique },
+        perdidoAt: null,
+      },
+      select: { id: true, corretorId: true, equipeId: true },
+    });
+
+    const allowed = await this.filterAccessibleLeadIds(rows, requester);
+
+    if (allowed.length === 0) {
+      return { ok: true, updated: 0, skipped: unique.length, ids: [] };
+    }
+
+    const perdidoStage =
+      (await this.funis.getSlugByPapel(tenantId, FunilEtapaPapel.perdido)) ??
+      undefined;
+    const timing = perdidoStage
+      ? await this.monitoramento.stageChangeData(tenantId, perdidoStage)
+      : null;
+    const now = new Date();
+
+    await this.prisma.lead.updateMany({
+      where: { tenantId, id: { in: allowed }, perdidoAt: null },
+      data: {
+        perdidoAt: now,
+        motivoPerda: motivoTrim,
+        perdidoPorId: requester.id,
+        ...(perdidoStage ? { stage: perdidoStage } : {}),
+        ...(timing ?? {}),
+      },
+    });
+
+    return {
+      ok: true,
+      updated: allowed.length,
+      skipped: unique.length - allowed.length,
+      ids: allowed,
+    };
   }
 
   async remove(id: string, requester: AuthenticatedUser): Promise<void> {
     const tenantId = requireTenantId(requester);
-    // Hard delete só para admin, e apenas de leads já perdidos.
-    if (requester.role !== Role.admin) {
+    // Hard delete só para admin/super_admin, e apenas de leads já perdidos.
+    if (!canViewLostLeads(requester)) {
       throw new ForbiddenException(
         'Para remover um lead da operação, informe o motivo — ele irá para Leads Perdidos.',
       );
@@ -927,12 +1416,112 @@ export class LeadsService {
         'Marque o lead como perdido antes de excluí-lo definitivamente.',
       );
     }
-    await this.prisma.lead.delete({ where: { id } });
+
+    // Comissão aponta para Documentacao com onDelete: Restrict — limpar antes do cascade.
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const docs = await tx.documentacao.findMany({
+          where: { tenantId, leadId: id },
+          select: { id: true },
+        });
+        const docIds = docs.map((d) => d.id);
+        if (docIds.length > 0) {
+          await tx.financeiroComissao.deleteMany({
+            where: { tenantId, documentacaoId: { in: docIds } },
+          });
+        }
+        await tx.lead.delete({ where: { id } });
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2003'
+      ) {
+        throw new BadRequestException(
+          'Não foi possível excluir o lead: há registros financeiros ou vínculos que impedem a remoção.',
+        );
+      }
+      throw err;
+    }
+  }
+
+  async removeMany(
+    ids: string[],
+    requester: AuthenticatedUser,
+  ): Promise<{ ok: true; deleted: number; failed: number; failedIds: string[] }> {
+    const tenantId = requireTenantId(requester);
+    if (!canViewLostLeads(requester)) {
+      throw new ForbiddenException(
+        'Para remover um lead da operação, informe o motivo — ele irá para Leads Perdidos.',
+      );
+    }
+
+    const unique = [...new Set(ids)];
+    const leads = await this.prisma.lead.findMany({
+      where: {
+        tenantId,
+        id: { in: unique },
+        perdidoAt: { not: null },
+      },
+      select: { id: true },
+    });
+    const allowed = leads.map((l) => l.id);
+    const failedIds: string[] = unique.filter((id) => !allowed.includes(id));
+
+    if (allowed.length === 0) {
+      return { ok: true, deleted: 0, failed: failedIds.length, failedIds };
+    }
+
+    const CHUNK = 40;
+    let deleted = 0;
+    const pending = [...allowed];
+    while (pending.length > 0) {
+      const chunk = pending.splice(0, CHUNK);
+      const docs = await this.prisma.documentacao.findMany({
+        where: { tenantId, leadId: { in: chunk } },
+        select: { id: true },
+      });
+      const docIds = docs.map((d) => d.id);
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          if (docIds.length > 0) {
+            await tx.financeiroComissao.deleteMany({
+              where: { tenantId, documentacaoId: { in: docIds } },
+            });
+          }
+          await tx.lead.deleteMany({
+            where: { tenantId, id: { in: chunk } },
+          });
+        });
+        deleted += chunk.length;
+      } catch (err) {
+        if (
+          !(
+            err instanceof Prisma.PrismaClientKnownRequestError &&
+            err.code === 'P2003'
+          )
+        ) {
+          throw err;
+        }
+        for (const id of chunk) {
+          try {
+            await this.remove(id, requester);
+            deleted += 1;
+          } catch {
+            failedIds.push(id);
+          }
+        }
+      }
+    }
+
+    return { ok: true, deleted, failed: failedIds.length, failedIds };
   }
 
   /**
    * Lista corretores ativos para o select de atribuição.
-   * Admin/analista: todos. Gerente: só da própria equipe. Corretor: apenas o próprio.
+   * Admin/analista: todos os corretores do tenant.
+   * Gerente: apenas corretores da própria equipe.
+   * Corretor: apenas o próprio.
    * Inclui gerenteId da equipe do corretor (para auto-preencher documentação).
    */
   async listAssignees(requester: AuthenticatedUser): Promise<
@@ -997,13 +1586,44 @@ export class LeadsService {
       return [mapAssignee(self)];
     }
 
-    const ids = await this.teamScope.getVisibleCorretorIds(requester);
+    // Admin e analista veem todos os corretores do tenant.
+    // Gerente usa o escopo da equipe (TeamScopeService).
+    const seeAllCorretores =
+      requester.role === Role.admin ||
+      requester.role === Role.super_admin ||
+      requester.role === Role.analista;
+    const ids = seeAllCorretores
+      ? null
+      : await this.teamScope.getVisibleCorretorIds(requester);
+
+    // Analista/admin/gerente: inclui carteiras de gestores no funil/análise.
+    const includeCarteiraGestores =
+      requester.role === Role.admin ||
+      requester.role === Role.super_admin ||
+      requester.role === Role.gerente ||
+      requester.role === Role.analista;
+
     const rows = await this.prisma.user.findMany({
       where: {
         tenantId,
         status: UserStatus.ativo,
-        role: Role.corretor,
-        ...(ids !== null ? { id: { in: ids } } : {}),
+        OR: [
+          {
+            role: { in: [Role.corretor, Role.treinee] },
+            ...(ids !== null
+              ? {
+                  id: {
+                    in: ids.filter((id) => id !== requester.id),
+                  },
+                }
+              : {}),
+          },
+          ...(includeCarteiraGestores
+            ? requester.role === Role.analista
+              ? [{ role: Role.admin }, { role: Role.gerente }]
+              : [{ id: requester.id }]
+            : []),
+        ],
       },
       select: assigneeSelect,
       orderBy: { name: 'asc' },
@@ -1014,7 +1634,7 @@ export class LeadsService {
   // --- Helpers de RBAC ---
 
   private isCorretor(requester: AuthenticatedUser): boolean {
-    return requester.role === Role.corretor;
+    return isCorretorLike(requester.role);
   }
 
   private async ensureCanAccess(
@@ -1029,6 +1649,54 @@ export class LeadsService {
     if (!allowed) {
       throw new NotFoundException('Lead não encontrado.');
     }
+  }
+
+  private async filterAccessibleLeadIds(
+    rows: Array<{
+      id: string;
+      corretorId: string | null;
+      equipeId: string | null;
+    }>,
+    requester: AuthenticatedUser,
+  ): Promise<string[]> {
+    const visible = await this.teamScope.getVisibleCorretorIds(requester);
+    let gerenteEquipeIds: Set<string> | null = null;
+    if (requester.role === Role.gerente) {
+      const equipes = await this.prisma.equipe.findMany({
+        where: { gerenteId: requester.id, tenantId: requireTenantId(requester) },
+        select: { id: true },
+      });
+      gerenteEquipeIds = new Set(equipes.map((e) => e.id));
+    }
+
+    return rows
+      .filter((lead) => {
+        if (!lead.corretorId) {
+          if (
+            requester.role === Role.admin ||
+            requester.role === Role.super_admin ||
+            requester.role === Role.analista
+          ) {
+            return true;
+          }
+          if (requester.role === Role.gerente) {
+            if (!lead.equipeId) return true;
+            return gerenteEquipeIds?.has(lead.equipeId) ?? false;
+          }
+          return false;
+        }
+        if (
+          (requester.role === Role.admin ||
+            requester.role === Role.super_admin ||
+            requester.role === Role.gerente) &&
+          lead.corretorId === requester.id
+        ) {
+          return true;
+        }
+        if (visible === null) return true;
+        return visible.includes(lead.corretorId);
+      })
+      .map((l) => l.id);
   }
 
   private async ensureExistsAndAccessible(
@@ -1049,8 +1717,7 @@ export class LeadsService {
   /**
    * Resolve corretor + equipe para create/update.
    * - Corretor: sempre ele mesmo
-   * - Admin: equipe (gerente) e/ou corretor da equipe
-   * - Gerente: corretor da equipe ou pool da própria equipe
+   * - Admin/gerente: equipe e/ou corretor; também podem atribuir a si (carteira própria)
    */
   private async resolveAssignment(
     dto: { corretorId?: string | null; equipeId?: string | null },
@@ -1075,32 +1742,32 @@ export class LeadsService {
     let equipeId =
       dto.equipeId && dto.equipeId.trim() !== '' ? dto.equipeId : null;
 
-    if (requester.role === Role.gerente && !equipeId) {
-      const equipe = await this.prisma.equipe.findFirst({
-        where: {
-          tenantId,
-          gerenteId: requester.id,
-          status: UserStatus.ativo,
-        },
-        select: { id: true },
-      });
-      equipeId = equipe?.id ?? null;
-    }
+    // Sem corretor e sem equipe: lead fica sem vínculo (admin/gerente).
+    // Não forçar a equipe do gerente automaticamente.
 
     if (corretorId) {
       await this.ensureCorretorAssignable(corretorId, requester);
-      const corretor = await this.prisma.user.findFirst({
+      const owner = await this.prisma.user.findFirst({
         where: { id: corretorId, tenantId },
-        select: { equipeId: true },
+        select: { equipeId: true, role: true },
       });
-      if (equipeId) {
-        if (corretor?.equipeId !== equipeId) {
+
+      if (owner?.role === Role.gerente || owner?.role === Role.admin) {
+        if (!equipeId && owner.role === Role.gerente) {
+          const equipe = await this.prisma.equipe.findFirst({
+            where: { gerenteId: corretorId, tenantId },
+            select: { id: true },
+          });
+          equipeId = equipe?.id ?? owner.equipeId ?? null;
+        }
+      } else if (equipeId) {
+        if (owner?.equipeId !== equipeId) {
           throw new BadRequestException(
             'O corretor não pertence à equipe/gerente selecionado.',
           );
         }
       } else {
-        equipeId = corretor?.equipeId ?? null;
+        equipeId = owner?.equipeId ?? null;
       }
     } else if (equipeId) {
       await this.ensureEquipeAssignable(equipeId, requester);
@@ -1123,14 +1790,7 @@ export class LeadsService {
         'Equipe informada não existe ou está inativa.',
       );
     }
-    if (
-      requester.role === Role.gerente &&
-      equipe.gerenteId !== requester.id
-    ) {
-      throw new ForbiddenException(
-        'Você só pode atribuir leads à sua própria equipe.',
-      );
-    }
+    // Admin e gerente podem enviar leads a qualquer equipe do tenant.
   }
 
   private async ensureCorretorAssignable(
@@ -1138,18 +1798,42 @@ export class LeadsService {
     requester: AuthenticatedUser,
   ): Promise<void> {
     const tenantId = requireTenantId(requester);
-    const count = await this.prisma.user.count({
+    const target = await this.prisma.user.findFirst({
       where: {
         id: corretorId,
         tenantId,
         status: UserStatus.ativo,
-        role: Role.corretor,
+        role: { in: [Role.corretor, Role.treinee, Role.admin, Role.gerente] },
       },
+      select: { id: true, role: true },
     });
-    if (count === 0) {
+    if (!target) {
       throw new BadRequestException(
-        'Corretor informado não existe ou está inativo.',
+        'Responsável informado não existe ou está inativo.',
       );
+    }
+
+    // Admin/gerente atribuindo a si mesmos (carteira própria).
+    if (
+      (requester.role === Role.admin || requester.role === Role.gerente) &&
+      corretorId === requester.id
+    ) {
+      return;
+    }
+
+    // Admin: qualquer corretor/admin/gerente do tenant.
+    if (requester.role === Role.admin) {
+      return;
+    }
+
+    // Gerente: qualquer corretor do tenant (própria ou outra equipe) ou a si.
+    if (requester.role === Role.gerente) {
+      if (!isCorretorLike(target.role)) {
+        throw new ForbiddenException(
+          'Você só pode atribuir leads a corretores, treinees ou a si mesmo.',
+        );
+      }
+      return;
     }
 
     const allowed = await this.teamScope.canAccessCorretor(
@@ -1177,5 +1861,97 @@ export class LeadsService {
     if (!validStages.includes(stage)) {
       throw new BadRequestException('Etapa do funil inválida.');
     }
+  }
+
+  adiarPrazo(id: string, dto: AdiarPrazoDto, requester: AuthenticatedUser) {
+    return this.monitoramento.adiarPrazo(id, dto, requester);
+  }
+
+  listPrazoAdiamentos(id: string, requester: AuthenticatedUser) {
+    return this.monitoramento.listAdiamentos(id, requester);
+  }
+
+  listCorretoresMonitoramento(requester: AuthenticatedUser) {
+    return this.monitoramento.listCorretores(requester);
+  }
+
+  syncMonitoramentoNotificacoes(requester: AuthenticatedUser) {
+    return this.monitoramento.syncNotificacoes(requester);
+  }
+
+  async checkImportDuplicates(
+    dto: CheckImportLeadsDto,
+    requester: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(requester);
+    const tipo =
+      dto.tipo === 'cliente' ? ContatoTipo.cliente : ContatoTipo.lead;
+    const existing = await this.loadImportExistingIndex(tenantId, tipo);
+    const kindLabel = tipo === ContatoTipo.cliente ? 'cliente' : 'lead';
+    const phones: Record<string, string> = {};
+    const emails: Record<string, string> = {};
+    for (const raw of dto.telefones ?? []) {
+      const key = nationalPhoneKey(raw);
+      const nome = key ? existing.phone.get(key) : undefined;
+      if (key && nome) phones[key] = nome;
+    }
+    for (const raw of dto.emails ?? []) {
+      const key = raw.trim().toLowerCase();
+      if (isSyntheticEmail(key)) continue;
+      const nome = existing.email.get(key);
+      if (nome) emails[key] = nome;
+    }
+    return { tipo: kindLabel, phones, emails };
+  }
+
+  private async loadImportExistingIndex(
+    tenantId: string,
+    tipo: ContatoTipo,
+  ) {
+    const rows = await this.prisma.lead.findMany({
+      where: { tenantId, tipo, perdidoAt: null },
+      select: { nome: true, telefone: true, email: true },
+    });
+    const phone = new Map<string, string>();
+    const email = new Map<string, string>();
+    for (const row of rows) {
+      const phoneKey = nationalPhoneKey(row.telefone);
+      if (phoneKey && !phone.has(phoneKey)) phone.set(phoneKey, row.nome);
+      const emailKey = row.email.trim().toLowerCase();
+      if (!isSyntheticEmail(emailKey) && !email.has(emailKey)) {
+        email.set(emailKey, row.nome);
+      }
+    }
+    return { phone, email };
+  }
+
+  private async decorateOne(
+    lead: LeadEntity,
+    requester: AuthenticatedUser,
+  ): Promise<LeadWithMonitoramento> {
+    const tenantId = requireTenantId(requester);
+    const fresh =
+      (await this.prisma.lead.findFirst({
+        where: { id: lead.id, tenantId },
+        select: leadSelect,
+      })) ?? lead;
+    const ctx = await this.monitoramento.loadFunilContext(tenantId);
+    const decorated = await this.monitoramento.decorateLeadWithTarefas(
+      fresh,
+      ctx,
+      requester,
+    );
+    const latest = await this.prisma.documentacao.findFirst({
+      where: { tenantId, leadId: fresh.id },
+      orderBy: { updatedAt: 'desc' },
+      select: { status1: true, status2: true },
+    });
+    return {
+      ...decorated,
+      documentacaoStatus1:
+        latest?.status1 ?? fresh.documentacoes?.[0]?.status1 ?? null,
+      documentacaoStatus2:
+        latest?.status2 ?? fresh.documentacoes?.[0]?.status2 ?? null,
+    };
   }
 }

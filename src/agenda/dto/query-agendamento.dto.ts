@@ -5,9 +5,9 @@ import {
 } from './create-agendamento.dto';
 
 export class QueryAgendamentoDto {
-  /** Admin/gerente: filtra pelo corretor dono do lead. */
+  /** Admin/gerente: filtra pela agenda de um corretor (ou gerente, se admin). */
   @IsOptional()
-  @IsUUID('4', { message: 'Corretor inválido.' })
+  @IsUUID('4', { message: 'Usuário inválido.' })
   corretorId?: string;
 
   /** Admin/gerente: filtra pela equipe (membros + gerente). */

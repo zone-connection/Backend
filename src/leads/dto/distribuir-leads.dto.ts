@@ -4,8 +4,10 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsOptional,
   IsUUID,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -19,7 +21,7 @@ export class DistribuirEquipeItemDto {
   quantidade!: number;
 }
 
-/** Admin: divide leads sem dono/equipe entre equipes. */
+/** Admin/gerente: divide leads do pool do admin entre equipes. */
 export class DistribuirEquipesDto {
   @IsIn(['equipes'])
   modo!: 'equipes';
@@ -31,14 +33,36 @@ export class DistribuirEquipesDto {
   alocacoes!: DistribuirEquipeItemDto[];
 }
 
-/** Gerente: round-robin entre corretores da equipe. */
+export class DistribuirCorretorItemDto {
+  @IsUUID('4')
+  corretorId!: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  quantidade!: number;
+}
+
+/**
+ * Admin/gerente: envia leads do pool do admin aos corretores.
+ * - `alocacoes`: quantidades por corretor (preferido)
+ * - `porCorretor`: round-robin legado entre todos os ativos
+ */
 export class DistribuirCorretoresDto {
   @IsIn(['corretores'])
   modo!: 'corretores';
 
-  /** Quantidade que cada corretor recebe por rodada da fila. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => DistribuirCorretorItemDto)
+  alocacoes?: DistribuirCorretorItemDto[];
+
+  /** Quantidade que cada corretor recebe por rodada (só se não houver alocacoes). */
+  @ValidateIf((o: DistribuirCorretoresDto) => !o.alocacoes?.length)
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  porCorretor!: number;
+  porCorretor?: number;
 }
