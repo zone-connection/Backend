@@ -93,7 +93,7 @@ export class EmpreendimentosService {
       select: empreendimentoSelect,
       orderBy: prismaTableOrderBy(query.sort, "nome"),
     });
-    return items.map((item) => this.present(item));
+    return this.attachMatchResumo(items.map((item) => this.present(item)));
   }
 
   async findOne(id: string, requester: AuthenticatedUser) {
@@ -103,7 +103,8 @@ export class EmpreendimentosService {
       select: empreendimentoSelect,
     });
     if (!item) throw new NotFoundException("Empreendimento não encontrado.");
-    return this.present(item);
+    const [presented] = await this.attachMatchResumo([this.present(item)]);
+    return presented;
   }
 
   private async findRow(id: string, requester: AuthenticatedUser) {
@@ -302,6 +303,54 @@ export class EmpreendimentosService {
       .then((item) => this.present(item));
   }
 
+  private async attachMatchResumo<
+    T extends { id: string },
+  >(
+    items: Array<
+      T & {
+        matchTotal?: number;
+        matchMuitoCompativeis?: number;
+        matchInteressePrevio?: number;
+        matchComputedAt?: string | null;
+      }
+    >,
+  ) {
+    if (items.length === 0) return items;
+    try {
+      const rows = await this.prisma.empreendimento.findMany({
+        where: { id: { in: items.map((item) => item.id) } },
+        select: {
+          id: true,
+          matchTotal: true,
+          matchMuitoCompativeis: true,
+          matchInteressePrevio: true,
+          matchComputedAt: true,
+        },
+      });
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      return items.map((item) => {
+        const row = byId.get(item.id);
+        return {
+          ...item,
+          matchTotal: row?.matchTotal ?? 0,
+          matchMuitoCompativeis: row?.matchMuitoCompativeis ?? 0,
+          matchInteressePrevio: row?.matchInteressePrevio ?? 0,
+          matchComputedAt: row?.matchComputedAt
+            ? row.matchComputedAt.toISOString()
+            : null,
+        };
+      });
+    } catch {
+      return items.map((item) => ({
+        ...item,
+        matchTotal: item.matchTotal ?? 0,
+        matchMuitoCompativeis: item.matchMuitoCompativeis ?? 0,
+        matchInteressePrevio: item.matchInteressePrevio ?? 0,
+        matchComputedAt: item.matchComputedAt ?? null,
+      }));
+    }
+  }
+
   private present(item: EmpreendimentoRow) {
     const stored = resolveEmpreendimentoImages(item);
     const { tenantId: _tenantId, previsaoEntrega, ...rest } = item;
@@ -310,6 +359,10 @@ export class EmpreendimentosService {
       previsaoEntrega: previsaoEntrega
         ? previsaoEntrega.toISOString().slice(0, 10)
         : null,
+      matchTotal: 0,
+      matchMuitoCompativeis: 0,
+      matchInteressePrevio: 0,
+      matchComputedAt: null as string | null,
       imagens: stored.map((image) => image.url),
       imagemUrl: stored[0]?.url ?? null,
     };

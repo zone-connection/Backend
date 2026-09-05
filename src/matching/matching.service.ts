@@ -91,7 +91,9 @@ export class MatchingService {
     const tenantId = requireTenantId(requester);
     const emp = await this.loadEmpreendimento(empreendimentoId, tenantId);
     const matches = await this.computeMatches(tenantId, emp);
-    return this.summarize(empreendimentoId, matches);
+    const summary = this.summarize(empreendimentoId, matches);
+    await this.persistSummarySafe(empreendimentoId, summary);
+    return summary;
   }
 
   /** Calcula matches e notifica corretores donos (agregado, idempotente). */
@@ -101,6 +103,10 @@ export class MatchingService {
   ) {
     const emp = await this.loadEmpreendimento(empreendimentoId, tenantId);
     const matches = await this.computeMatches(tenantId, emp);
+    await this.persistSummarySafe(
+      empreendimentoId,
+      this.summarize(empreendimentoId, matches),
+    );
     if (matches.length === 0) return;
 
     const byCorretor = new Map<
@@ -135,6 +141,40 @@ export class MatchingService {
         });
       }),
     );
+  }
+
+  private async persistSummarySafe(
+    empreendimentoId: string,
+    summary: {
+      total: number;
+      muitoCompativeis: number;
+      comInteressePrevio: number;
+    },
+  ) {
+    try {
+      await this.persistSummary(empreendimentoId, summary);
+    } catch {
+      // A listagem e o dialog não podem cair se o resumo ainda não existir no banco.
+    }
+  }
+
+  private async persistSummary(
+    empreendimentoId: string,
+    summary: {
+      total: number;
+      muitoCompativeis: number;
+      comInteressePrevio: number;
+    },
+  ) {
+    await this.prisma.empreendimento.update({
+      where: { id: empreendimentoId },
+      data: {
+        matchTotal: summary.total,
+        matchMuitoCompativeis: summary.muitoCompativeis,
+        matchInteressePrevio: summary.comInteressePrevio,
+        matchComputedAt: new Date(),
+      },
+    });
   }
 
   private summarize(empreendimentoId: string, matches: EmpreendimentoMatch[]) {

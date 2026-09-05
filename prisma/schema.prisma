@@ -814,6 +814,12 @@ model Empreendimento {
   oruloStatus       String?
   oruloSyncedAt     DateTime?
 
+  /// Resumo do último matching (clientes compatíveis).
+  matchTotal              Int       @default(0)
+  matchMuitoCompativeis   Int       @default(0)
+  matchInteressePrevio    Int       @default(0)
+  matchComputedAt         DateTime?
+
   documentacoes Documentacao[]
   propostas     Proposta[]
   leads         Lead[]
