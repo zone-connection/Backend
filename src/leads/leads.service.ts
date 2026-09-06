@@ -29,7 +29,11 @@ import { AnaliseService } from '../analise/analise.service';
 import { FunisService } from '../funis/funis.service';
 import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.service';
 import { DocumentacaoService } from '../documentacao/documentacao.service';
-import { leadSelect, LeadEntity } from './lead-select';
+import {
+  activeLeadSelect,
+  normalizeLeadEntity,
+  LeadEntity,
+} from './lead-select';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
 import { QueryLeadsDto } from './dto/query-leads.dto';
@@ -169,6 +173,14 @@ export class LeadsService {
         renda: dto.renda ?? null,
         tipoRenda: dto.tipoRenda?.trim() || null,
         estadoCivil: dto.estadoCivil?.trim() || null,
+        ...(this.prisma.contatoContratoCols
+          ? {
+              cpf: dto.cpf?.trim() || null,
+              rg: dto.rg?.trim() || null,
+              endereco: dto.endereco?.trim() || null,
+              cep: dto.cep?.trim() || null,
+            }
+          : {}),
         orcamentoMax: dto.orcamentoMax ?? null,
         quartosMin: dto.quartosMin ?? null,
         vagasMin: dto.vagasMin ?? null,
@@ -179,7 +191,7 @@ export class LeadsService {
         ...(createdAt ? { createdAt } : {}),
         ...timing,
       },
-      select: leadSelect,
+      select: activeLeadSelect(this.prisma.contatoContratoCols),
     });
     return this.decorateOne(created, requester);
   }
@@ -307,7 +319,7 @@ export class LeadsService {
             corretorId,
             ...importTiming,
           },
-          select: leadSelect,
+          select: activeLeadSelect(this.prisma.contatoContratoCols),
         });
         created.push(lead);
       } catch (err) {
@@ -814,7 +826,7 @@ export class LeadsService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.lead.findMany({
         where,
-        select: leadSelect,
+        select: activeLeadSelect(this.prisma.contatoContratoCols),
         orderBy: prismaTableOrderBy(query.sort, 'nome'),
         skip: (page - 1) * limit,
         take: limit,
@@ -855,7 +867,7 @@ export class LeadsService {
         const fromBatch = latestDoc.get(lead.id);
         const fromNested = lead.documentacoes?.[0];
         return {
-          ...lead,
+          ...normalizeLeadEntity(lead as unknown as Record<string, unknown>),
           documentacaoStatus1:
             fromBatch?.status1 ?? fromNested?.status1 ?? null,
           documentacaoStatus2:
@@ -878,7 +890,7 @@ export class LeadsService {
     const tenantId = requireTenantId(requester);
     const lead = await this.prisma.lead.findFirst({
       where: { id, tenantId },
-      select: leadSelect,
+      select: activeLeadSelect(this.prisma.contatoContratoCols),
     });
 
     if (!lead) {
@@ -975,7 +987,7 @@ export class LeadsService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.lead.findMany({
         where,
-        select: leadSelect,
+        select: activeLeadSelect(this.prisma.contatoContratoCols),
         orderBy: prismaTableOrderBy(query.sort, 'nome'),
         skip: (page - 1) * limit,
         take: limit,
@@ -1092,6 +1104,21 @@ export class LeadsService {
                   : dto.estadoCivil.trim() || null,
             }
           : {}),
+        ...(this.prisma.contatoContratoCols && dto.cpf !== undefined
+          ? { cpf: dto.cpf === null ? null : dto.cpf.trim() || null }
+          : {}),
+        ...(this.prisma.contatoContratoCols && dto.rg !== undefined
+          ? { rg: dto.rg === null ? null : dto.rg.trim() || null }
+          : {}),
+        ...(this.prisma.contatoContratoCols && dto.endereco !== undefined
+          ? {
+              endereco:
+                dto.endereco === null ? null : dto.endereco.trim() || null,
+            }
+          : {}),
+        ...(this.prisma.contatoContratoCols && dto.cep !== undefined
+          ? { cep: dto.cep === null ? null : dto.cep.trim() || null }
+          : {}),
         ...(dto.orcamentoMax !== undefined
           ? { orcamentoMax: dto.orcamentoMax }
           : {}),
@@ -1115,7 +1142,7 @@ export class LeadsService {
           : {}),
         ...(timing ?? {}),
       },
-      select: leadSelect,
+      select: activeLeadSelect(this.prisma.contatoContratoCols),
     });
     if (!stageChanged) {
       await this.monitoramento.recordMovement(id, 'edicao');
@@ -1185,7 +1212,7 @@ export class LeadsService {
           : {}),
         ...(timing ?? {}),
       },
-      select: leadSelect,
+      select: activeLeadSelect(this.prisma.contatoContratoCols),
     });
 
     // Alinha o snapshot de etapa nas fichas de documentação do lead.
@@ -1290,7 +1317,7 @@ export class LeadsService {
 
     const existing = await this.prisma.lead.findFirst({
       where: { id, tenantId },
-      select: leadSelect,
+      select: activeLeadSelect(this.prisma.contatoContratoCols),
     });
     if (!existing) {
       throw new NotFoundException('Lead não encontrado.');
@@ -1316,7 +1343,7 @@ export class LeadsService {
         ...(perdidoStage ? { stage: perdidoStage } : {}),
         ...(timing ?? {}),
       },
-      select: leadSelect,
+      select: activeLeadSelect(this.prisma.contatoContratoCols),
     });
     return this.decorateOne(updated, requester);
   }
@@ -1930,11 +1957,14 @@ export class LeadsService {
     requester: AuthenticatedUser,
   ): Promise<LeadWithMonitoramento> {
     const tenantId = requireTenantId(requester);
-    const fresh =
+    const loaded =
       (await this.prisma.lead.findFirst({
         where: { id: lead.id, tenantId },
-        select: leadSelect,
+        select: activeLeadSelect(this.prisma.contatoContratoCols),
       })) ?? lead;
+    const fresh = normalizeLeadEntity(
+      loaded as unknown as Record<string, unknown>,
+    );
     const ctx = await this.monitoramento.loadFunilContext(tenantId);
     const decorated = await this.monitoramento.decorateLeadWithTarefas(
       fresh,

@@ -97,6 +97,30 @@ export class UpdateLeadDto {
   @MaxLength(40)
   estadoCivil?: string | null;
 
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @MaxLength(20)
+  cpf?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @MaxLength(20)
+  rg?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @MaxLength(200)
+  endereco?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @MaxLength(12)
+  cep?: string | null;
+
   /** Orçamento máximo para imóvel (opcional). null limpa o valor. */
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined)

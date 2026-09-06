@@ -16,13 +16,29 @@ export const leadSelect = {
   renda: true,
   tipoRenda: true,
   estadoCivil: true,
+  cpf: true,
+  rg: true,
+  endereco: true,
+  cep: true,
   orcamentoMax: true,
   quartosMin: true,
   vagasMin: true,
   prospeccao: true,
   tags: true,
   corretorId: true,
-  corretor: { select: { id: true, name: true } },
+  corretor: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      creci: true,
+      cpf: true,
+      rg: true,
+      endereco: true,
+      cep: true,
+    },
+  },
   equipeId: true,
   equipe: { select: { id: true, name: true } },
   construtoraId: true,
@@ -66,4 +82,55 @@ export const leadSelect = {
   updatedAt: true,
 } satisfies Prisma.LeadSelect;
 
+/** Sem colunas novas — listagem/login continuam se a migration ainda não rodou. */
+export const leadSelectSafe = {
+  ...leadSelect,
+  cpf: false,
+  rg: false,
+  endereco: false,
+  cep: false,
+  corretor: { select: { id: true, name: true } },
+} satisfies Prisma.LeadSelect;
+
 export type LeadEntity = Prisma.LeadGetPayload<{ select: typeof leadSelect }>;
+
+export function activeLeadSelect(hasContratoCols: boolean) {
+  return hasContratoCols ? leadSelect : leadSelectSafe;
+}
+
+export function normalizeLeadEntity(row: Record<string, unknown>): LeadEntity {
+  const corretor = row.corretor as
+    | {
+        id: string;
+        name: string;
+        email?: string | null;
+        phone?: string | null;
+        creci?: string | null;
+        cpf?: string | null;
+        rg?: string | null;
+        endereco?: string | null;
+        cep?: string | null;
+      }
+    | null
+    | undefined;
+  return {
+    ...(row as LeadEntity),
+    cpf: (row.cpf as string | null | undefined) ?? null,
+    rg: (row.rg as string | null | undefined) ?? null,
+    endereco: (row.endereco as string | null | undefined) ?? null,
+    cep: (row.cep as string | null | undefined) ?? null,
+    corretor: corretor
+      ? {
+          id: corretor.id,
+          name: corretor.name,
+          email: corretor.email ?? null,
+          phone: corretor.phone ?? null,
+          creci: corretor.creci ?? null,
+          cpf: corretor.cpf ?? null,
+          rg: corretor.rg ?? null,
+          endereco: corretor.endereco ?? null,
+          cep: corretor.cep ?? null,
+        }
+      : null,
+  };
+}

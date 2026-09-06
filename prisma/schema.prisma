@@ -294,6 +294,11 @@ model User {
   cargo     String?
   /// CRECI do corretor/usuário, quando informado no cadastro.
   creci     String?
+  /// Dados extras para contrato (todos opcionais).
+  cpf      String?
+  rg       String?
+  endereco String?
+  cep      String?
   /// Etapa atual do processo de obtenção do CRECI.
   creciStatus CreciProcessoStatus @default(nao_iniciado)
   /// Cor de destaque em hex (#RRGGBB) para badges (ex.: Documentação).
@@ -508,6 +513,11 @@ model Lead {
   tipoRenda  String?
   /// Estado civil informado pelo cliente (opcional).
   estadoCivil String?
+  /// Dados extras para contrato (todos opcionais).
+  cpf      String?
+  rg       String?
+  endereco String?
+  cep      String?
   /// Orçamento máximo para imóvel (opcional) — usado no matching.
   orcamentoMax Int?
   /// Mínimo de quartos desejado (opcional).

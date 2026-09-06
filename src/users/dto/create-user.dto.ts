@@ -59,6 +59,26 @@ export class CreateUserDto {
   creci?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  cpf?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  rg?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  endereco?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(12)
+  cep?: string;
+
+  @IsOptional()
   @IsEnum(CreciProcessoStatus, { message: 'Andamento do CRECI inválido.' })
   creciStatus?: CreciProcessoStatus;
 
