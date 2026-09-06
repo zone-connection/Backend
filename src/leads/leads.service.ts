@@ -29,11 +29,7 @@ import { AnaliseService } from '../analise/analise.service';
 import { FunisService } from '../funis/funis.service';
 import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.service';
 import { DocumentacaoService } from '../documentacao/documentacao.service';
-import {
-  activeLeadSelect,
-  normalizeLeadEntity,
-  LeadEntity,
-} from './lead-select';
+import { leadSelect, LeadEntity } from './lead-select';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
 import { QueryLeadsDto } from './dto/query-leads.dto';
@@ -173,14 +169,10 @@ export class LeadsService {
         renda: dto.renda ?? null,
         tipoRenda: dto.tipoRenda?.trim() || null,
         estadoCivil: dto.estadoCivil?.trim() || null,
-        ...(this.prisma.contatoContratoCols
-          ? {
-              cpf: dto.cpf?.trim() || null,
-              rg: dto.rg?.trim() || null,
-              endereco: dto.endereco?.trim() || null,
-              cep: dto.cep?.trim() || null,
-            }
-          : {}),
+        cpf: dto.cpf?.trim() || null,
+        rg: dto.rg?.trim() || null,
+        endereco: dto.endereco?.trim() || null,
+        cep: dto.cep?.trim() || null,
         orcamentoMax: dto.orcamentoMax ?? null,
         quartosMin: dto.quartosMin ?? null,
         vagasMin: dto.vagasMin ?? null,
@@ -191,7 +183,7 @@ export class LeadsService {
         ...(createdAt ? { createdAt } : {}),
         ...timing,
       },
-      select: activeLeadSelect(this.prisma.contatoContratoCols),
+      select: leadSelect,
     });
     return this.decorateOne(created, requester);
   }
@@ -319,7 +311,7 @@ export class LeadsService {
             corretorId,
             ...importTiming,
           },
-          select: activeLeadSelect(this.prisma.contatoContratoCols),
+          select: leadSelect,
         });
         created.push(lead);
       } catch (err) {
@@ -826,7 +818,7 @@ export class LeadsService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.lead.findMany({
         where,
-        select: activeLeadSelect(this.prisma.contatoContratoCols),
+        select: leadSelect,
         orderBy: prismaTableOrderBy(query.sort, 'nome'),
         skip: (page - 1) * limit,
         take: limit,
@@ -867,7 +859,7 @@ export class LeadsService {
         const fromBatch = latestDoc.get(lead.id);
         const fromNested = lead.documentacoes?.[0];
         return {
-          ...normalizeLeadEntity(lead as unknown as Record<string, unknown>),
+          ...lead,
           documentacaoStatus1:
             fromBatch?.status1 ?? fromNested?.status1 ?? null,
           documentacaoStatus2:
@@ -890,7 +882,7 @@ export class LeadsService {
     const tenantId = requireTenantId(requester);
     const lead = await this.prisma.lead.findFirst({
       where: { id, tenantId },
-      select: activeLeadSelect(this.prisma.contatoContratoCols),
+      select: leadSelect,
     });
 
     if (!lead) {
@@ -987,7 +979,7 @@ export class LeadsService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.lead.findMany({
         where,
-        select: activeLeadSelect(this.prisma.contatoContratoCols),
+        select: leadSelect,
         orderBy: prismaTableOrderBy(query.sort, 'nome'),
         skip: (page - 1) * limit,
         take: limit,
@@ -1104,19 +1096,19 @@ export class LeadsService {
                   : dto.estadoCivil.trim() || null,
             }
           : {}),
-        ...(this.prisma.contatoContratoCols && dto.cpf !== undefined
+        ...(dto.cpf !== undefined
           ? { cpf: dto.cpf === null ? null : dto.cpf.trim() || null }
           : {}),
-        ...(this.prisma.contatoContratoCols && dto.rg !== undefined
+        ...(dto.rg !== undefined
           ? { rg: dto.rg === null ? null : dto.rg.trim() || null }
           : {}),
-        ...(this.prisma.contatoContratoCols && dto.endereco !== undefined
+        ...(dto.endereco !== undefined
           ? {
               endereco:
                 dto.endereco === null ? null : dto.endereco.trim() || null,
             }
           : {}),
-        ...(this.prisma.contatoContratoCols && dto.cep !== undefined
+        ...(dto.cep !== undefined
           ? { cep: dto.cep === null ? null : dto.cep.trim() || null }
           : {}),
         ...(dto.orcamentoMax !== undefined
@@ -1142,7 +1134,7 @@ export class LeadsService {
           : {}),
         ...(timing ?? {}),
       },
-      select: activeLeadSelect(this.prisma.contatoContratoCols),
+      select: leadSelect,
     });
     if (!stageChanged) {
       await this.monitoramento.recordMovement(id, 'edicao');
@@ -1212,7 +1204,7 @@ export class LeadsService {
           : {}),
         ...(timing ?? {}),
       },
-      select: activeLeadSelect(this.prisma.contatoContratoCols),
+      select: leadSelect,
     });
 
     // Alinha o snapshot de etapa nas fichas de documentação do lead.
@@ -1317,7 +1309,7 @@ export class LeadsService {
 
     const existing = await this.prisma.lead.findFirst({
       where: { id, tenantId },
-      select: activeLeadSelect(this.prisma.contatoContratoCols),
+      select: leadSelect,
     });
     if (!existing) {
       throw new NotFoundException('Lead não encontrado.');
@@ -1343,7 +1335,7 @@ export class LeadsService {
         ...(perdidoStage ? { stage: perdidoStage } : {}),
         ...(timing ?? {}),
       },
-      select: activeLeadSelect(this.prisma.contatoContratoCols),
+      select: leadSelect,
     });
     return this.decorateOne(updated, requester);
   }
@@ -1957,14 +1949,11 @@ export class LeadsService {
     requester: AuthenticatedUser,
   ): Promise<LeadWithMonitoramento> {
     const tenantId = requireTenantId(requester);
-    const loaded =
+    const fresh =
       (await this.prisma.lead.findFirst({
         where: { id: lead.id, tenantId },
-        select: activeLeadSelect(this.prisma.contatoContratoCols),
+        select: leadSelect,
       })) ?? lead;
-    const fresh = normalizeLeadEntity(
-      loaded as unknown as Record<string, unknown>,
-    );
     const ctx = await this.monitoramento.loadFunilContext(tenantId);
     const decorated = await this.monitoramento.decorateLeadWithTarefas(
       fresh,

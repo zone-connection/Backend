@@ -25,10 +25,7 @@ import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
 import { prismaTableOrderBy } from '../common/utils/table-sort';
-import {
-  activePublicUserSelect,
-  PublicUser,
-} from '../common/utils/user-select';
+import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import { normalizeCor } from '../common/utils/cor';
 import { SALT_ROUNDS } from '../config/security.constants';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -107,14 +104,10 @@ export class UsersService {
         dataNascimento: parseDataNascimento(dto.dataNascimento) ?? null,
         cargo: dto.cargo,
         creci,
-        ...(this.prisma.contatoContratoCols
-          ? {
-              cpf: dto.cpf?.trim() || null,
-              rg: dto.rg?.trim() || null,
-              endereco: dto.endereco?.trim() || null,
-              cep: dto.cep?.trim() || null,
-            }
-          : {}),
+        cpf: dto.cpf?.trim() || null,
+        rg: dto.rg?.trim() || null,
+        endereco: dto.endereco?.trim() || null,
+        cep: dto.cep?.trim() || null,
         creciStatus,
         cor: normalizeCor(dto.cor),
         role: dto.role,
@@ -132,7 +125,7 @@ export class UsersService {
         financeiroCanDelete:
           dto.role === Role.financeiro ? dto.financeiroCanDelete !== false : true,
       },
-      select: activePublicUserSelect(this.prisma.contatoContratoCols),
+      select: publicUserSelect,
     });
   }
 
@@ -290,7 +283,7 @@ export class UsersService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.user.findMany({
         where,
-        select: activePublicUserSelect(this.prisma.contatoContratoCols),
+        select: publicUserSelect,
         orderBy: prismaTableOrderBy(query.sort, 'name'),
         skip: (page - 1) * limit,
         take: limit,
@@ -334,7 +327,7 @@ export class UsersService {
     const tenantId = requireTenantId(requester);
     const user = await this.prisma.user.findFirst({
       where: { id, tenantId },
-      select: activePublicUserSelect(this.prisma.contatoContratoCols),
+      select: publicUserSelect,
     });
     if (!user) {
       throw new NotFoundException('Usuário não encontrado.');
@@ -350,7 +343,7 @@ export class UsersService {
     const tenantId = requireTenantId(requester);
     const user = await this.prisma.user.findFirst({
       where: { id, tenantId },
-      select: activePublicUserSelect(this.prisma.contatoContratoCols),
+      select: publicUserSelect,
     });
 
     if (!user) {
@@ -420,19 +413,19 @@ export class UsersService {
         ...(dataNascimento !== undefined ? { dataNascimento } : {}),
         ...(dto.cargo !== undefined ? { cargo: dto.cargo } : {}),
         ...(creci !== undefined ? { creci } : {}),
-        ...(this.prisma.contatoContratoCols && dto.cpf !== undefined
+        ...(dto.cpf !== undefined
           ? { cpf: dto.cpf === null ? null : dto.cpf.trim() || null }
           : {}),
-        ...(this.prisma.contatoContratoCols && dto.rg !== undefined
+        ...(dto.rg !== undefined
           ? { rg: dto.rg === null ? null : dto.rg.trim() || null }
           : {}),
-        ...(this.prisma.contatoContratoCols && dto.endereco !== undefined
+        ...(dto.endereco !== undefined
           ? {
               endereco:
                 dto.endereco === null ? null : dto.endereco.trim() || null,
             }
           : {}),
-        ...(this.prisma.contatoContratoCols && dto.cep !== undefined
+        ...(dto.cep !== undefined
           ? { cep: dto.cep === null ? null : dto.cep.trim() || null }
           : {}),
         ...(creciStatus !== undefined ? { creciStatus } : {}),
@@ -456,7 +449,7 @@ export class UsersService {
           ? { permissions: sanitizeUserPermissions(dto.permissions) }
           : {}),
       },
-      select: activePublicUserSelect(this.prisma.contatoContratoCols),
+      select: publicUserSelect,
     });
   }
 
@@ -468,7 +461,7 @@ export class UsersService {
 
     const target = await this.prisma.user.findFirst({
       where: { id, tenantId },
-      select: { ...activePublicUserSelect(this.prisma.contatoContratoCols) },
+      select: { ...publicUserSelect },
     });
     if (!target) {
       throw new NotFoundException('Usuário não encontrado.');
@@ -552,7 +545,7 @@ export class UsersService {
           ? { hashedRefreshToken: null }
           : { failedLoginAttempts: 0, lockedUntil: null }),
       },
-      select: activePublicUserSelect(this.prisma.contatoContratoCols),
+      select: publicUserSelect,
     });
   }
 
@@ -567,7 +560,7 @@ export class UsersService {
     const user = await this.prisma.user.update({
       where: { id },
       data: { failedLoginAttempts: 0, lockedUntil: null },
-      select: activePublicUserSelect(this.prisma.contatoContratoCols),
+      select: publicUserSelect,
     });
 
     await this.prisma.loginAttempt.deleteMany({
@@ -589,7 +582,7 @@ export class UsersService {
     const tenantId = requireTenantId(requester);
     const target = await this.prisma.user.findFirst({
       where: { id, tenantId },
-      select: { ...activePublicUserSelect(this.prisma.contatoContratoCols) },
+      select: { ...publicUserSelect },
     });
     if (!target) {
       throw new NotFoundException('Usuário não encontrado.');
@@ -610,7 +603,7 @@ export class UsersService {
         failedLoginAttempts: 0,
         lockedUntil: null,
       },
-      select: activePublicUserSelect(this.prisma.contatoContratoCols),
+      select: publicUserSelect,
     });
 
     return { user, temporaryPassword };

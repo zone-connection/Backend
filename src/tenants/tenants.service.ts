@@ -22,7 +22,7 @@ import {
   tenantAdminSelect,
   tenantBrandingSelect,
 } from '../common/utils/tenant-branding';
-import { activePublicUserSelect } from '../common/utils/user-select';
+import { publicUserSelect } from '../common/utils/user-select';
 import { SALT_ROUNDS } from '../config/security.constants';
 import {
   DEFAULT_FUNIL_NAME,
@@ -232,7 +232,7 @@ export class TenantsService {
             status: UserStatus.ativo,
             cargo: 'Administrador',
           },
-          select: activePublicUserSelect(this.prisma.contatoContratoCols),
+          select: publicUserSelect,
         });
 
         await this.seedDefaultFunnelStages(tx, tenant.id);
@@ -289,7 +289,7 @@ export class TenantsService {
             status: UserStatus.ativo,
             cargo: 'Administrador',
           },
-          select: activePublicUserSelect(this.prisma.contatoContratoCols),
+          select: publicUserSelect,
         });
 
         const catalogCount = await tx.catalogItem.count({
@@ -408,7 +408,7 @@ export class TenantsService {
 
     const user = await this.prisma.user.findFirstOrThrow({
       where: { id: admin.id, tenantId },
-      select: activePublicUserSelect(this.prisma.contatoContratoCols),
+      select: publicUserSelect,
     });
 
     return { user, temporaryPassword };
@@ -486,7 +486,7 @@ export class TenantsService {
 
     return this.prisma.user.findFirstOrThrow({
       where: { id: admin.id, tenantId },
-      select: activePublicUserSelect(this.prisma.contatoContratoCols),
+      select: publicUserSelect,
     });
   }
 
@@ -569,7 +569,7 @@ export class TenantsService {
           role: dto.role,
           status: dto.status ?? UserStatus.ativo,
         },
-        select: activePublicUserSelect(this.prisma.contatoContratoCols),
+        select: publicUserSelect,
       });
     });
 

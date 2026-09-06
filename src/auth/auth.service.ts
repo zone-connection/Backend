@@ -19,10 +19,7 @@ import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { MediaService } from '../media/media.service';
-import {
-  activePublicUserSelect,
-  PublicUser,
-} from '../common/utils/user-select';
+import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import {
   tenantBrandingSelect,
   type TenantBranding,
@@ -158,14 +155,12 @@ export class AuthService {
             { tenant: { slug: tenantSlug } },
           ],
         },
-        ...this.prisma.userQueryOmit(),
       });
     }
 
     const candidates = await this.prisma.user.findMany({
       where: { email: normalizedEmail },
       take: 5,
-      ...this.prisma.userQueryOmit(),
     });
 
     if (candidates.length === 0) return null;
@@ -195,7 +190,6 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      ...this.prisma.userQueryOmit(),
     });
 
     if (!user || !user.hashedRefreshToken) {
@@ -252,7 +246,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
-        ...activePublicUserSelect(this.prisma.contatoContratoCols),
+        ...publicUserSelect,
         tenant: { select: tenantBrandingSelect },
       },
     });
@@ -365,10 +359,7 @@ export class AuthService {
     currentPassword: string,
     newPassword: string,
   ): Promise<void> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      ...this.prisma.userQueryOmit(),
-    });
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new UnauthorizedException('Usuário não encontrado.');
     }
@@ -579,6 +570,10 @@ export class AuthService {
       dataNascimento: user.dataNascimento,
       cargo: user.cargo,
       creci: user.creci,
+      cpf: user.cpf,
+      rg: user.rg,
+      endereco: user.endereco,
+      cep: user.cep,
       creciStatus: user.creciStatus,
       cor: user.cor,
       corAside: user.corAside,
