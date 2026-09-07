@@ -339,19 +339,18 @@ export class DashboardService {
     );
 
     const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
-    const leadAtivoWhere = {
-      tenantId,
-      perdidoAt: null as null,
+    const leadScope = await this.teamScope.leadScope(requester);
+    const leadAtivoWhere: Prisma.LeadWhereInput = {
+      ...leadScope,
+      perdidoAt: null,
       ...origemWhere,
-      ...(corretorIds ? { corretorId: { in: corretorIds } } : {}),
     };
-    const leadCriadoWhere = (periodo: Periodo) => ({
-      tenantId,
+    const leadCriadoWhere = (periodo: Periodo): Prisma.LeadWhereInput => ({
+      ...leadScope,
       tipo: ContatoTipo.lead,
-      perdidoAt: null as null,
+      perdidoAt: null,
       createdAt: { gte: periodo.inicio, lt: periodo.fim },
       ...origemWhere,
-      ...(corretorIds ? { corretorId: { in: corretorIds } } : {}),
     });
     const vendaSlug = await this.funis.getSlugByPapel(
       tenantId,
@@ -379,15 +378,14 @@ export class DashboardService {
       tenantId,
       createdAt: { gte: periodo.inicio, lt: periodo.fim },
       lead: {
+        ...leadScope,
         ...(origem ? { origem } : {}),
-        ...(corretorIds ? { corretorId: { in: corretorIds } } : {}),
       },
     });
-    const perdidoWhere = (periodo: Periodo) => ({
-      tenantId,
+    const perdidoWhere = (periodo: Periodo): Prisma.LeadWhereInput => ({
+      ...leadScope,
       perdidoAt: { gte: periodo.inicio, lt: periodo.fim },
       ...origemWhere,
-      ...(corretorIds ? { corretorId: { in: corretorIds } } : {}),
     });
 
     const [
@@ -433,11 +431,11 @@ export class DashboardService {
       // e do dialog Distribuir): sem equipe e sem corretor.
       this.prisma.lead.count({
         where: {
-          tenantId,
+          ...leadScope,
           tipo: ContatoTipo.lead,
           perdidoAt: null,
           corretorId: null,
-          equipeId: null,
+          ...(requester.role === Role.gerente ? {} : { equipeId: null }),
           ...origemWhere,
         },
       }),
