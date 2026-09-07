@@ -55,4 +55,11 @@ describe('módulos de operação no plano', () => {
     });
     assert.equal(next.adminVerClientesCorretor, true);
   });
+
+  it('preserva gerentes ver leads gerais ao normalizar', () => {
+    const next = normalizeModulesForPlano(TenantPlano.ouro, {
+      gerenteVerLeadsGerais: true,
+    });
+    assert.equal(next.gerenteVerLeadsGerais, true);
+  });
 });

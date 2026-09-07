@@ -23,4 +23,9 @@ export class UpdateTenantOperationModulesDto {
   @IsOptional()
   @IsBoolean()
   adminVerClientesCorretor?: boolean;
+
+  /** Gerentes veem leads de outras equipes e o pool geral. */
+  @IsOptional()
+  @IsBoolean()
+  gerenteVerLeadsGerais?: boolean;
 }

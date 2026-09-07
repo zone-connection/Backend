@@ -1071,6 +1071,7 @@ export class TenantsService {
       operations: pickOperationModules(modules),
       hideClientesNav: modules.hideClientesNav === true,
       adminVerClientesCorretor: modules.adminVerClientesCorretor === true,
+      gerenteVerLeadsGerais: modules.gerenteVerLeadsGerais === true,
     };
   }
 
@@ -1107,6 +1108,9 @@ export class TenantsService {
     if (typeof dto.adminVerClientesCorretor === 'boolean') {
       merged.adminVerClientesCorretor = dto.adminVerClientesCorretor;
     }
+    if (typeof dto.gerenteVerLeadsGerais === 'boolean') {
+      merged.gerenteVerLeadsGerais = dto.gerenteVerLeadsGerais;
+    }
     const modules = applyPlanoModules(tenant.plano, merged);
 
     await this.prisma.tenant.update({
@@ -1119,6 +1123,7 @@ export class TenantsService {
       operations: pickOperationModules(modules),
       hideClientesNav: modules.hideClientesNav === true,
       adminVerClientesCorretor: modules.adminVerClientesCorretor === true,
+      gerenteVerLeadsGerais: modules.gerenteVerLeadsGerais === true,
     };
   }
 

@@ -4,16 +4,25 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
+import { GERENTE_VER_LEADS_GERAIS_KEY } from '../tenants/tenant-plan';
 
 /**
  * Escopo de dados por equipe, sempre aninhado ao tenant do requester:
  * - admin / analista → todos do tenant
- * - gerente → equipe própria + carteira própria (+ pool do admin, se includeAdminPool)
+ * - gerente (opção off) → só a própria equipe e carteira
+ * - gerente (opção on) → todas as equipes + pool geral
  * - corretor → só o próprio
  */
 @Injectable()
 export class TeamScopeService {
   constructor(private readonly prisma: PrismaService) {}
+
+  gerenteSeesSharedLeads(requester: AuthenticatedUser): boolean {
+    return (
+      requester.role === Role.gerente &&
+      requester.tenantModules?.[GERENTE_VER_LEADS_GERAIS_KEY] === true
+    );
+  }
 
   /** IDs dos corretores visíveis para o requester (null = sem filtro de corretor / admin|analista). */
   async getVisibleCorretorIds(
@@ -24,7 +33,8 @@ export class TeamScopeService {
     if (
       requester.role === Role.admin ||
       requester.role === Role.super_admin ||
-      requester.role === Role.analista
+      requester.role === Role.analista ||
+      this.gerenteSeesSharedLeads(requester)
     ) {
       return null;
     }
@@ -33,7 +43,7 @@ export class TeamScopeService {
       return [requester.id];
     }
 
-    // gerente → corretores de todas as equipes + o próprio (carteira/vendas)
+    // gerente restrito → corretores das próprias equipes + o próprio
     const equipes = await this.prisma.equipe.findMany({
       where: { gerenteId: requester.id, tenantId },
       select: {
@@ -50,9 +60,8 @@ export class TeamScopeService {
 
   /**
    * Filtro Prisma para leads/documentação baseado na equipe + tenant.
-   * `includeAdminPool` (padrão true) inclui leads sem dono na lista operacional
-   * do gerente (distribuição). No monitoramento de atraso isso fica desligado:
-   * gerente vê só a carteira própria e a da equipe.
+   * Com a opção do admin ligada, o gerente vê o tenant inteiro (outras equipes
+   * e pool geral). Desligada, só a própria equipe — sem leads gerais.
    */
   async leadScope(
     requester: AuthenticatedUser,
@@ -67,12 +76,12 @@ export class TeamScopeService {
         where: { gerenteId: requester.id, tenantId },
         select: { id: true },
       });
-      const includeAdminPool = options?.includeAdminPool ?? true;
+      const includeAdminPool =
+        options?.includeAdminPool ?? this.gerenteSeesSharedLeads(requester);
       return {
         tenantId,
         OR: [
           { corretorId: { in: ids } },
-          // Pool das equipes do gerente.
           ...equipes.map((equipe) => ({
             equipeId: equipe.id,
             corretorId: null as null,
@@ -98,13 +107,13 @@ export class TeamScopeService {
       if (
         requester.role === Role.admin ||
         requester.role === Role.super_admin ||
-        requester.role === Role.analista
+        requester.role === Role.analista ||
+        this.gerenteSeesSharedLeads(requester)
       ) {
         return true;
       }
-      // Gerente: pool do admin (sem equipe) ou pool da própria equipe.
       if (requester.role === Role.gerente) {
-        if (!equipeId) return true;
+        if (!equipeId) return false;
         const equipe = await this.prisma.equipe.findFirst({
           where: {
             id: equipeId,
@@ -117,7 +126,6 @@ export class TeamScopeService {
       }
       return false;
     }
-    // Admin/gerente acessam a própria carteira.
     if (
       (requester.role === Role.admin ||
         requester.role === Role.super_admin ||

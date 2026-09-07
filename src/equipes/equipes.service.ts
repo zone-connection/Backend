@@ -64,8 +64,13 @@ export class EquipesService {
   async list(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
 
-    // Admin e gerente listam todas as equipes (gerente precisa delas para distribuir).
     const where: Prisma.EquipeWhereInput = { tenantId };
+    if (
+      requester.role === Role.gerente &&
+      requester.tenantModules?.gerenteVerLeadsGerais !== true
+    ) {
+      where.gerenteId = requester.id;
+    }
 
     const equipes = await this.prisma.equipe.findMany({
       where,

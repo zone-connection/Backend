@@ -68,6 +68,9 @@ export const HIDE_CLIENTES_NAV_KEY = 'hideClientesNav';
 /** Admin do tenant vê clientes dos corretores (lista e funil). */
 export const ADMIN_VER_CLIENTES_CORRETOR_KEY = 'adminVerClientesCorretor';
 
+/** Gerentes veem leads de outras equipes e o pool geral (sem dono). */
+export const GERENTE_VER_LEADS_GERAIS_KEY = 'gerenteVerLeadsGerais';
+
 function withNavPrefs(
   normalized: Record<string, boolean>,
   raw: Record<string, boolean>,
@@ -76,6 +79,10 @@ function withNavPrefs(
   if (typeof raw[ADMIN_VER_CLIENTES_CORRETOR_KEY] === 'boolean') {
     normalized[ADMIN_VER_CLIENTES_CORRETOR_KEY] =
       raw[ADMIN_VER_CLIENTES_CORRETOR_KEY];
+  }
+  if (typeof raw[GERENTE_VER_LEADS_GERAIS_KEY] === 'boolean') {
+    normalized[GERENTE_VER_LEADS_GERAIS_KEY] =
+      raw[GERENTE_VER_LEADS_GERAIS_KEY];
   }
   return normalized;
 }
