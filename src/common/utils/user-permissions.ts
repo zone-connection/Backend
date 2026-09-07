@@ -180,6 +180,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/funil',
     '/agenda',
     '/metas',
+    '/treinamento',
     '/contratos',
     '/vendas',
     '/configuracoes',

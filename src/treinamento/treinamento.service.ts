@@ -256,6 +256,7 @@ export class TreinamentoService {
 
   private assertCanManage(requester: AuthenticatedUser) {
     if (
+      requester.role !== Role.super_admin &&
       requester.role !== Role.admin &&
       requester.role !== Role.gerente &&
       requester.role !== Role.analista &&

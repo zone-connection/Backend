@@ -26,15 +26,10 @@ import {
   UpdateFunilEtapaDto,
 } from './dto/funil.dto';
 import { looksLikeCommercialFunnel, whereDeactivateActiveOfTipo } from './funil-ativo.util';
-
-/** Slugs legados usados como fallback quando `papel` ainda não foi atribuído. */
-const LEGACY_PAPEL_BY_SLUG: Record<string, FunilEtapaPapel> = {
-  novo: FunilEtapaPapel.inicial,
-  'em-analise': FunilEtapaPapel.analise,
-  'ganho-venda': FunilEtapaPapel.venda,
-  venda: FunilEtapaPapel.venda,
-  perdido: FunilEtapaPapel.perdido,
-};
+import {
+  LEGACY_PAPEL_BY_SLUG,
+  resolveEtapaPapel as resolveEtapaPapelUtil,
+} from './funil-etapa-papel.util';
 
 const etapaSelect = {
   id: true,
@@ -344,10 +339,14 @@ export class FunisService {
     });
     if (!etapa) throw new NotFoundException('Etapa não encontrada.');
 
+    const siblings = await this.prisma.funilEtapa.findMany({
+      where: { funilId },
+      select: { id: true, slug: true, papel: true, active: true },
+    });
     const nextPapel =
       dto.papel !== undefined ? dto.papel : etapa.papel;
     const willBeInitial =
-      this.resolveEtapaPapel({ ...etapa, papel: nextPapel }) ===
+      this.resolveEtapaPapel({ ...etapa, papel: nextPapel }, siblings) ===
       FunilEtapaPapel.inicial;
 
     if (willBeInitial && dto.active === false) {
@@ -357,22 +356,16 @@ export class FunisService {
     }
 
     if (
-      this.resolveEtapaPapel(etapa) === FunilEtapaPapel.inicial &&
+      this.resolveEtapaPapel(etapa, siblings) === FunilEtapaPapel.inicial &&
       dto.papel !== undefined &&
       dto.papel !== FunilEtapaPapel.inicial
     ) {
-      const otherInitial = await this.prisma.funilEtapa.findFirst({
-        where: {
-          funilId,
-          active: true,
-          id: { not: etapaId },
-          OR: [
-            { papel: FunilEtapaPapel.inicial },
-            { papel: null, slug: DEFAULT_INITIAL_STAGE_SLUG },
-          ],
-        },
-        select: { id: true },
-      });
+      const otherInitial = siblings.find(
+        (e) =>
+          e.id !== etapaId &&
+          e.active &&
+          this.resolveEtapaPapel(e, siblings) === FunilEtapaPapel.inicial,
+      );
       if (!otherInitial) {
         throw new BadRequestException(
           'Atribua o papel Inicial a outra etapa antes de remover desta.',
@@ -438,29 +431,28 @@ export class FunisService {
       where: { id: etapaId, funilId },
     });
     if (!etapa) throw new NotFoundException('Etapa não encontrada.');
-    if (this.resolveEtapaPapel(etapa) === FunilEtapaPapel.inicial) {
+    const allEtapas = await this.prisma.funilEtapa.findMany({
+      where: { funilId },
+      orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
+      select: { id: true, slug: true, papel: true, active: true },
+    });
+    if (this.resolveEtapaPapel(etapa, allEtapas) === FunilEtapaPapel.inicial) {
       throw new BadRequestException(
         'A etapa inicial não pode ser removida. Atribua o papel Inicial a outra etapa antes.',
       );
     }
 
-    const activeCount = await this.prisma.funilEtapa.count({
-      where: { funilId, active: true },
-    });
+    const activeCount = allEtapas.filter((e) => e.active).length;
     if (etapa.active && activeCount <= 1) {
       throw new BadRequestException(
         'O funil precisa ter ao menos uma etapa ativa.',
       );
     }
 
-    const siblings = await this.prisma.funilEtapa.findMany({
-      where: { funilId, active: true, id: { not: etapaId } },
-      orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
-      select: { id: true, slug: true, papel: true, active: true },
-    });
+    const siblings = allEtapas.filter((e) => e.active && e.id !== etapaId);
     const fallbackSlug =
       siblings.find(
-        (e) => this.resolveEtapaPapel(e) === FunilEtapaPapel.inicial,
+        (e) => this.resolveEtapaPapel(e, allEtapas) === FunilEtapaPapel.inicial,
       )?.slug ?? siblings[0]?.slug;
 
     if (fallbackSlug && fallbackSlug !== etapa.slug) {
@@ -636,7 +628,9 @@ export class FunisService {
   ): Promise<string[]> {
     const funil = await this.ensureTenantHasFunil(tenantId);
     const byPapel = funil.etapas
-      .filter((e) => e.active && this.resolveEtapaPapel(e) === papel)
+      .filter(
+        (e) => e.active && this.resolveEtapaPapel(e, funil.etapas) === papel,
+      )
       .map((e) => e.slug);
     if (byPapel.length > 0) return [...new Set(byPapel)];
 
@@ -689,7 +683,7 @@ export class FunisService {
     const funil = await this.ensureTenantHasFunil(tenantId);
     const etapa = funil.etapas.find((e) => e.slug === slug);
     if (!etapa) return LEGACY_PAPEL_BY_SLUG[slug] ?? null;
-    return this.resolveEtapaPapel(etapa);
+    return this.resolveEtapaPapel(etapa, funil.etapas);
   }
 
   /** Mapeia etapas do funil ativo no formato CatalogItem (compat + papel). */
@@ -706,15 +700,22 @@ export class FunisService {
         color: e.color,
         sortOrder: e.sortOrder,
         active: e.active,
-        papel: this.resolveEtapaPapel(e),
+        papel: this.resolveEtapaPapel(e, funil.etapas),
         createdAt: e.createdAt,
         updatedAt: e.updatedAt,
       }));
   }
 
-  resolveEtapaPapel(etapa: EtapaComPapel): FunilEtapaPapel | null {
-    if (etapa.papel) return etapa.papel;
-    return LEGACY_PAPEL_BY_SLUG[etapa.slug] ?? null;
+  /**
+   * Papel efetivo da etapa.
+   * Fallback por slug legado só vale se nenhuma outra etapa do funil
+   * já tiver esse papel gravado — senão a edição de papéis “não atualiza”.
+   */
+  resolveEtapaPapel(
+    etapa: EtapaComPapel,
+    siblings: Array<Pick<EtapaComPapel, 'id' | 'papel'>> = [],
+  ): FunilEtapaPapel | null {
+    return resolveEtapaPapelUtil(etapa, siblings);
   }
 
   private async clearPapelOnOthers(
@@ -1080,7 +1081,7 @@ export class FunisService {
 
       const usedPapeis = new Set(
         etapas
-          .map((e) => this.resolveEtapaPapel(e))
+          .map((e) => this.resolveEtapaPapel(e, etapas))
           .filter((p): p is FunilEtapaPapel => p != null),
       );
       let papel: FunilEtapaPapel | null =

@@ -27,6 +27,7 @@ export class TreinamentoController {
 
   @Get()
   @Roles(
+    Role.super_admin,
     Role.admin,
     Role.gerente,
     Role.corretor,
@@ -38,7 +39,13 @@ export class TreinamentoController {
   }
 
   @Post('secoes')
-  @Roles(Role.admin, Role.gerente, Role.analista, Role.treinee)
+  @Roles(
+    Role.super_admin,
+    Role.admin,
+    Role.gerente,
+    Role.analista,
+    Role.treinee,
+  )
   createSecao(
     @Body() dto: CreateTreinamentoSecaoDto,
     @CurrentUser() requester: AuthenticatedUser,
@@ -47,7 +54,13 @@ export class TreinamentoController {
   }
 
   @Patch('secoes/:id')
-  @Roles(Role.admin, Role.gerente, Role.analista, Role.treinee)
+  @Roles(
+    Role.super_admin,
+    Role.admin,
+    Role.gerente,
+    Role.analista,
+    Role.treinee,
+  )
   updateSecao(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateTreinamentoSecaoDto,
@@ -57,7 +70,13 @@ export class TreinamentoController {
   }
 
   @Delete('secoes/:id')
-  @Roles(Role.admin, Role.gerente, Role.analista, Role.treinee)
+  @Roles(
+    Role.super_admin,
+    Role.admin,
+    Role.gerente,
+    Role.analista,
+    Role.treinee,
+  )
   removeSecao(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() requester: AuthenticatedUser,
@@ -66,7 +85,13 @@ export class TreinamentoController {
   }
 
   @Post('links')
-  @Roles(Role.admin, Role.gerente, Role.analista, Role.treinee)
+  @Roles(
+    Role.super_admin,
+    Role.admin,
+    Role.gerente,
+    Role.analista,
+    Role.treinee,
+  )
   createLink(
     @Body() dto: CreateTreinamentoLinkDto,
     @CurrentUser() requester: AuthenticatedUser,
@@ -75,7 +100,13 @@ export class TreinamentoController {
   }
 
   @Patch('links/:id')
-  @Roles(Role.admin, Role.gerente, Role.analista, Role.treinee)
+  @Roles(
+    Role.super_admin,
+    Role.admin,
+    Role.gerente,
+    Role.analista,
+    Role.treinee,
+  )
   updateLink(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateTreinamentoLinkDto,
@@ -85,7 +116,13 @@ export class TreinamentoController {
   }
 
   @Delete('links/:id')
-  @Roles(Role.admin, Role.gerente, Role.analista, Role.treinee)
+  @Roles(
+    Role.super_admin,
+    Role.admin,
+    Role.gerente,
+    Role.analista,
+    Role.treinee,
+  )
   removeLink(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() requester: AuthenticatedUser,
