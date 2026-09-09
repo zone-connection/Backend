@@ -11,6 +11,7 @@ import {
   canFinanceiroAction,
   type FinanceiroAcao,
 } from '../utils/financeiro-perms';
+import { isCorretorLike } from '../utils/roles';
 import { hasUserAction, hasUserModule } from '../utils/user-permissions';
 
 /** Restringe create/edit/delete do Financeiro conforme cargo e permissões. */
@@ -23,7 +24,10 @@ export class FinanceiroPermsGuard implements CanActivate {
 
     const action = actionFromRequest(request);
     const path = `${request.originalUrl ?? request.url ?? ''}`.split('?')[0];
-    const isComissao = path.toLowerCase().includes('/comissao');
+    const normalizedPath = path.toLowerCase();
+    const isComissao =
+      normalizedPath.includes('/comissao') ||
+      normalizedPath.includes('/comissoes');
 
     if (user.role === Role.financeiro) {
       if (!canFinanceiroAction(user, action)) {
@@ -38,10 +42,12 @@ export class FinanceiroPermsGuard implements CanActivate {
       return true;
     }
 
+    // Corretor/treinee visualiza só a própria fatia (módulo comissão ou papel).
     if (
       isComissao &&
       action === 'view' &&
-      (hasUserModule(user.role, user.permissions, 'comissao') ||
+      (isCorretorLike(user.role) ||
+        hasUserModule(user.role, user.permissions, 'comissao') ||
         hasUserAction(user.role, user.permissions, 'financeiro.comissao'))
     ) {
       return true;

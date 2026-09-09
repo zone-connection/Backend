@@ -20,6 +20,7 @@ import {
   UserStatus,
 } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
+import { isCorretorLike } from '../common/utils/roles';
 import {
   countStatusAndamento,
   countStatusVendido,
@@ -340,6 +341,11 @@ export class DashboardService {
 
     const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
     const leadScope = await this.teamScope.leadScope(requester);
+    const comissaoPapel = isCorretorLike(requester.role)
+      ? 'corretor'
+      : requester.role === Role.gerente
+        ? 'gerente'
+        : 'admin';
     const leadAtivoWhere: Prisma.LeadWhereInput = {
       ...leadScope,
       perdidoAt: null,
@@ -589,12 +595,12 @@ export class DashboardService {
         },
       }),
       this.aggregateComissaoMes(tenantId, mesAtual, {
-        papel: requester.role === Role.gerente ? 'gerente' : 'admin',
+        papel: comissaoPapel,
         userId: requester.id,
         corretorIds,
       }),
       this.aggregateComissaoMes(tenantId, mesAnterior, {
-        papel: requester.role === Role.gerente ? 'gerente' : 'admin',
+        papel: comissaoPapel,
         userId: requester.id,
         corretorIds,
       }),
@@ -741,8 +747,7 @@ export class DashboardService {
       },
       /**
        * Comissão do mês filtrado por dataVenda.
-       * Gerente: soma de valorGerente das vendas da equipe.
-       * Admin: soma da comissão líquida no escopo.
+       * Corretor → valorCorretor; gerente → valorGerente; admin → comissão líquida.
        */
       comissao: {
         total: metric(comissaoMes.total, comissaoMesAnt.total),
@@ -752,7 +757,7 @@ export class DashboardService {
         paga: metric(comissaoMes.paga, comissaoMesAnt.paga),
         vendas: metric(comissaoMes.vendas, comissaoMesAnt.vendas),
         vgv: metric(comissaoMes.vgv, comissaoMesAnt.vgv),
-        papel: requester.role === Role.gerente ? 'gerente' : 'admin',
+        papel: comissaoPapel,
       },
       atencao: {
         semDono: mostrarSnapshotAtual ? semDono : 0,
