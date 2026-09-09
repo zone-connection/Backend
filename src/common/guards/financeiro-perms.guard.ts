@@ -23,11 +23,21 @@ export class FinanceiroPermsGuard implements CanActivate {
     if (!user) return true;
 
     const action = actionFromRequest(request);
-    const path = `${request.originalUrl ?? request.url ?? ''}`.split('?')[0];
-    const normalizedPath = path.toLowerCase();
-    const isComissao =
-      normalizedPath.includes('/comissao') ||
-      normalizedPath.includes('/comissoes');
+    const path = collectRequestPath(request);
+    const isComissao = path.includes('comissao');
+
+    // Corretor/treinee: @Roles já limita quais rotas eles alcançam.
+    // Aqui só liberamos a LEITURA da própria fatia de comissão.
+    const role = String(user.role);
+    if (
+      (role === Role.corretor ||
+        role === Role.treinee ||
+        isCorretorLike(user.role)) &&
+      action === 'view' &&
+      isComissao
+    ) {
+      return true;
+    }
 
     if (user.role === Role.financeiro) {
       if (!canFinanceiroAction(user, action)) {
@@ -42,12 +52,10 @@ export class FinanceiroPermsGuard implements CanActivate {
       return true;
     }
 
-    // Corretor/treinee visualiza só a própria fatia (módulo comissão ou papel).
     if (
       isComissao &&
       action === 'view' &&
-      (isCorretorLike(user.role) ||
-        hasUserModule(user.role, user.permissions, 'comissao') ||
+      (hasUserModule(user.role, user.permissions, 'comissao') ||
         hasUserAction(user.role, user.permissions, 'financeiro.comissao'))
     ) {
       return true;
@@ -57,6 +65,21 @@ export class FinanceiroPermsGuard implements CanActivate {
       'Você não tem permissão para esta ação no Financeiro.',
     );
   }
+}
+
+function collectRequestPath(request: Request): string {
+  const parts = [
+    request.originalUrl,
+    request.url,
+    request.baseUrl,
+    request.path,
+    `${request.baseUrl ?? ''}${request.path ?? ''}`,
+  ];
+  return parts
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .join(' ')
+    .toLowerCase()
+    .split('?')[0];
 }
 
 function actionFromRequest(request: Request): FinanceiroAcao {

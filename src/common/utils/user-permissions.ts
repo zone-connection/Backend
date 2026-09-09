@@ -452,8 +452,10 @@ export function modulesForApiPath(rawPath: string): string[] {
   if (path.startsWith('dashboard')) {
     return ['dashboard', 'taxaConversao', 'corretores'];
   }
-  if (path.startsWith('financeiro/comissao')) return ['comissao', 'financeiro'];
-  if (path.startsWith('financeiro')) return ['financeiro'];
+  if (path.includes('financeiro/comissao') || path.includes('financeiro/comissoes')) {
+    return ['comissao', 'financeiro'];
+  }
+  if (path.includes('financeiro')) return ['financeiro'];
   if (path.startsWith('documentacao')) return ['documentacao', 'vendas'];
   if (path.startsWith('propostas')) return ['propostas'];
   if (path.startsWith('contratos')) return ['contratos'];
