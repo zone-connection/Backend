@@ -1,27 +1,58 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, Role, UserStatus } from '@prisma/client';
+import {
+  CreciProcessoStatus,
+  Prisma,
+  Role,
+  TenantPlano,
+  UserStatus,
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomInt } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
+import {
+  PresenceService,
+  type UserPresenceToday,
+  type UserPresenceWeek,
+} from '../presence/presence.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import { isCorretorLike } from '../common/utils/roles';
+import { prismaTableOrderBy } from '../common/utils/table-sort';
 import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import { normalizeCor } from '../common/utils/cor';
 import { SALT_ROUNDS } from '../config/security.constants';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
-import { isAnalistaAllowed } from '../tenants/tenant-plan';
+import { assertRoleAllowedForPlano, PLANO_MAX_USUARIOS } from '../tenants/tenant-plan';
+import { sanitizeUserPermissions } from '../common/utils/user-permissions';
 
 export interface PaginatedUsers {
   data: PublicUser[];
   meta: { total: number; page: number; limit: number; totalPages: number };
+}
+
+/** YYYY-MM-DD → meio-dia UTC (evita deslocar o dia em BRT). */
+function parseDataNascimento(
+  value?: string | null,
+): Date | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const raw = value.trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? new Date(`${raw}T12:00:00.000Z`)
+    : new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw new BadRequestException('Data de nascimento inválida.');
+  }
+  return date;
 }
 
 @Injectable()
@@ -29,6 +60,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly teamScope: TeamScopeService,
+    private readonly presence: PresenceService,
   ) {}
 
   async create(
@@ -43,11 +75,23 @@ export class UsersService {
       );
     }
 
+    this.assertCanCreateRole(requester, dto.role);
     await this.assertCanCreateUser(tenantId);
     await this.assertRoleAllowed(tenantId, dto.role);
+    if (dto.role === Role.admin) {
+      await this.assertCanAddAdmin(tenantId);
+    }
 
     const email = dto.email.toLowerCase().trim();
     await this.ensureEmailIsAvailable(tenantId, email);
+
+    const creci = dto.creci?.trim() || null;
+    const creciStatus =
+      dto.creciStatus ??
+      (creci
+        ? CreciProcessoStatus.creci_recebido
+        : CreciProcessoStatus.nao_iniciado);
+    this.assertCreciProcesso(creciStatus, creci);
 
     return this.prisma.user.create({
       data: {
@@ -57,11 +101,25 @@ export class UsersService {
         password: await bcrypt.hash(dto.password, SALT_ROUNDS),
         phone: dto.phone,
         whatsapp: dto.whatsapp,
+        dataNascimento: parseDataNascimento(dto.dataNascimento) ?? null,
         cargo: dto.cargo,
+        creci,
+        creciStatus,
         cor: normalizeCor(dto.cor),
         role: dto.role,
         status: dto.status ?? UserStatus.ativo,
         avatar: dto.avatar,
+        permissions:
+          dto.permissions !== undefined
+            ? sanitizeUserPermissions(dto.permissions)
+            : undefined,
+        financeiroCanView: true,
+        financeiroCanCreate:
+          dto.role === Role.financeiro ? dto.financeiroCanCreate !== false : true,
+        financeiroCanEdit:
+          dto.role === Role.financeiro ? dto.financeiroCanEdit !== false : true,
+        financeiroCanDelete:
+          dto.role === Role.financeiro ? dto.financeiroCanDelete !== false : true,
       },
       select: publicUserSelect,
     });
@@ -83,10 +141,14 @@ export class UsersService {
       throw new NotFoundException('Tenant não encontrado.');
     }
     const used = await this.prisma.user.count({ where: { tenantId } });
-    const limit = tenant.maxUsuarios + tenant.usuariosExtras;
+    const maxUsuarios =
+      tenant.plano === TenantPlano.solo
+        ? Math.max(tenant.maxUsuarios, PLANO_MAX_USUARIOS[TenantPlano.solo])
+        : tenant.maxUsuarios;
+    const limit = maxUsuarios + tenant.usuariosExtras;
     return {
       plano: tenant.plano,
-      maxUsuarios: tenant.maxUsuarios,
+      maxUsuarios,
       usuariosExtras: tenant.usuariosExtras,
       limite: limit,
       usados: used,
@@ -104,7 +166,11 @@ export class UsersService {
       throw new NotFoundException('Tenant não encontrado.');
     }
     const used = await this.prisma.user.count({ where: { tenantId } });
-    const limit = tenant.maxUsuarios + tenant.usuariosExtras;
+    const maxUsuarios =
+      tenant.plano === TenantPlano.solo
+        ? Math.max(tenant.maxUsuarios, PLANO_MAX_USUARIOS[TenantPlano.solo])
+        : tenant.maxUsuarios;
+    const limit = maxUsuarios + tenant.usuariosExtras;
     if (used >= limit) {
       throw new ForbiddenException(
         `Limite de usuários do plano atingido (${used}/${limit}). Peça ao administrador da plataforma para liberar usuários extras.`,
@@ -112,9 +178,33 @@ export class UsersService {
     }
   }
 
-  private async assertRoleAllowed(tenantId: string, role: Role) {
-    if (role !== Role.analista) return;
+  private assertCanCreateRole(requester: AuthenticatedUser, role: Role) {
+    if (requester.role === Role.admin) return;
 
+    if (
+      (requester.role === Role.gerente || requester.role === Role.analista) &&
+      role === Role.corretor
+    ) {
+      return;
+    }
+
+    throw new ForbiddenException(
+      'Gerentes e analistas podem cadastrar somente usuários corretores.',
+    );
+  }
+
+  private assertCreciProcesso(
+    status: CreciProcessoStatus,
+    creci: string | null,
+  ) {
+    if (status === CreciProcessoStatus.creci_recebido && !creci?.trim()) {
+      throw new BadRequestException(
+        'Informe o número do CRECI ao marcar a etapa como recebido.',
+      );
+    }
+  }
+
+  private async assertRoleAllowed(tenantId: string, role: Role) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { plano: true, modules: true },
@@ -123,17 +213,36 @@ export class UsersService {
       throw new NotFoundException('Tenant não encontrado.');
     }
 
-    if (
-      !isAnalistaAllowed(
-        tenant.plano,
-        tenant.modules as Record<string, boolean> | null,
-      )
-    ) {
+    if (tenant.plano === TenantPlano.solo) {
+      if (role !== Role.assistente && role !== Role.admin) {
+        throw new ForbiddenException(
+          'No plano Solo o usuário extra deve ser Assistente.',
+        );
+      }
+      return;
+    }
+
+    if (role === Role.assistente) {
       throw new ForbiddenException(
-        tenant.plano === 'bronze'
-          ? 'O plano Bronze não inclui o perfil Analista.'
-          : 'O perfil Analista exige o pacote Administrativo ativo no plano.',
+        'O perfil Assistente é exclusivo do plano Solo.',
       );
+    }
+
+    if (
+      role !== Role.analista &&
+      role !== Role.gerente &&
+      role !== Role.financeiro
+    ) {
+      return;
+    }
+
+    const message = assertRoleAllowedForPlano(
+      tenant.plano,
+      role,
+      tenant.modules as Record<string, boolean> | null,
+    );
+    if (message) {
+      throw new ForbiddenException(message);
     }
   }
 
@@ -155,7 +264,14 @@ export class UsersService {
               { name: { contains: query.search, mode: 'insensitive' } },
               { email: { contains: query.search, mode: 'insensitive' } },
               { cargo: { contains: query.search, mode: 'insensitive' } },
+              { phone: { contains: query.search, mode: 'insensitive' } },
+              { creci: { contains: query.search, mode: 'insensitive' } },
             ],
+          }
+        : {}),
+      ...(query.comCreci
+        ? {
+            AND: [{ creci: { not: null } }, { NOT: { creci: '' } }],
           }
         : {}),
     };
@@ -164,7 +280,7 @@ export class UsersService {
       this.prisma.user.findMany({
         where,
         select: publicUserSelect,
-        orderBy: { createdAt: 'desc' },
+        orderBy: prismaTableOrderBy(query.sort, 'name'),
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -180,6 +296,40 @@ export class UsersService {
         totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     };
+  }
+
+  /** Tempo logado no dia (America/Sao_Paulo) dos usuários visíveis ao requester. */
+  async presenceToday(
+    requester: AuthenticatedUser,
+  ): Promise<{ data: UserPresenceToday[] }> {
+    const tenantId = requireTenantId(requester);
+    const teamFilter = await this.teamUserFilter(requester);
+    const users = await this.prisma.user.findMany({
+      where: teamFilter,
+      select: { id: true },
+    });
+    const data = await this.presence.summarizeToday(
+      tenantId,
+      users.map((u) => u.id),
+    );
+    return { data };
+  }
+
+  /** Tempo logado na semana (seg–dom) de um usuário visível ao requester. */
+  async presenceWeek(
+    id: string,
+    requester: AuthenticatedUser,
+  ): Promise<UserPresenceWeek> {
+    const tenantId = requireTenantId(requester);
+    const user = await this.prisma.user.findFirst({
+      where: { id, tenantId },
+      select: publicUserSelect,
+    });
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+    await this.ensureCanViewUser(requester, user);
+    return this.presence.summarizeWeekByDay(tenantId, id);
   }
 
   async findOne(
@@ -215,6 +365,38 @@ export class UsersService {
 
     if (dto.role !== undefined) {
       await this.assertRoleAllowed(tenantId, dto.role);
+      if (dto.role === Role.admin) {
+        const current = await this.prisma.user.findFirst({
+          where: { id, tenantId },
+          select: { role: true },
+        });
+        if (current?.role !== Role.admin) {
+          await this.assertCanAddAdmin(tenantId);
+        }
+      }
+    }
+
+    const dataNascimento =
+      dto.dataNascimento !== undefined
+        ? parseDataNascimento(dto.dataNascimento)
+        : undefined;
+
+    const creci =
+      dto.creci !== undefined
+        ? dto.creci?.trim()
+          ? dto.creci.trim()
+          : null
+        : undefined;
+    const creciStatus = dto.creciStatus;
+    if (creciStatus !== undefined || creci !== undefined) {
+      const current = await this.prisma.user.findFirst({
+        where: { id, tenantId },
+        select: { creci: true, creciStatus: true },
+      });
+      this.assertCreciProcesso(
+        creciStatus ?? current?.creciStatus ?? CreciProcessoStatus.nao_iniciado,
+        creci !== undefined ? creci : (current?.creci ?? null),
+      );
     }
 
     return this.prisma.user.update({
@@ -224,11 +406,29 @@ export class UsersService {
         ...(email ? { email } : {}),
         ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
         ...(dto.whatsapp !== undefined ? { whatsapp: dto.whatsapp } : {}),
+        ...(dataNascimento !== undefined ? { dataNascimento } : {}),
         ...(dto.cargo !== undefined ? { cargo: dto.cargo } : {}),
+        ...(creci !== undefined ? { creci } : {}),
+        ...(creciStatus !== undefined ? { creciStatus } : {}),
         ...(dto.cor !== undefined ? { cor: normalizeCor(dto.cor) } : {}),
         ...(dto.role !== undefined ? { role: dto.role } : {}),
         ...(dto.status !== undefined ? { status: dto.status } : {}),
         ...(dto.avatar !== undefined ? { avatar: dto.avatar } : {}),
+        ...(dto.financeiroCanView !== undefined
+          ? { financeiroCanView: true }
+          : {}),
+        ...(dto.financeiroCanCreate !== undefined
+          ? { financeiroCanCreate: dto.financeiroCanCreate }
+          : {}),
+        ...(dto.financeiroCanEdit !== undefined
+          ? { financeiroCanEdit: dto.financeiroCanEdit }
+          : {}),
+        ...(dto.financeiroCanDelete !== undefined
+          ? { financeiroCanDelete: dto.financeiroCanDelete }
+          : {}),
+        ...(dto.permissions !== undefined
+          ? { permissions: sanitizeUserPermissions(dto.permissions) }
+          : {}),
       },
       select: publicUserSelect,
     });
@@ -239,8 +439,68 @@ export class UsersService {
     if (id === requester.id) {
       throw new ForbiddenException('Você não pode excluir a própria conta.');
     }
-    await this.ensureExists(id, tenantId);
-    await this.prisma.user.delete({ where: { id } });
+
+    const target = await this.prisma.user.findFirst({
+      where: { id, tenantId },
+      select: { ...publicUserSelect },
+    });
+    if (!target) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    await this.ensureCanDeleteUser(requester, target);
+
+    if (target.role === Role.admin) {
+      const otherAdmins = await this.prisma.user.count({
+        where: {
+          tenantId,
+          role: Role.admin,
+          id: { not: id },
+          status: UserStatus.ativo,
+        },
+      });
+      if (otherAdmins === 0) {
+        throw new BadRequestException(
+          'Não é possível excluir o último administrador da conta.',
+        );
+      }
+    }
+
+    const equipeGerenciada = await this.prisma.equipe.findFirst({
+      where: { tenantId, gerenteId: id },
+      select: { id: true, name: true },
+    });
+    if (equipeGerenciada) {
+      throw new BadRequestException(
+        `Este usuário é gerente da equipe "${equipeGerenciada.name}". Troque o gerente da equipe ou remova a equipe antes de excluí-lo.`,
+      );
+    }
+
+    const comissoes = await this.prisma.financeiroComissao.count({
+      where: { tenantId, corretorId: id },
+    });
+    if (comissoes > 0) {
+      throw new BadRequestException(
+        'Este usuário possui comissões vinculadas. Inative a conta em vez de excluir, para preservar o histórico financeiro.',
+      );
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await this.detachUserReferences(tx, id, requester.id);
+        await tx.user.delete({ where: { id } });
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2003'
+      ) {
+        throw new BadRequestException(
+          'Não foi possível excluir: há registros vinculados a este usuário. Inative a conta ou remova os vínculos primeiro.',
+        );
+      }
+      throw err;
+    }
   }
 
   async updateStatus(
@@ -253,6 +513,10 @@ export class UsersService {
       throw new ForbiddenException('Você não pode inativar a própria conta.');
     }
     await this.ensureExists(id, tenantId);
+
+    if (status === UserStatus.inativo) {
+      await this.presence.closeOpenSegments(id);
+    }
 
     return this.prisma.user.update({
       where: { id },
@@ -336,6 +600,10 @@ export class UsersService {
       return { tenantId };
     }
 
+    if (requester.role === Role.analista) {
+      return { tenantId, role: Role.corretor };
+    }
+
     if (requester.role !== Role.gerente) {
       throw new ForbiddenException('Acesso negado.');
     }
@@ -351,12 +619,17 @@ export class UsersService {
     user: PublicUser,
   ): Promise<void> {
     if (requester.role === Role.admin) return;
+    if (requester.role === Role.analista) {
+      if (user.role === Role.corretor) return;
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
     if (requester.role !== Role.gerente) {
       throw new ForbiddenException('Acesso negado.');
     }
     if (user.id === requester.id) return;
 
-    if (user.role !== Role.corretor) {
+    if (!isCorretorLike(user.role)) {
       throw new NotFoundException('Usuário não encontrado.');
     }
 
@@ -381,9 +654,9 @@ export class UsersService {
 
     // Gerente só reseta senha de corretores da própria equipe (não a própria
     // via este endpoint administrativo — usa perfil / change-password).
-    if (user.role !== Role.corretor) {
+    if (!isCorretorLike(user.role)) {
       throw new ForbiddenException(
-        'Você só pode redefinir senha de corretores da sua equipe.',
+        'Você só pode redefinir senha de corretores e treinees da sua equipe.',
       );
     }
 
@@ -396,6 +669,155 @@ export class UsersService {
         'Você só pode redefinir senha de corretores da sua equipe.',
       );
     }
+  }
+
+  /** Admin: qualquer usuário do tenant. Gerente: só corretor/treinee da equipe. */
+  private async ensureCanDeleteUser(
+    requester: AuthenticatedUser,
+    user: PublicUser,
+  ): Promise<void> {
+    if (requester.role === Role.admin) return;
+
+    if (requester.role !== Role.gerente) {
+      throw new ForbiddenException('Acesso negado.');
+    }
+
+    if (!isCorretorLike(user.role)) {
+      throw new ForbiddenException(
+        'Você só pode excluir corretores e treinees da sua equipe.',
+      );
+    }
+
+    const allowed = await this.teamScope.canAccessCorretor(
+      requester,
+      user.id,
+    );
+    if (!allowed) {
+      throw new ForbiddenException(
+        'Você só pode excluir corretores da sua equipe.',
+      );
+    }
+  }
+
+  /** Solo tem um único administrador — o extra entra como Assistente. */
+  private async assertCanAddAdmin(tenantId: string): Promise<void> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { plano: true },
+    });
+    if (!tenant || tenant.plano !== TenantPlano.solo) return;
+
+    const admins = await this.prisma.user.count({
+      where: { tenantId, role: Role.admin },
+    });
+    if (admins >= 1) {
+      throw new ForbiddenException(
+        'O plano Solo permite apenas um administrador. Cadastre o usuário extra como Assistente.',
+      );
+    }
+  }
+
+  /**
+   * Solta FKs que impedem o DELETE (metas, agenda, autoria) e apaga dados pessoais.
+   * Histórico comercial permanece, apontando para quem excluiu quando a coluna é obrigatória.
+   */
+  private async detachUserReferences(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    fallbackUserId: string,
+  ): Promise<void> {
+    await tx.notificacao.deleteMany({ where: { userId } });
+    await tx.userSessionSegment.deleteMany({ where: { userId } });
+    await tx.userGoogleCalendar.deleteMany({ where: { userId } });
+
+    await tx.lead.updateMany({
+      where: { corretorId: userId },
+      data: { corretorId: null },
+    });
+    await tx.lead.updateMany({
+      where: { perdidoPorId: userId },
+      data: { perdidoPorId: null },
+    });
+
+    await tx.documentacao.updateMany({
+      where: { corretorId: userId },
+      data: { corretorId: null },
+    });
+    await tx.documentacao.updateMany({
+      where: { gerenteId: userId },
+      data: { gerenteId: null },
+    });
+    await tx.documentacao.updateMany({
+      where: { autorId: userId },
+      data: { autorId: fallbackUserId },
+    });
+
+    await tx.proposta.updateMany({
+      where: { corretorId: userId },
+      data: { corretorId: null },
+    });
+    await tx.proposta.updateMany({
+      where: { autorId: userId },
+      data: { autorId: fallbackUserId },
+    });
+
+    await tx.analise.updateMany({
+      where: { analistaId: userId },
+      data: { analistaId: null },
+    });
+    await tx.analise.updateMany({
+      where: { autorId: userId },
+      data: { autorId: fallbackUserId },
+    });
+
+    await tx.agendamento.updateMany({
+      where: { atribuidoParaId: userId },
+      data: { atribuidoParaId: null },
+    });
+    await tx.agendamento.updateMany({
+      where: { alvoGerenteId: userId },
+      data: { alvoGerenteId: null },
+    });
+    await tx.agendamento.updateMany({
+      where: { aprovadoPorId: userId },
+      data: { aprovadoPorId: null },
+    });
+    await tx.agendamento.updateMany({
+      where: { autorId: userId },
+      data: { autorId: fallbackUserId },
+    });
+
+    await tx.triagemEvent.updateMany({
+      where: { autorId: userId },
+      data: { autorId: fallbackUserId },
+    });
+    await tx.leadPrazoAdiamento.updateMany({
+      where: { autorId: userId },
+      data: { autorId: fallbackUserId },
+    });
+
+    await tx.meta.updateMany({
+      where: { criadorId: userId },
+      data: { criadorId: fallbackUserId },
+    });
+    await tx.meta.updateMany({
+      where: { corretorId: userId },
+      data: { corretorId: null },
+    });
+    await tx.meta.updateMany({
+      where: { gerenteId: userId },
+      data: { gerenteId: null },
+    });
+
+    await tx.financeiroComissao.updateMany({
+      where: { gerenteId: userId },
+      data: { gerenteId: null },
+    });
+
+    await tx.user.update({
+      where: { id: userId },
+      data: { equipeId: null },
+    });
   }
 
   private async ensureExists(id: string, tenantId: string): Promise<void> {

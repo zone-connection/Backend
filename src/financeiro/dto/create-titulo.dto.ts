@@ -10,6 +10,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
+  FinanceiroDespesaNatureza,
   FinanceiroTituloStatus,
   FinanceiroTituloTipo,
 } from '@prisma/client';
@@ -57,4 +58,14 @@ export class CreateTituloDto {
   @IsString()
   @MaxLength(40)
   parcela?: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  platformContratoId?: string;
+
+  @IsOptional()
+  @IsEnum(FinanceiroDespesaNatureza, {
+    message: 'Natureza inválida. Use fixa ou variavel.',
+  })
+  natureza?: FinanceiroDespesaNatureza;
 }

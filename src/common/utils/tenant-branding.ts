@@ -6,6 +6,11 @@ export const tenantBrandingSelect = {
   name: true,
   slug: true,
   documento: true,
+  creci: true,
+  email: true,
+  telefone: true,
+  endereco: true,
+  cidade: true,
   logoUrl: true,
   primaryColor: true,
   sidebarStyle: true,
@@ -25,6 +30,7 @@ export type TenantBranding = Prisma.TenantGetPayload<{
 export const tenantAdminSelect = {
   ...tenantBrandingSelect,
   status: true,
+  isTest: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.TenantSelect;

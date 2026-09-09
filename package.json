@@ -7,16 +7,18 @@
   "scripts": {
     "build": "prisma generate && nest build",
     "format": "prettier --write \"src/**/*.ts\"",
-    "start": "prisma migrate deploy && node dist/main",
+    "start": "prisma migrate deploy && node dist/src/main",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "prisma migrate deploy && node dist/main",
+    "start:prod": "prisma migrate deploy && node dist/src/main",
     "lint": "eslint \"{src,test}/**/*.ts\" --fix",
+    "test": "node -r ts-node/register --test src/meta/meta-webhook.parser.spec.ts src/meta/meta-signature.spec.ts src/meta/meta.service.spec.ts src/meta/meta-token.crypto.spec.ts src/meta/meta-oauth.util.spec.ts src/meta/meta-oauth.service.spec.ts src/common/utils/user-permissions.spec.ts src/common/utils/last-cookie.util.spec.ts src/common/guards/roles.guard.spec.ts src/catalog/catalog.defaults.spec.ts src/funis/funil-ativo.util.spec.ts src/funis/funil-resolver.service.spec.ts src/equipes/equipe-funis.service.spec.ts src/tenants/tenant-operation.util.spec.ts src/tenants/tenant-plan.spec.ts src/captacao/captacao.util.spec.ts src/captacao/captacao.service.spec.ts src/imoveis-usados/venda-usado.matching.spec.ts src/imoveis-usados/imoveis-usados.service.spec.ts src/imoveis-usados/venda-usado-fluxo.service.spec.ts src/imoveis-usados/venda-usado-fechamento.service.spec.ts src/imoveis-usados/imovel-chave.service.spec.ts src/imoveis-usados/venda-usado-pos-venda.service.spec.ts src/portal-proprietario/portal-proprietario-auth.service.spec.ts src/portal-proprietario/portal-proprietario-imoveis.service.spec.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "db:seed": "ts-node prisma/seed.ts"
+    "db:seed": "ts-node prisma/seed.ts",
+    "tenant:backfill-logo-colors": "ts-node prisma/backfill-tenant-logo-colors.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -37,13 +39,16 @@
     "bcryptjs": "^2.4.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
+    "cloudinary": "^2.10.0",
     "cookie-parser": "^1.4.7",
     "helmet": "^8.3.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
+    "pdfkit": "^0.19.1",
     "prisma": "^6.2.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "sharp": "^0.35.3",
     "typescript": "^5.7.0"
   },
   "devDependencies": {
@@ -51,8 +56,10 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^22.10.0",
     "@types/passport-jwt": "^4.0.1",
+    "@types/pdfkit": "^0.17.6",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0"
   }

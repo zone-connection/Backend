@@ -1,6 +1,10 @@
+import { Transform } from 'class-transformer';
 import {
+  IsArray,
   IsOptional,
   IsString,
+  IsUrl,
+  IsUUID,
   Matches,
   MaxLength,
   MinLength,
@@ -40,4 +44,27 @@ export class CreateConstrutoraDto {
   @IsString()
   @MaxLength(80)
   viabilizadorContato?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  cca?: string;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
+  @IsUrl(
+    { require_protocol: true, protocols: ['https'] },
+    { message: 'Informe uma URL https válida da pasta no Drive.' },
+  )
+  @MaxLength(500)
+  driveFolderUrl?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    return Array.isArray(value) ? value.map(String) : [String(value)];
+  })
+  @IsArray()
+  @IsUUID('4', { each: true, message: 'Localidade inválida.' })
+  localidadeIds?: string[];
 }
