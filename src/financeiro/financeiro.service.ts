@@ -3940,6 +3940,8 @@ export class FinanceiroService {
     };
     if (isCorretorLike(requester.role)) {
       const {
+        percentualImobiliaria: _percentualImobiliaria,
+        comissaoBruta: _comissaoBruta,
         percentualTributos: _percentualTributos,
         valorTributos: _valorTributos,
         comissaoLiquida: _comissaoLiquida,
@@ -3949,6 +3951,7 @@ export class FinanceiroService {
         valorCaixa: _valorCaixa,
         percentualSocios: _percentualSocios,
         valorSocios: _valorSocios,
+        valorPremiacao: _valorPremiacao,
         percentualPremiacaoImobiliaria: _percentualPremiacaoImobiliaria,
         valorPremiacaoImobiliaria: _valorPremiacaoImobiliaria,
         percentualPremiacaoGerente: _percentualPremiacaoGerente,
