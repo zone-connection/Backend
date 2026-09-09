@@ -23,18 +23,16 @@ export class FinanceiroPermsGuard implements CanActivate {
     if (!user) return true;
 
     const action = actionFromRequest(request);
-    const path = collectRequestPath(request);
-    const isComissao = path.includes('comissao');
-
-    // Corretor/treinee: @Roles já limita quais rotas eles alcançam.
-    // Aqui só liberamos a LEITURA da própria fatia de comissão.
     const role = String(user.role);
+
+    // Corretor/treinee: o @Roles do controller só libera GET /comissoes.
+    // Não depender do path da request (no proxy Vercel→Dokploy ele pode
+    // chegar sem "/comissao" e derrubar a leitura da própria fatia).
     if (
       (role === Role.corretor ||
         role === Role.treinee ||
         isCorretorLike(user.role)) &&
-      action === 'view' &&
-      isComissao
+      action === 'view'
     ) {
       return true;
     }
@@ -52,6 +50,8 @@ export class FinanceiroPermsGuard implements CanActivate {
       return true;
     }
 
+    const path = collectRequestPath(request);
+    const isComissao = path.includes('comissao');
     if (
       isComissao &&
       action === 'view' &&
@@ -73,6 +73,7 @@ function collectRequestPath(request: Request): string {
     request.url,
     request.baseUrl,
     request.path,
+    request.route?.path,
     `${request.baseUrl ?? ''}${request.path ?? ''}`,
   ];
   return parts
