@@ -1172,14 +1172,13 @@ export class LeadsService {
               ...(assignment.corretorId
                 ? {
                     origemAtrasoLiberacao: null,
-                    ...(previousOrigemAtraso ===
-                      AtrasoLiberacaoDestino.retrabalho ||
-                    previousOrigemAtraso === AtrasoLiberacaoDestino.caca_lead
-                      ? {
-                          triagemOrigemHerdada: previousOrigemAtraso,
-                          lastTriagemAt: new Date(),
-                        }
-                      : {}),
+                    atrasoLiberadoAt: null,
+                    triagemOrigemHerdada:
+                      previousOrigemAtraso ===
+                      AtrasoLiberacaoDestino.retrabalho
+                        ? AtrasoLiberacaoDestino.retrabalho
+                        : AtrasoLiberacaoDestino.caca_lead,
+                    lastTriagemAt: new Date(),
                   }
                 : {}),
             }
