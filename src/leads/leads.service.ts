@@ -696,10 +696,6 @@ export class LeadsService {
 
     if (query.origemAtrasoLiberacao) {
       where.origemAtrasoLiberacao = query.origemAtrasoLiberacao;
-    } else {
-      andExtra.push({
-        NOT: { origemAtrasoLiberacao: AtrasoLiberacaoDestino.caca_lead },
-      });
     }
 
     // Cliente = carteira pessoal: admin/gerente nunca listam clientes do corretor.
@@ -1656,18 +1652,27 @@ export class LeadsService {
 
   async listCacaLead(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
+    const ctx = await this.monitoramento.loadFunilContext(tenantId);
+    const now = new Date();
+    const idleBefore = new Date(now.getTime() - ctx.inatividadeMs);
     const data = await this.prisma.lead.findMany({
       where: {
         tenantId,
         tipo: ContatoTipo.lead,
         perdidoAt: null,
-        corretorId: null,
-        origemAtrasoLiberacao: AtrasoLiberacaoDestino.caca_lead,
+        ...(ctx.terminalSlugs.length > 0
+          ? { stage: { notIn: ctx.terminalSlugs } }
+          : {}),
+        OR: [
+          { prazoDueAt: { lt: now } },
+          ...(ctx.inatividadeMs > 0
+            ? [{ lastMovementAt: { lt: idleBefore } }]
+            : []),
+        ],
       },
       select: leadSelect,
-      orderBy: { atrasoLiberadoAt: 'desc' },
+      orderBy: { lastMovementAt: 'asc' },
     });
-    const ctx = await this.monitoramento.loadFunilContext(tenantId);
     return this.monitoramento.decorateLeadsWithTarefas(data, ctx, requester);
   }
 
@@ -1682,26 +1687,31 @@ export class LeadsService {
       throw new ForbiddenException('Usuário não encontrado neste tenant.');
     }
 
-    const updated = await this.prisma.lead.updateMany({
+    const current = await this.prisma.lead.findFirst({
       where: {
         id,
         tenantId,
         tipo: ContatoTipo.lead,
         perdidoAt: null,
-        corretorId: null,
-        origemAtrasoLiberacao: AtrasoLiberacaoDestino.caca_lead,
       },
+      select: { id: true, corretorId: true },
+    });
+    if (!current) {
+      throw new NotFoundException('Lead não encontrado.');
+    }
+    if (current.corretorId === self.id) {
+      throw new ConflictException('Este lead já está na sua carteira.');
+    }
+
+    await this.prisma.lead.update({
+      where: { id },
       data: {
         corretorId: self.id,
         equipeId: self.equipeId,
         origemAtrasoLiberacao: null,
+        atrasoLiberadoAt: null,
       },
     });
-    if (updated.count === 0) {
-      throw new ConflictException(
-        'Este lead já foi pego por outro corretor ou não está no Caça-lead.',
-      );
-    }
 
     const lead = await this.prisma.lead.findFirst({
       where: { id, tenantId },
@@ -1738,7 +1748,6 @@ export class LeadsService {
       perdidoAt: null,
       corretorId: null,
       equipeId: null,
-      NOT: { origemAtrasoLiberacao: AtrasoLiberacaoDestino.caca_lead },
     };
   }
 
