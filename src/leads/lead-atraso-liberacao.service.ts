@@ -152,7 +152,7 @@ export class LeadAtrasoLiberacaoService implements OnModuleInit, OnModuleDestroy
 
       if (ids.length === 0) continue;
 
-      const data: Prisma.LeadUpdateManyMutationInput = {
+      const data: Prisma.LeadUncheckedUpdateManyInput = {
         corretorId: null,
         equipeId: null,
         origemAtrasoLiberacao: funil.atrasoLiberacaoDestino,
