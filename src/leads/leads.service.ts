@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -12,6 +13,7 @@ import {
   Role,
   TriagemOrigem,
   UserStatus,
+  AtrasoLiberacaoDestino,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
@@ -351,13 +353,7 @@ export class LeadsService {
     }
 
     const disponiveis = await this.prisma.lead.count({
-      where: {
-        tenantId,
-        tipo: ContatoTipo.lead,
-        perdidoAt: null,
-        corretorId: null,
-        equipeId: null,
-      },
+      where: this.poolAdminWhere(tenantId),
     });
     const [equipes, corretores] = await Promise.all([
       this.prisma.equipe.findMany({
@@ -434,20 +430,14 @@ export class LeadsService {
         tenantId,
         id: { in: equipeIds },
       },
-      select: { id: true, name: true },
+      select: { id: true, name: true, gerenteId: true },
     });
     if (equipes.length !== new Set(equipeIds).size) {
       throw new BadRequestException('Uma ou mais equipes são inválidas.');
     }
 
     const leads = await this.prisma.lead.findMany({
-      where: {
-        tenantId,
-        tipo: ContatoTipo.lead,
-        perdidoAt: null,
-        corretorId: null,
-        equipeId: null,
-      },
+      where: this.poolAdminWhere(tenantId),
       select: { id: true },
       orderBy: { createdAt: 'asc' },
       take: totalPedido,
@@ -473,7 +463,7 @@ export class LeadsService {
         offset += aloc.quantidade;
         await tx.lead.updateMany({
           where: { id: { in: slice.map((l) => l.id) } },
-          data: { equipeId: aloc.equipeId },
+          data: { equipeId: aloc.equipeId, origemAtrasoLiberacao: null },
         });
         const eq = equipes.find((e) => e.id === aloc.equipeId)!;
         resultado.push({
@@ -505,13 +495,7 @@ export class LeadsService {
       );
     }
     const tenantId = requireTenantId(requester);
-    const leadWhere: Prisma.LeadWhereInput = {
-      tenantId,
-      tipo: ContatoTipo.lead,
-      perdidoAt: null,
-      corretorId: null,
-      equipeId: null,
-    };
+    const leadWhere = this.poolAdminWhere(tenantId);
 
     if (dto.alocacoes?.length) {
       const totalPedido = dto.alocacoes.reduce((s, a) => s + a.quantidade, 0);
@@ -568,6 +552,7 @@ export class LeadsService {
             data: {
               corretorId: corretor.id,
               equipeId: corretor.equipeId,
+              origemAtrasoLiberacao: null,
             },
           });
           resultado.push({
@@ -643,7 +628,11 @@ export class LeadsService {
       assignments.map((a) =>
         this.prisma.lead.update({
           where: { id: a.leadId },
-          data: { corretorId: a.corretorId, equipeId: a.equipeId },
+          data: {
+            corretorId: a.corretorId,
+            equipeId: a.equipeId,
+            origemAtrasoLiberacao: null,
+          },
         }),
       ),
     );
@@ -704,6 +693,14 @@ export class LeadsService {
     };
 
     const andExtra: Prisma.LeadWhereInput[] = [];
+
+    if (query.origemAtrasoLiberacao) {
+      where.origemAtrasoLiberacao = query.origemAtrasoLiberacao;
+    } else {
+      andExtra.push({
+        NOT: { origemAtrasoLiberacao: AtrasoLiberacaoDestino.caca_lead },
+      });
+    }
 
     // Cliente = carteira pessoal: admin/gerente nunca listam clientes do corretor.
     if (isGestorCarteira) {
@@ -1124,6 +1121,9 @@ export class LeadsService {
           ? {
               corretorId: assignment.corretorId,
               equipeId: assignment.equipeId,
+              ...(assignment.corretorId
+                ? { origemAtrasoLiberacao: null }
+                : {}),
             }
           : {}),
         ...(dto.createdAt !== undefined
@@ -1650,10 +1650,91 @@ export class LeadsService {
     return rows.map(mapAssignee);
   }
 
+  async listCacaLead(requester: AuthenticatedUser) {
+    this.assertPodeCacaLead(requester);
+    const tenantId = requireTenantId(requester);
+    const data = await this.prisma.lead.findMany({
+      where: {
+        tenantId,
+        tipo: ContatoTipo.lead,
+        perdidoAt: null,
+        corretorId: null,
+        origemAtrasoLiberacao: AtrasoLiberacaoDestino.caca_lead,
+      },
+      select: leadSelect,
+      orderBy: { atrasoLiberadoAt: 'desc' },
+    });
+    const ctx = await this.monitoramento.loadFunilContext(tenantId);
+    return this.monitoramento.decorateLeadsWithTarefas(data, ctx, requester);
+  }
+
+  async pegarCacaLead(id: string, requester: AuthenticatedUser) {
+    this.assertPodeCacaLead(requester);
+    const tenantId = requireTenantId(requester);
+    const self = await this.prisma.user.findFirst({
+      where: { id: requester.id, tenantId },
+      select: { id: true, equipeId: true },
+    });
+    if (!self) {
+      throw new ForbiddenException('Usuário não encontrado neste tenant.');
+    }
+
+    const updated = await this.prisma.lead.updateMany({
+      where: {
+        id,
+        tenantId,
+        tipo: ContatoTipo.lead,
+        perdidoAt: null,
+        corretorId: null,
+        origemAtrasoLiberacao: AtrasoLiberacaoDestino.caca_lead,
+      },
+      data: {
+        corretorId: self.id,
+        equipeId: self.equipeId,
+        origemAtrasoLiberacao: null,
+      },
+    });
+    if (updated.count === 0) {
+      throw new ConflictException(
+        'Este lead já foi pego por outro corretor ou não está no Caça-lead.',
+      );
+    }
+
+    const lead = await this.prisma.lead.findFirst({
+      where: { id, tenantId },
+      select: leadSelect,
+    });
+    if (!lead) throw new NotFoundException('Lead não encontrado.');
+    await this.monitoramento.recordMovement(id, 'edicao');
+    return this.decorateOne(lead, requester);
+  }
+
   // --- Helpers de RBAC ---
 
   private isCorretor(requester: AuthenticatedUser): boolean {
     return isCorretorLike(requester.role);
+  }
+
+  private assertPodeCacaLead(requester: AuthenticatedUser) {
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.gerente &&
+      requester.role !== Role.corretor &&
+      requester.role !== Role.treinee
+    ) {
+      throw new ForbiddenException('Você não pode acessar o Caça-lead.');
+    }
+  }
+
+  private poolAdminWhere(tenantId: string): Prisma.LeadWhereInput {
+    return {
+      tenantId,
+      tipo: ContatoTipo.lead,
+      perdidoAt: null,
+      corretorId: null,
+      equipeId: null,
+      NOT: { origemAtrasoLiberacao: AtrasoLiberacaoDestino.caca_lead },
+    };
   }
 
   private async ensureCanAccess(

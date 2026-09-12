@@ -15,7 +15,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { FunilEtapaPapel, FunilTipo, PrazoUnidade } from '@prisma/client';
+import { FunilEtapaPapel, FunilTipo, PrazoUnidade, AtrasoLiberacaoDestino } from '@prisma/client';
 
 export class CreateFunilEtapaDto {
   @IsString()
@@ -116,6 +116,29 @@ export class UpdateFunilDto {
     message: 'Unidade inválida. Use minutos, horas ou dias.',
   })
   inatividadeUnidade?: PrazoUnidade;
+
+  @IsOptional()
+  @IsBoolean()
+  atrasoLiberacaoAtiva?: boolean;
+
+  @IsOptional()
+  @IsEnum(AtrasoLiberacaoDestino, {
+    message: 'Destino inválido. Use caca_lead ou retrabalho.',
+  })
+  atrasoLiberacaoDestino?: AtrasoLiberacaoDestino;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(3650)
+  atrasoLiberacaoValor?: number;
+
+  @IsOptional()
+  @IsEnum(PrazoUnidade, {
+    message: 'Unidade inválida. Use minutos, horas ou dias.',
+  })
+  atrasoLiberacaoUnidade?: PrazoUnidade;
 }
 
 export class UpdateFunilEtapaDto {

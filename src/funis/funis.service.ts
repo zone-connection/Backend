@@ -55,6 +55,10 @@ const funilSelect = {
   ativo: true,
   inatividadeValor: true,
   inatividadeUnidade: true,
+  atrasoLiberacaoAtiva: true,
+  atrasoLiberacaoDestino: true,
+  atrasoLiberacaoValor: true,
+  atrasoLiberacaoUnidade: true,
   createdAt: true,
   updatedAt: true,
   etapas: {
@@ -186,6 +190,18 @@ export class FunisService {
     }
     if (dto.inatividadeUnidade !== undefined) {
       data.inatividadeUnidade = dto.inatividadeUnidade;
+    }
+    if (dto.atrasoLiberacaoAtiva !== undefined) {
+      data.atrasoLiberacaoAtiva = dto.atrasoLiberacaoAtiva;
+    }
+    if (dto.atrasoLiberacaoDestino !== undefined) {
+      data.atrasoLiberacaoDestino = dto.atrasoLiberacaoDestino;
+    }
+    if (dto.atrasoLiberacaoValor !== undefined) {
+      data.atrasoLiberacaoValor = dto.atrasoLiberacaoValor;
+    }
+    if (dto.atrasoLiberacaoUnidade !== undefined) {
+      data.atrasoLiberacaoUnidade = dto.atrasoLiberacaoUnidade;
     }
 
     const novoTipo =

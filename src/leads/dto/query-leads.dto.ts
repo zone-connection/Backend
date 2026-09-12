@@ -1,13 +1,6 @@
 import { Type } from 'class-transformer';
-import {
-  IsIn,
-  IsInt,
-  IsOptional,
-  IsString,
-  IsUUID,
-  Max,
-  Min,
-} from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import { AtrasoLiberacaoDestino } from '@prisma/client';
 import { LEAD_INTERESSES, LEAD_PRIORIDADES, CONTATO_TIPOS } from '../lead.constants';
 
 export class QueryLeadsDto {
@@ -88,4 +81,10 @@ export class QueryLeadsDto {
     | 'proximo_vencimento'
     | 'em_atraso'
     | 'dentro_prazo';
+
+  @IsOptional()
+  @IsEnum(AtrasoLiberacaoDestino, {
+    message: 'Origem inválida. Use caca_lead ou retrabalho.',
+  })
+  origemAtrasoLiberacao?: AtrasoLiberacaoDestino;
 }

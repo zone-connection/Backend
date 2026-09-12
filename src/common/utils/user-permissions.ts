@@ -7,7 +7,7 @@ export type UserPermissions = {
 
 export const PERMISSION_MODULES = [
   { key: 'dashboard', label: 'Dashboard', routes: ['/dashboard'], group: 'operacao' },
-  { key: 'leads', label: 'Leads', routes: ['/leads'], group: 'operacao' },
+  { key: 'leads', label: 'Leads', routes: ['/leads', '/caca-lead'], group: 'operacao' },
   { key: 'funil', label: 'Funil', routes: ['/funil'], group: 'operacao' },
   { key: 'triagem', label: 'Triagem', routes: ['/triagem'], group: 'operacao' },
   { key: 'agenda', label: 'Agenda', routes: ['/agenda'], group: 'operacao' },
@@ -177,6 +177,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/guia',
     '/dashboard',
     '/leads',
+    '/caca-lead',
     '/funil',
     '/agenda',
     '/metas',
@@ -190,6 +191,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/dashboard',
     '/vendas',
     '/leads',
+    '/caca-lead',
     '/funil',
     '/funil-clientes',
     '/agenda',
@@ -218,6 +220,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/dashboard',
     '/vendas',
     '/leads',
+    '/caca-lead',
     '/funil',
     '/funil-clientes',
     '/agenda',
@@ -241,6 +244,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
   corretor: [
     '/dashboard',
     '/leads',
+    '/caca-lead',
     '/funil',
     '/funil-clientes',
     '/agenda',
@@ -281,6 +285,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     treinee: [
     '/dashboard',
     '/leads',
+    '/caca-lead',
     '/funil',
     '/funil-clientes',
     '/agenda',

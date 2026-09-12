@@ -94,6 +94,12 @@ enum PrazoUnidade {
   dias
 }
 
+/// Destino da automação após o lead ficar atrasado pelo prazo configurado.
+enum AtrasoLiberacaoDestino {
+  caca_lead
+  retrabalho
+}
+
 /// Imobiliária / empresa cliente da plataforma (tenant).
 model Tenant {
   id     String     @id @default(uuid())
@@ -566,6 +572,10 @@ model Lead {
   /// true quando o prazo atual veio de um adiamento (não recalcular pela etapa).
   prazoAdiado Boolean @default(false)
 
+  /// Preenchido quando a automação de atraso desvincula o corretor.
+  origemAtrasoLiberacao AtrasoLiberacaoDestino?
+  atrasoLiberadoAt      DateTime?
+
   triagemEvents TriagemEvent[]
   prazoAdiamentos LeadPrazoAdiamento[]
   documentacoes Documentacao[]
@@ -593,6 +603,7 @@ model Lead {
   @@index([empreendimentoId])
   @@index([createdAt])
   @@index([perdidoAt])
+  @@index([tenantId, origemAtrasoLiberacao])
   @@map("leads")
 }
 
@@ -1329,6 +1340,11 @@ model Funil {
   /// Sem movimentação relevante após este período gera alerta no card.
   inatividadeValor   Int          @default(48)
   inatividadeUnidade PrazoUnidade @default(horas)
+  /// Depois de X em atraso, desvincula o corretor (caça-lead ou retrabalho).
+  atrasoLiberacaoAtiva    Boolean                 @default(false)
+  atrasoLiberacaoDestino  AtrasoLiberacaoDestino  @default(retrabalho)
+  atrasoLiberacaoValor    Int                     @default(24)
+  atrasoLiberacaoUnidade  PrazoUnidade            @default(horas)
 
   etapas FunilEtapa[]
   captacoes Captacao[]

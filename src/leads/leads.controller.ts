@@ -166,6 +166,23 @@ export class LeadsController {
     return this.leadsService.syncMonitoramentoNotificacoes(requester);
   }
 
+  @Get('caca-lead')
+  @UseGuards(RolesGuard)
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee)
+  listCacaLead(@CurrentUser() requester: AuthenticatedUser) {
+    return this.leadsService.listCacaLead(requester);
+  }
+
+  @Post(':id/pegar')
+  @UseGuards(RolesGuard)
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee)
+  pegarCacaLead(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.pegarCacaLead(id, requester);
+  }
+
   @Get(':id')
   findOne(
     @Param('id', ParseUUIDPipe) id: string,

@@ -76,3 +76,27 @@ export function isEtapaTerminal(
 export function fingerprintPrazo(enteredAt: Date, dueAt: Date): string {
   return `${enteredAt.toISOString()}|${dueAt.toISOString()}`;
 }
+
+/**
+ * Instantâneo em que o lead passou a contar como atrasado (SLA vencido
+ * e/ou inatividade). Null = ainda não está atrasado.
+ */
+export function atrasoStartedAtMs(params: {
+  nowMs: number;
+  terminal: boolean;
+  prazoDueAt: Date | null;
+  lastMovementAt: Date;
+  inatividadeMs: number;
+}): number | null {
+  if (params.terminal) return null;
+  const starts: number[] = [];
+  if (params.prazoDueAt && params.prazoDueAt.getTime() < params.nowMs) {
+    starts.push(params.prazoDueAt.getTime());
+  }
+  if (params.inatividadeMs > 0) {
+    const idleStart = params.lastMovementAt.getTime() + params.inatividadeMs;
+    if (idleStart <= params.nowMs) starts.push(idleStart);
+  }
+  if (starts.length === 0) return null;
+  return Math.min(...starts);
+}
