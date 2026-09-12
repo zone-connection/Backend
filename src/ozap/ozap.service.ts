@@ -1,7 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OzapWebhookDto } from './dto/ozap-webhook.dto';
+
+type OzapTransaction = Prisma.TransactionClient;
+type OzapWebhookResult = {
+  ok: true;
+  leadId?: string;
+  ignored?: true;
+  reason?: 'instance_not_mapped';
+  duplicate?: true;
+};
+
+class DuplicateOzapDeliveryError extends Error {}
 
 type MessageReceivedData = {
   chat_id?: unknown;
@@ -40,14 +51,19 @@ const CATEGORIA_PRIORIDADE: Record<string, string> = {
 
 @Injectable()
 export class OzapService {
+  private readonly logger = new Logger(OzapService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
-  async handleWebhook(payload: OzapWebhookDto) {
+  async handleWebhook(payload: OzapWebhookDto): Promise<OzapWebhookResult> {
     const connection = await this.prisma.tenantOzapConnection.findFirst({
       where: { instanceId: payload.instance_id, ativo: true },
       select: { tenantId: true },
     });
     if (!connection) {
+      this.logger.warn(
+        `Webhook OZap ignorado: instância ${payload.instance_id} não está vinculada ou está inativa.`,
+      );
       return { ok: true, ignored: true, reason: 'instance_not_mapped' };
     }
 
@@ -61,54 +77,96 @@ export class OzapService {
     ].join(':');
 
     try {
-      await this.prisma.ozapWebhookDelivery.create({
-        data: {
-          deliveryKey,
-          event: payload.event,
-          instanceId: payload.instance_id,
-          chatId,
-          messageId,
-          // Não persistimos o conteúdo da conversa neste log de idempotência.
-          payload: { timestamp: payload.timestamp } as Prisma.InputJsonValue,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        try {
+          await tx.ozapWebhookDelivery.create({
+            data: {
+              deliveryKey,
+              event: payload.event,
+              instanceId: payload.instance_id,
+              chatId,
+              messageId,
+              // Não persistimos o conteúdo da conversa neste log de idempotência.
+              payload: {
+                timestamp: payload.timestamp,
+              } as Prisma.InputJsonValue,
+            },
+          });
+        } catch (error) {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          ) {
+            throw new DuplicateOzapDeliveryError();
+          }
+          throw error;
+        }
+
+        if (payload.event === 'message.received') {
+          const leadId = await this.handleMessageReceived(
+            tx,
+            payload.instance_id,
+            data as MessageReceivedData,
+            payload.timestamp,
+            connection.tenantId,
+          );
+          return { ok: true, leadId };
+        }
+
+        if (payload.event === 'chat.status_changed') {
+          await this.handleStatusChanged(
+            tx,
+            payload.instance_id,
+            data as ChatStatusChangedData,
+          );
+        }
+        if (payload.event === 'message.sent') {
+          await this.handleMessageSent(
+            tx,
+            payload.instance_id,
+            data as MessageSentData,
+          );
+        }
+
+        return { ok: true };
       });
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
+      if (error instanceof DuplicateOzapDeliveryError) {
+        if (payload.event === 'message.received' && chatId) {
+          const linkedLead = await this.prisma.leadOzapLink.findUnique({
+            where: {
+              instanceId_chatId: {
+                instanceId: payload.instance_id,
+                chatId,
+              },
+            },
+            select: { leadId: true },
+          });
+          if (!linkedLead) {
+            const removed = await this.prisma.ozapWebhookDelivery.deleteMany({
+              where: { deliveryKey },
+            });
+            if (removed.count > 0) {
+              this.logger.warn(
+                `Reprocessando entrega OZap antiga sem lead vinculado: instance=${payload.instance_id} chat=${chatId}.`,
+              );
+              return this.handleWebhook(payload);
+            }
+          }
+        }
         return { ok: true, duplicate: true };
       }
+      const detail = error instanceof Error ? error.stack : String(error);
+      this.logger.error(
+        `Falha ao processar webhook OZap event=${payload.event} instance=${payload.instance_id} chat=${chatId ?? 'ausente'} message=${messageId ?? 'ausente'}.`,
+        detail,
+      );
       throw error;
     }
-
-    if (payload.event === 'message.received') {
-      const leadId = await this.handleMessageReceived(
-        payload.instance_id,
-        data as MessageReceivedData,
-        payload.timestamp,
-        connection.tenantId,
-      );
-      return { ok: true, leadId };
-    }
-
-    if (payload.event === 'chat.status_changed') {
-      await this.handleStatusChanged(
-        payload.instance_id,
-        data as ChatStatusChangedData,
-      );
-    }
-    if (payload.event === 'message.sent') {
-      await this.handleMessageSent(
-        payload.instance_id,
-        data as MessageSentData,
-      );
-    }
-
-    return { ok: true };
   }
 
   private async handleMessageReceived(
+    tx: OzapTransaction,
     instanceId: number,
     data: MessageReceivedData,
     timestamp: string,
@@ -121,7 +179,7 @@ export class OzapService {
     const contactName = this.asString(data.contact_name) || 'Lead WhatsApp';
     const timestampDate = this.parseDate(timestamp);
 
-    const existingLink = await this.prisma.leadOzapLink.findUnique({
+    const existingLink = await tx.leadOzapLink.findUnique({
       where: { instanceId_chatId: { instanceId, chatId } },
       include: { lead: true },
     });
@@ -133,14 +191,14 @@ export class OzapService {
     }
     if (!lead) {
       lead =
-        (await this.prisma.lead.findFirst({
+        (await tx.lead.findFirst({
           where: { tenantId, telefone: phone, perdidoAt: null },
         })) ?? undefined;
     }
 
     if (!lead) {
       const digits = phone.replace(/\D/g, '');
-      lead = await this.prisma.lead.create({
+      lead = await tx.lead.create({
         data: {
           tenantId,
           nome: contactName,
@@ -159,13 +217,13 @@ export class OzapService {
       lead.nome.trim().toLocaleLowerCase('pt-BR') === 'lead whatsapp' &&
       contactName !== 'Lead WhatsApp'
     ) {
-      lead = await this.prisma.lead.update({
+      lead = await tx.lead.update({
         where: { id: lead.id },
         data: { nome: contactName },
       });
     }
 
-    await this.prisma.leadOzapLink.upsert({
+    await tx.leadOzapLink.upsert({
       where: { leadId: lead.id },
       create: {
         leadId: lead.id,
@@ -176,12 +234,16 @@ export class OzapService {
       update: { lastMessageAt: timestampDate, instanceId, chatId },
     });
 
-    await this.applyPendingField(instanceId, chatId, lead.id, data.content);
+    await this.applyPendingField(tx, instanceId, chatId, lead.id, data.content);
 
     return lead.id;
   }
 
-  private async handleMessageSent(instanceId: number, data: MessageSentData) {
+  private async handleMessageSent(
+    tx: OzapTransaction,
+    instanceId: number,
+    data: MessageSentData,
+  ) {
     const chatId = this.asString(data.chat_id);
     const content = this.asString(data.content);
     const source = this.asString(data.source);
@@ -190,13 +252,14 @@ export class OzapService {
     const campoPendente = this.identifyRequestedField(content);
     if (!campoPendente) return;
 
-    await this.prisma.leadOzapLink.updateMany({
+    await tx.leadOzapLink.updateMany({
       where: { instanceId, chatId },
       data: { campoPendente },
     });
   }
 
   private async applyPendingField(
+    tx: OzapTransaction,
     instanceId: number,
     chatId: string,
     leadId: string,
@@ -205,7 +268,7 @@ export class OzapService {
     const resposta = this.asString(content);
     if (!resposta) return;
 
-    const link = await this.prisma.leadOzapLink.findUnique({
+    const link = await tx.leadOzapLink.findUnique({
       where: { instanceId_chatId: { instanceId, chatId } },
       select: { campoPendente: true },
     });
@@ -213,23 +276,22 @@ export class OzapService {
     if (!campo) return;
 
     const data = this.getLeadAnswerData(campo, resposta);
-    await this.prisma.$transaction([
-      this.prisma.lead.update({ where: { id: leadId }, data }),
-      this.prisma.leadOzapLink.update({
-        where: { instanceId_chatId: { instanceId, chatId } },
-        data: { campoPendente: null },
-      }),
-    ]);
+    await tx.lead.update({ where: { id: leadId }, data });
+    await tx.leadOzapLink.update({
+      where: { instanceId_chatId: { instanceId, chatId } },
+      data: { campoPendente: null },
+    });
   }
 
   private async handleStatusChanged(
+    tx: OzapTransaction,
     instanceId: number,
     data: ChatStatusChangedData,
   ) {
     const chatId = this.asString(data.chat_id);
     if (!chatId) return;
 
-    const link = await this.prisma.leadOzapLink.findUnique({
+    const link = await tx.leadOzapLink.findUnique({
       where: { instanceId_chatId: { instanceId, chatId } },
     });
     if (!link) return;
@@ -239,7 +301,7 @@ export class OzapService {
     if (!categoria) return;
 
     const prioridade = CATEGORIA_PRIORIDADE[categoria];
-    const lead = await this.prisma.lead.findUnique({
+    const lead = await tx.lead.findUnique({
       where: { id: link.leadId },
       select: { tags: true },
     });
@@ -249,16 +311,14 @@ export class OzapService {
       ...lead.tags.filter((tag) => !tag.startsWith('OZap:')),
       `OZap: ${this.labelCategoria(categoria)}`,
     ];
-    await this.prisma.$transaction([
-      this.prisma.leadOzapLink.update({
-        where: { id: link.id },
-        data: { categoria },
-      }),
-      this.prisma.lead.update({
-        where: { id: link.leadId },
-        data: { ...(prioridade ? { prioridade } : {}), tags },
-      }),
-    ]);
+    await tx.leadOzapLink.update({
+      where: { id: link.id },
+      data: { categoria },
+    });
+    await tx.lead.update({
+      where: { id: link.leadId },
+      data: { ...(prioridade ? { prioridade } : {}), tags },
+    });
   }
 
   private formatBrazilianPhone(raw: string) {
@@ -325,11 +385,7 @@ export class OzapService {
       return renda ? { renda } : {};
     }
     if (campo === 'tipo_renda') {
-      return {
-        tags: {
-          push: `Renda: ${resposta.trim().slice(0, 80)}`,
-        },
-      };
+      return { tipoRenda: resposta.trim().slice(0, 60) };
     }
     if (campo === 'estado_civil') {
       return { estadoCivil: resposta.trim().slice(0, 40) };

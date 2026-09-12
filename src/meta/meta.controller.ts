@@ -1,5 +1,4 @@
 import {
-  Body,
   Controller,
   ForbiddenException,
   Get,
@@ -7,18 +6,26 @@ import {
   HttpCode,
   Post,
   Query,
+  Req,
   Res,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import { SkipThrottle } from '@nestjs/throttler';
+import type { Request, Response } from 'express';
 import { Public } from '../common/decorators/public.decorator';
-import { MetaWebhookDto } from './dto/meta-webhook.dto';
 import { MetaWebhookSignatureGuard } from './guards/meta-webhook-signature.guard';
 import { MetaService } from './meta.service';
 
+/**
+ * Callback do app Meta (Lead Ads).
+ *
+ * O body NÃO passa pelo ValidationPipe global (`forbidNonWhitelisted`).
+ * Payloads reais da Meta trazem campos extras; rejeitá-los com 400 impede
+ * o processamento e a Meta pode deixar de reenviar.
+ * A autenticidade fica a cargo do HMAC (`MetaWebhookSignatureGuard`).
+ */
 @Controller('webhooks/meta')
+@SkipThrottle()
 export class MetaController {
   constructor(private readonly metaService: MetaService) {}
 
@@ -46,15 +53,7 @@ export class MetaController {
   @Public()
   @HttpCode(200)
   @UseGuards(MetaWebhookSignatureGuard)
-  // Meta pode enviar campos extras; não rejeitar o payload por whitelist estrita.
-  @UsePipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: false,
-      transform: true,
-    }),
-  )
-  receive(@Body() payload: MetaWebhookDto) {
-    return this.metaService.handleWebhook(payload);
+  receive(@Req() req: Request) {
+    return this.metaService.handleWebhook(req.body);
   }
 }

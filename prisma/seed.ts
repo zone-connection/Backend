@@ -54,6 +54,26 @@ const DEFAULT_TAGS = [
   { label: 'Urgente', color: 'bg-red-100 text-red-700' },
 ] as const;
 
+const DEFAULT_EMPREENDIMENTO_TIPOS = [
+  { label: 'Vertical', color: 'bg-blue-100 text-blue-700' },
+  { label: 'Casa', color: 'bg-emerald-100 text-emerald-700' },
+  { label: 'Loteamento', color: 'bg-amber-100 text-amber-700' },
+  { label: 'Comercial', color: 'bg-violet-100 text-violet-700' },
+] as const;
+
+const DEFAULT_EMPREENDIMENTO_STATUS = [
+  { label: 'Lançamento', color: 'bg-sky-100 text-sky-700' },
+  { label: 'Em obras', color: 'bg-orange-100 text-orange-700' },
+  { label: 'Pronto', color: 'bg-green-100 text-green-700' },
+] as const;
+
+const DEFAULT_EMPREENDIMENTO_TAGS = [
+  { label: 'Litoral', color: 'bg-cyan-100 text-cyan-700' },
+  { label: 'FGTS', color: 'bg-indigo-100 text-indigo-700' },
+  { label: 'MCMV', color: 'bg-teal-100 text-teal-700' },
+  { label: 'Caixa', color: 'bg-slate-200 text-slate-700' },
+] as const;
+
 const DEFAULT_DOCUMENTACAO_FONTES = [
   { label: 'Indicação', color: 'bg-emerald-100 text-emerald-700' },
   { label: 'Lead próprio', color: 'bg-blue-100 text-blue-700' },
@@ -63,8 +83,9 @@ const DEFAULT_DOCUMENTACAO_FONTES = [
 ] as const;
 
 const DEFAULT_DOCUMENTACAO_STATUS1 = [
+  { label: 'Pré-análise', color: 'bg-violet-100 text-violet-700' },
+  { label: 'Em análise', color: 'bg-indigo-100 text-indigo-700' },
   { label: 'Aprovado', color: 'bg-green-100 text-green-700' },
-  { label: 'Análise', color: 'bg-violet-100 text-violet-700' },
   { label: 'Aprovado c/ restrição', color: 'bg-amber-100 text-amber-700' },
 ] as const;
 
@@ -856,6 +877,21 @@ async function main() {
     tenant.id,
     CatalogType.documentacao_status2,
     DEFAULT_DOCUMENTACAO_STATUS2,
+  );
+  await seedSimpleCatalog(
+    tenant.id,
+    CatalogType.empreendimento_tipo,
+    DEFAULT_EMPREENDIMENTO_TIPOS,
+  );
+  await seedSimpleCatalog(
+    tenant.id,
+    CatalogType.empreendimento_status,
+    DEFAULT_EMPREENDIMENTO_STATUS,
+  );
+  await seedSimpleCatalog(
+    tenant.id,
+    CatalogType.empreendimento_tag,
+    DEFAULT_EMPREENDIMENTO_TAGS,
   );
   await seedLeads(tenant.id, userIds);
 
