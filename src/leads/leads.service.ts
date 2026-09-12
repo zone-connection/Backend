@@ -1733,7 +1733,6 @@ export class LeadsService {
     const tenantId = requireTenantId(requester);
     const ctx = await this.monitoramento.loadFunilContext(tenantId);
     const now = new Date();
-    const idleBefore = new Date(now.getTime() - ctx.inatividadeMs);
     const data = await this.prisma.lead.findMany({
       where: {
         tenantId,
@@ -1742,18 +1741,24 @@ export class LeadsService {
         ...(ctx.terminalSlugs.length > 0
           ? { stage: { notIn: ctx.terminalSlugs } }
           : {}),
-        AND: [whereNotRetrabalho],
-        OR: [
-          { prazoDueAt: { lt: now } },
-          ...(ctx.inatividadeMs > 0
-            ? [{ lastMovementAt: { lt: idleBefore } }]
-            : []),
-        ],
       },
       select: leadSelect,
       orderBy: { lastMovementAt: 'asc' },
     });
-    return this.monitoramento.decorateLeadsWithTarefas(data, ctx, requester);
+    const decorated = await this.monitoramento.decorateLeadsWithTarefas(
+      data,
+      ctx,
+      requester,
+      now,
+    );
+    // Mesmo critério visual do funil (prazo, inatividade ou retrabalho).
+    // Não desvincula nem tira do kanban: só lista para pegar/reatribuir.
+    return decorated.filter((lead) => {
+      if (lead.origemAtrasoLiberacao === AtrasoLiberacaoDestino.retrabalho) {
+        return true;
+      }
+      return lead.monitoramento.visual === 'vermelho';
+    });
   }
 
   async pegarCacaLead(id: string, requester: AuthenticatedUser) {
@@ -1782,11 +1787,6 @@ export class LeadsService {
     });
     if (!current) {
       throw new NotFoundException('Lead não encontrado.');
-    }
-    if (current.origemAtrasoLiberacao === AtrasoLiberacaoDestino.retrabalho) {
-      throw new ForbiddenException(
-        'Leads de retrabalho só podem ser reatribuídos por gerente ou administrador.',
-      );
     }
     if (current.corretorId === self.id) {
       throw new ConflictException('Este lead já está na sua carteira.');
