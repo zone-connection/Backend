@@ -80,6 +80,7 @@ export const leadSelect = {
   prazoAdiado: true,
   origemAtrasoLiberacao: true,
   atrasoLiberadoAt: true,
+  triagemOrigemHerdada: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.LeadSelect;

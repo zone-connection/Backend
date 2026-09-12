@@ -27,6 +27,7 @@ import { isCorretorLike } from '../common/utils/roles';
 import { hasUserAction } from '../common/utils/user-permissions';
 import { CatalogService } from '../catalog/catalog.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
+import { whereNotRetrabalho } from '../equipes/lead-retrabalho.where';
 import { AnaliseService } from '../analise/analise.service';
 import { FunisService } from '../funis/funis.service';
 import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.service';
@@ -454,6 +455,8 @@ export class LeadsService {
       equipeId: string;
       nome: string;
       quantidade: number;
+      gerenteId: string;
+      primeiroLeadId: string | null;
     }> = [];
 
     await this.prisma.$transaction(async (tx) => {
@@ -470,11 +473,19 @@ export class LeadsService {
           equipeId: eq.id,
           nome: eq.name,
           quantidade: slice.length,
+          gerenteId: eq.gerenteId,
+          primeiroLeadId: slice[0]?.id ?? null,
         });
       }
     });
 
-    return { ok: true, total: totalPedido, alocacoes: resultado };
+    return {
+      ok: true,
+      total: totalPedido,
+      alocacoes: resultado.map(
+        ({ gerenteId: _gerenteId, primeiroLeadId: _leadId, ...rest }) => rest,
+      ),
+    };
   }
 
   /**
@@ -538,6 +549,7 @@ export class LeadsService {
         corretorId: string;
         nome: string;
         quantidade: number;
+        primeiroLeadId: string | null;
       }> = [];
       const byId = new Map(corretores.map((c) => [c.id, c]));
 
@@ -559,6 +571,7 @@ export class LeadsService {
             corretorId: corretor.id,
             nome: corretor.name,
             quantidade: slice.length,
+            primeiroLeadId: slice[0]?.id ?? null,
           });
         }
       });
@@ -567,7 +580,7 @@ export class LeadsService {
         ok: true,
         total: totalPedido,
         porCorretor: null,
-        distribuicao: resultado,
+        distribuicao: resultado.map(({ primeiroLeadId: _id, ...rest }) => rest),
       };
     }
 
@@ -601,6 +614,7 @@ export class LeadsService {
     }
 
     const counts = new Map(corretores.map((c) => [c.id, 0]));
+    const firstLead = new Map<string, string>();
     const assignments: Array<{
       leadId: string;
       corretorId: string;
@@ -620,6 +634,7 @@ export class LeadsService {
           equipeId: corretor.equipeId,
         });
         counts.set(corretor.id, (counts.get(corretor.id) ?? 0) + 1);
+        if (!firstLead.has(corretor.id)) firstLead.set(corretor.id, lead.id);
       }
       corretorIdx += 1;
     }
@@ -693,6 +708,14 @@ export class LeadsService {
     };
 
     const andExtra: Prisma.LeadWhereInput[] = [];
+
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.super_admin &&
+      requester.role !== Role.gerente
+    ) {
+      andExtra.push(whereNotRetrabalho);
+    }
 
     if (query.origemAtrasoLiberacao) {
       where.origemAtrasoLiberacao = query.origemAtrasoLiberacao;
@@ -900,6 +923,13 @@ export class LeadsService {
       return this.decorateOne(lead, requester);
     }
 
+    if (
+      lead.origemAtrasoLiberacao === AtrasoLiberacaoDestino.retrabalho &&
+      this.isCorretor(requester)
+    ) {
+      throw new NotFoundException('Lead não encontrado.');
+    }
+
     await this.ensureCanAccess(lead, requester);
     return this.decorateOne(lead, requester);
   }
@@ -1007,6 +1037,9 @@ export class LeadsService {
     let assignment:
       | { corretorId: string | null; equipeId: string | null }
       | undefined;
+    let previousCorretorId: string | null | undefined;
+    let previousEquipeId: string | null | undefined;
+    let previousOrigemAtraso: AtrasoLiberacaoDestino | null | undefined;
     if (dto.corretorId !== undefined || dto.equipeId !== undefined) {
       if (this.isCorretor(requester)) {
         throw new ForbiddenException(
@@ -1015,8 +1048,23 @@ export class LeadsService {
       }
       const current = await this.prisma.lead.findFirst({
         where: { id, tenantId },
-        select: { corretorId: true, equipeId: true },
+        select: {
+          corretorId: true,
+          equipeId: true,
+          origemAtrasoLiberacao: true,
+        },
       });
+      previousCorretorId = current?.corretorId ?? null;
+      previousEquipeId = current?.equipeId ?? null;
+      previousOrigemAtraso = current?.origemAtrasoLiberacao ?? null;
+      if (
+        previousOrigemAtraso === AtrasoLiberacaoDestino.retrabalho &&
+        !this.canManageRetrabalho(requester)
+      ) {
+        throw new ForbiddenException(
+          'Somente gerente ou administrador podem reatribuir um lead de retrabalho.',
+        );
+      }
       // Sempre reenvia o par completo: se só equipe muda, zera corretor (pool);
       // se só corretor muda, herda equipe do corretor.
       const nextCorretorId =
@@ -1122,7 +1170,17 @@ export class LeadsService {
               corretorId: assignment.corretorId,
               equipeId: assignment.equipeId,
               ...(assignment.corretorId
-                ? { origemAtrasoLiberacao: null }
+                ? {
+                    origemAtrasoLiberacao: null,
+                    ...(previousOrigemAtraso ===
+                      AtrasoLiberacaoDestino.retrabalho ||
+                    previousOrigemAtraso === AtrasoLiberacaoDestino.caca_lead
+                      ? {
+                          triagemOrigemHerdada: previousOrigemAtraso,
+                          lastTriagemAt: new Date(),
+                        }
+                      : {}),
+                  }
                 : {}),
             }
           : {}),
@@ -1138,6 +1196,22 @@ export class LeadsService {
     });
     if (!stageChanged) {
       await this.monitoramento.recordMovement(id, 'edicao');
+    }
+    if (
+      assignment &&
+      (assignment.corretorId !== previousCorretorId ||
+        assignment.equipeId !== previousEquipeId)
+    ) {
+      await this.recordReatribuicaoHistorico({
+        leadId: id,
+        autorId: requester.id,
+        autorNome: requester.name,
+        fromCorretorId: previousCorretorId ?? null,
+        toCorretorId: assignment.corretorId,
+        retrabalho:
+          previousOrigemAtraso === AtrasoLiberacaoDestino.retrabalho,
+        cacaLead: previousOrigemAtraso === AtrasoLiberacaoDestino.caca_lead,
+      });
     }
     return this.decorateOne(updated, requester);
   }
@@ -1379,7 +1453,12 @@ export class LeadsService {
         id: { in: unique },
         perdidoAt: null,
       },
-      select: { id: true, corretorId: true, equipeId: true },
+      select: {
+        id: true,
+        corretorId: true,
+        equipeId: true,
+        origemAtrasoLiberacao: true,
+      },
     });
 
     const allowed = await this.filterAccessibleLeadIds(rows, requester);
@@ -1663,6 +1742,7 @@ export class LeadsService {
         ...(ctx.terminalSlugs.length > 0
           ? { stage: { notIn: ctx.terminalSlugs } }
           : {}),
+        AND: [whereNotRetrabalho],
         OR: [
           { prazoDueAt: { lt: now } },
           ...(ctx.inatividadeMs > 0
@@ -1694,15 +1774,25 @@ export class LeadsService {
         tipo: ContatoTipo.lead,
         perdidoAt: null,
       },
-      select: { id: true, corretorId: true },
+      select: {
+        id: true,
+        corretorId: true,
+        origemAtrasoLiberacao: true,
+      },
     });
     if (!current) {
       throw new NotFoundException('Lead não encontrado.');
+    }
+    if (current.origemAtrasoLiberacao === AtrasoLiberacaoDestino.retrabalho) {
+      throw new ForbiddenException(
+        'Leads de retrabalho só podem ser reatribuídos por gerente ou administrador.',
+      );
     }
     if (current.corretorId === self.id) {
       throw new ConflictException('Este lead já está na sua carteira.');
     }
 
+    const now = new Date();
     await this.prisma.lead.update({
       where: { id },
       data: {
@@ -1710,7 +1800,18 @@ export class LeadsService {
         equipeId: self.equipeId,
         origemAtrasoLiberacao: null,
         atrasoLiberadoAt: null,
+        triagemOrigemHerdada: AtrasoLiberacaoDestino.caca_lead,
+        lastTriagemAt: now,
       },
+    });
+    await this.recordReatribuicaoHistorico({
+      leadId: id,
+      autorId: requester.id,
+      autorNome: requester.name,
+      fromCorretorId: current.corretorId,
+      toCorretorId: self.id,
+      retrabalho: false,
+      cacaLead: true,
     });
 
     const lead = await this.prisma.lead.findFirst({
@@ -1723,6 +1824,61 @@ export class LeadsService {
   }
 
   // --- Helpers de RBAC ---
+
+  private canManageRetrabalho(requester: AuthenticatedUser): boolean {
+    return (
+      requester.role === Role.admin ||
+      requester.role === Role.super_admin ||
+      requester.role === Role.gerente
+    );
+  }
+
+  private async recordReatribuicaoHistorico(params: {
+    leadId: string;
+    autorId: string;
+    autorNome: string;
+    fromCorretorId: string | null;
+    toCorretorId: string | null;
+    retrabalho: boolean;
+    cacaLead?: boolean;
+  }) {
+    const ids = [params.fromCorretorId, params.toCorretorId].filter(
+      (id): id is string => Boolean(id),
+    );
+    const users =
+      ids.length === 0
+        ? []
+        : await this.prisma.user.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, name: true },
+          });
+    const nameById = new Map(users.map((u) => [u.id, u.name]));
+    const from = params.fromCorretorId
+      ? (nameById.get(params.fromCorretorId) ?? 'corretor anterior')
+      : 'sem corretor';
+    const to = params.toCorretorId
+      ? (nameById.get(params.toCorretorId) ?? 'novo corretor')
+      : 'sem corretor';
+    const origem = params.retrabalho
+      ? TriagemOrigem.retrabalho
+      : params.cacaLead
+        ? TriagemOrigem.caca_lead
+        : TriagemOrigem.manual;
+    const acao = params.cacaLead ? 'pegou' : 'reatribuiu';
+    const prefix = params.retrabalho
+      ? 'Retrabalho: '
+      : params.cacaLead
+        ? 'Caça-lead: '
+        : '';
+    await this.prisma.triagemEvent.create({
+      data: {
+        leadId: params.leadId,
+        autorId: params.autorId,
+        texto: `${prefix}${params.autorNome} ${acao} o lead de "${from}" para "${to}". O histórico de triagem anterior permanece neste lead.`,
+        origem,
+      },
+    });
+  }
 
   private isCorretor(requester: AuthenticatedUser): boolean {
     return isCorretorLike(requester.role);
@@ -1752,13 +1908,18 @@ export class LeadsService {
   }
 
   private async ensureCanAccess(
-    lead: { corretorId: string | null; equipeId?: string | null },
+    lead: {
+      corretorId: string | null;
+      equipeId?: string | null;
+      origemAtrasoLiberacao?: AtrasoLiberacaoDestino | null;
+    },
     requester: AuthenticatedUser,
   ): Promise<void> {
     const allowed = await this.teamScope.canAccessCorretor(
       requester,
       lead.corretorId,
       lead.equipeId,
+      lead.origemAtrasoLiberacao,
     );
     if (!allowed) {
       throw new NotFoundException('Lead não encontrado.');
@@ -1770,6 +1931,7 @@ export class LeadsService {
       id: string;
       corretorId: string | null;
       equipeId: string | null;
+      origemAtrasoLiberacao?: AtrasoLiberacaoDestino | null;
     }>,
     requester: AuthenticatedUser,
   ): Promise<string[]> {
@@ -1785,6 +1947,9 @@ export class LeadsService {
 
     return rows
       .filter((lead) => {
+        if (lead.origemAtrasoLiberacao === AtrasoLiberacaoDestino.retrabalho) {
+          return this.canManageRetrabalho(requester);
+        }
         if (!lead.corretorId) {
           if (
             requester.role === Role.admin ||
@@ -1820,7 +1985,13 @@ export class LeadsService {
     const tenantId = requireTenantId(requester);
     const lead = await this.prisma.lead.findFirst({
       where: { id, tenantId },
-      select: { id: true, corretorId: true, equipeId: true, perdidoAt: true },
+      select: {
+        id: true,
+        corretorId: true,
+        equipeId: true,
+        origemAtrasoLiberacao: true,
+        perdidoAt: true,
+      },
     });
     if (!lead || lead.perdidoAt) {
       throw new NotFoundException('Lead não encontrado.');

@@ -1,17 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, Role } from '@prisma/client';
+import { AtrasoLiberacaoDestino, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
 import { GERENTE_VER_LEADS_GERAIS_KEY } from '../tenants/tenant-plan';
+import { whereNotRetrabalho } from './lead-retrabalho.where';
 
 /**
  * Escopo de dados por equipe, sempre aninhado ao tenant do requester:
  * - admin / analista → todos do tenant
  * - gerente (opção off) → só a própria equipe e carteira
  * - gerente (opção on) → todas as equipes + pool geral
- * - corretor → só o próprio
+ * - corretor → só o próprio (nunca retrabalho)
+ * - retrabalho (desvinculado) → admin e gerente do tenant
  */
 @Injectable()
 export class TeamScopeService {
@@ -69,7 +71,15 @@ export class TeamScopeService {
   ): Promise<Prisma.LeadWhereInput> {
     const tenantId = requireTenantId(requester);
     const ids = await this.getVisibleCorretorIds(requester);
-    if (ids === null) return { tenantId };
+    if (ids === null) {
+      if (requester.role === Role.analista) {
+        return {
+          tenantId,
+          AND: [whereNotRetrabalho],
+        };
+      }
+      return { tenantId };
+    }
 
     if (requester.role === Role.gerente) {
       const equipes = await this.prisma.equipe.findMany({
@@ -86,6 +96,7 @@ export class TeamScopeService {
             equipeId: equipe.id,
             corretorId: null as null,
           })),
+          { origemAtrasoLiberacao: AtrasoLiberacaoDestino.retrabalho },
           ...(includeAdminPool
             ? [{ equipeId: null as null, corretorId: null as null }]
             : []),
@@ -93,7 +104,10 @@ export class TeamScopeService {
       };
     }
 
-    return { tenantId, corretorId: { in: ids } };
+    return {
+      tenantId,
+      AND: [{ corretorId: { in: ids } }, whereNotRetrabalho],
+    };
   }
 
   /** true se o corretor está no escopo do requester. */
@@ -101,8 +115,16 @@ export class TeamScopeService {
     requester: AuthenticatedUser,
     corretorId: string | null | undefined,
     equipeId?: string | null,
+    origemAtrasoLiberacao?: AtrasoLiberacaoDestino | null,
   ): Promise<boolean> {
     requireTenantId(requester);
+    if (origemAtrasoLiberacao === AtrasoLiberacaoDestino.retrabalho) {
+      return (
+        requester.role === Role.admin ||
+        requester.role === Role.super_admin ||
+        requester.role === Role.gerente
+      );
+    }
     if (!corretorId) {
       if (
         requester.role === Role.admin ||

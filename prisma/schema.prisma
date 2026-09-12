@@ -574,7 +574,9 @@ model Lead {
 
   /// Preenchido quando a automação de atraso desvincula o corretor.
   origemAtrasoLiberacao AtrasoLiberacaoDestino?
-  atrasoLiberadoAt      DateTime?
+          atrasoLiberadoAt      DateTime?
+  /// Destaque na triagem do novo corretor (histórico anterior permanece no lead).
+  triagemOrigemHerdada  AtrasoLiberacaoDestino?
 
   triagemEvents TriagemEvent[]
   prazoAdiamentos LeadPrazoAdiamento[]
@@ -712,6 +714,8 @@ model MetaWebhookDelivery {
 enum TriagemOrigem {
   funil
   manual
+  retrabalho
+  caca_lead
 }
 
 /// Relato do corretor sobre um lead/cliente (histórico na Triagem).

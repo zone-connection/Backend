@@ -31,6 +31,8 @@ const leadListSelect = {
   bairro: true,
   corretorId: true,
   corretor: { select: { id: true, name: true } },
+  origemAtrasoLiberacao: true,
+  triagemOrigemHerdada: true,
   updatedAt: true,
 } as const;
 
@@ -129,6 +131,8 @@ export class TriagemService {
         stage: lead.stage,
         corretorId: lead.corretorId,
         corretor: lead.corretor,
+        origemAtrasoLiberacao: lead.origemAtrasoLiberacao,
+        triagemOrigemHerdada: lead.triagemOrigemHerdada,
       },
       events,
     };
@@ -153,6 +157,7 @@ export class TriagemService {
         id: true,
         corretorId: true,
         equipeId: true,
+        origemAtrasoLiberacao: true,
         perdidoAt: true,
         stage: true,
       },
@@ -171,6 +176,7 @@ export class TriagemService {
         requester,
         lead.corretorId,
         lead.equipeId,
+        lead.origemAtrasoLiberacao,
       );
       if (!allowed) {
         throw new NotFoundException('Lead não encontrado.');
@@ -341,6 +347,9 @@ export class TriagemService {
         nome: true,
         stage: true,
         corretorId: true,
+        equipeId: true,
+        origemAtrasoLiberacao: true,
+        triagemOrigemHerdada: true,
         perdidoAt: true,
         corretor: { select: { id: true, name: true } },
       },
@@ -353,6 +362,8 @@ export class TriagemService {
     const allowed = await this.teamScope.canAccessCorretor(
       requester,
       lead.corretorId,
+      lead.equipeId,
+      lead.origemAtrasoLiberacao,
     );
     if (!allowed) {
       throw new NotFoundException('Lead não encontrado.');
