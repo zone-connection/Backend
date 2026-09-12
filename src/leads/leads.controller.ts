@@ -167,8 +167,6 @@ export class LeadsController {
   }
 
   @Get('caca-lead')
-  @UseGuards(RolesGuard)
-  @Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee)
   listCacaLead(@CurrentUser() requester: AuthenticatedUser) {
     return this.leadsService.listCacaLead(requester);
   }

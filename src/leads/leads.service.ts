@@ -900,6 +900,10 @@ export class LeadsService {
       return this.decorateOne(lead, requester);
     }
 
+    if (lead.origemAtrasoLiberacao === AtrasoLiberacaoDestino.caca_lead) {
+      return this.decorateOne(lead, requester);
+    }
+
     await this.ensureCanAccess(lead, requester);
     return this.decorateOne(lead, requester);
   }
@@ -1651,7 +1655,6 @@ export class LeadsService {
   }
 
   async listCacaLead(requester: AuthenticatedUser) {
-    this.assertPodeCacaLead(requester);
     const tenantId = requireTenantId(requester);
     const data = await this.prisma.lead.findMany({
       where: {
@@ -1669,7 +1672,7 @@ export class LeadsService {
   }
 
   async pegarCacaLead(id: string, requester: AuthenticatedUser) {
-    this.assertPodeCacaLead(requester);
+    this.assertPodePegarCacaLead(requester);
     const tenantId = requireTenantId(requester);
     const self = await this.prisma.user.findFirst({
       where: { id: requester.id, tenantId },
@@ -1715,14 +1718,16 @@ export class LeadsService {
     return isCorretorLike(requester.role);
   }
 
-  private assertPodeCacaLead(requester: AuthenticatedUser) {
+  private assertPodePegarCacaLead(requester: AuthenticatedUser) {
     if (
       requester.role !== Role.admin &&
       requester.role !== Role.gerente &&
       requester.role !== Role.corretor &&
       requester.role !== Role.treinee
     ) {
-      throw new ForbiddenException('Você não pode acessar o Caça-lead.');
+      throw new ForbiddenException(
+        'Somente corretor, gerente ou admin podem pegar um lead do Caça-lead.',
+      );
     }
   }
 
