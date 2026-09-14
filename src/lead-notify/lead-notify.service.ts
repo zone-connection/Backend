@@ -9,12 +9,15 @@ import {
   resolveNotifyEmail,
 } from '../mailer/mailer.service';
 import {
+  DEFAULT_BRAND_LOGO_URL,
   equipePoolCopy,
+  formatLeadEmailHtml,
   formatLeadWhatsApp,
   leadAtribuidoCopy,
   leadCrmPath,
   leadLoteCopy,
   leadPoolCopy,
+  pickPublicFrontendUrl,
   type LeadNotifySnapshot,
 } from './lead-notify.messages';
 
@@ -86,6 +89,11 @@ export class LeadNotifyService {
         lead: params.lead,
         crmUrl: this.crmUrl(params.lead.id),
       }),
+      email: {
+        titulo: copy.whatsappTitulo,
+        lead: params.lead,
+        crmUrl: this.crmUrl(params.lead.id),
+      },
     });
   }
 
@@ -114,6 +122,11 @@ export class LeadNotifyService {
         extra: copy.corpo,
         crmUrl: this.crmUrl(params.leadId),
       }),
+      email: {
+        titulo: copy.whatsappTitulo,
+        extra: copy.corpo,
+        crmUrl: this.crmUrl(params.leadId),
+      },
     });
   }
 
@@ -145,6 +158,11 @@ export class LeadNotifyService {
         extra: copy.corpo,
         crmUrl: this.crmUrl(params.leadId),
       }),
+      email: {
+        titulo: copy.whatsappTitulo,
+        extra: copy.corpo,
+        crmUrl: this.crmUrl(params.leadId),
+      },
     });
   }
 
@@ -180,6 +198,11 @@ export class LeadNotifyService {
           lead: params.lead,
           crmUrl: this.crmUrl(params.lead.id),
         }),
+        email: {
+          titulo: copy.whatsappTitulo,
+          lead: params.lead,
+          crmUrl: this.crmUrl(params.lead.id),
+        },
       });
     }
   }
@@ -189,6 +212,12 @@ export class LeadNotifyService {
     userId: string;
     subject: string;
     text: string;
+    email: {
+      titulo: string;
+      lead?: LeadNotifySnapshot | null;
+      extra?: string;
+      crmUrl?: string | null;
+    };
   }) {
     void this.sendOutbound(params).catch((error) => {
       this.logger.warn(
@@ -208,6 +237,12 @@ export class LeadNotifyService {
     userId: string;
     subject: string;
     text: string;
+    email: {
+      titulo: string;
+      lead?: LeadNotifySnapshot | null;
+      extra?: string;
+      crmUrl?: string | null;
+    };
   }) {
     await Promise.allSettled([
       this.tryWhatsApp(params),
@@ -260,6 +295,12 @@ export class LeadNotifyService {
     userId: string;
     subject: string;
     text: string;
+    email: {
+      titulo: string;
+      lead?: LeadNotifySnapshot | null;
+      extra?: string;
+      crmUrl?: string | null;
+    };
   }) {
     if (!this.mailer.isConfigured()) {
       this.logger.warn(
@@ -268,10 +309,16 @@ export class LeadNotifyService {
       return;
     }
 
-    const user = await this.prisma.user.findFirst({
-      where: { id: params.userId, tenantId: params.tenantId },
-      select: { email: true, notifyEmail: true },
-    });
+    const [user, tenant] = await Promise.all([
+      this.prisma.user.findFirst({
+        where: { id: params.userId, tenantId: params.tenantId },
+        select: { email: true, notifyEmail: true },
+      }),
+      this.prisma.tenant.findUnique({
+        where: { id: params.tenantId },
+        select: { name: true, logoUrl: true },
+      }),
+    ]);
     const to = resolveNotifyEmail(user ?? {});
     if (!to) {
       this.logger.warn(
@@ -284,26 +331,20 @@ export class LeadNotifyService {
       to,
       subject: params.subject,
       text: params.text,
+      html: formatLeadEmailHtml({
+        ...params.email,
+        brandName: tenant?.name,
+        logoUrl: tenant?.logoUrl?.trim() || DEFAULT_BRAND_LOGO_URL,
+      }),
     });
     this.logger.log(`E-mail de lead enviado user=${params.userId} to=${to}`);
   }
 
   private crmUrl(leadId?: string | null): string | null {
-    const base = this.publicFrontendUrl();
-    if (!base) return null;
-    return `${base}${leadCrmPath(leadId)}`;
-  }
-
-  private publicFrontendUrl(): string | null {
-    const raw = this.config.get<string>('FRONTEND_URL') ?? '';
-    const urls = raw
-      .split(',')
-      .map((item) => item.trim().replace(/\/$/, ''))
-      .filter(Boolean);
-    const httpsPublic = urls.find(
-      (url) =>
-        /^https:\/\//i.test(url) && !/localhost|127\.0\.0\.1/i.test(url),
+    const base = pickPublicFrontendUrl(
+      this.config.get<string>('FRONTEND_URL'),
+      this.config.get<string>('CRM_PUBLIC_URL'),
     );
-    return httpsPublic ?? urls[0] ?? null;
+    return `${base}${leadCrmPath(leadId)}`;
   }
 }

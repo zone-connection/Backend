@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  formatLeadEmailHtml,
   formatLeadWhatsApp,
   leadAtribuidoCopy,
   leadCrmPath,
   leadLoteCopy,
+  pickPublicFrontendUrl,
 } from './lead-notify.messages';
 
 describe('lead-notify messages', () => {
@@ -25,6 +27,45 @@ describe('lead-notify messages', () => {
     assert.match(text, /Novo lead atribuído a você/);
     assert.match(text, /Ana Silva/);
     assert.match(text, /funil\?lead=lead-1/);
+  });
+
+  it('escolhe o domínio público do CRM, não o preview da Vercel', () => {
+    assert.equal(
+      pickPublicFrontendUrl(
+        'http://localhost:8080,https://frontend-seven-wine-46.vercel.app,https://www.zoneconnection.com.br',
+      ),
+      'https://www.zoneconnection.com.br',
+    );
+    assert.equal(
+      pickPublicFrontendUrl(
+        'https://frontend-seven-wine-46.vercel.app',
+        'https://zoneconnection.com.br',
+      ),
+      'https://www.zoneconnection.com.br',
+    );
+    assert.equal(
+      pickPublicFrontendUrl('https://frontend-seven-wine-46.vercel.app'),
+      'https://www.zoneconnection.com.br',
+    );
+  });
+
+  it('monta HTML com logo e botão do CRM', () => {
+    const html = formatLeadEmailHtml({
+      titulo: 'Novo lead atribuído a você',
+      lead: {
+        id: 'lead-1',
+        nome: 'Ana Silva',
+        telefone: '(11) 99999-8888',
+        origem: 'Facebook Ads',
+        cidade: 'São Paulo',
+      },
+      crmUrl: 'https://www.zoneconnection.com.br/funil?lead=lead-1',
+      brandName: 'Imobiliária Campinas',
+      logoUrl: 'https://cdn.exemplo.com/logo.png',
+    });
+    assert.match(html, /cdn\.exemplo.com\/logo\.png/);
+    assert.match(html, /www\.zoneconnection\.com\.br\/funil\?lead=lead-1/);
+    assert.match(html, /Imobiliária Campinas/);
   });
 
   it('agrupa distribuição', () => {
