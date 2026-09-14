@@ -1235,10 +1235,13 @@ export class LeadsService {
     ) {
       await this.recordReatribuicaoHistorico({
         leadId: id,
+        tenantId,
         autorId: requester.id,
         autorNome: requester.name,
         fromCorretorId: previousCorretorId ?? null,
         toCorretorId: assignment.corretorId,
+        fromEquipeId: previousEquipeId ?? null,
+        toEquipeId: assignment.equipeId,
         retrabalho:
           previousOrigemAtraso === AtrasoLiberacaoDestino.retrabalho,
         cacaLead: previousOrigemAtraso === AtrasoLiberacaoDestino.caca_lead,
@@ -1825,6 +1828,7 @@ export class LeadsService {
       select: {
         id: true,
         corretorId: true,
+        equipeId: true,
         origemAtrasoLiberacao: true,
       },
     });
@@ -1849,10 +1853,13 @@ export class LeadsService {
     });
     await this.recordReatribuicaoHistorico({
       leadId: id,
+      tenantId,
       autorId: requester.id,
       autorNome: requester.name,
       fromCorretorId: current.corretorId,
       toCorretorId: self.id,
+      fromEquipeId: current.equipeId,
+      toEquipeId: self.equipeId,
       retrabalho: false,
       cacaLead: true,
     });
@@ -1878,10 +1885,13 @@ export class LeadsService {
 
   private async recordReatribuicaoHistorico(params: {
     leadId: string;
+    tenantId: string;
     autorId: string;
     autorNome: string;
     fromCorretorId: string | null;
     toCorretorId: string | null;
+    fromEquipeId?: string | null;
+    toEquipeId?: string | null;
     retrabalho: boolean;
     cacaLead?: boolean;
   }) {
@@ -1893,9 +1903,10 @@ export class LeadsService {
         ? []
         : await this.prisma.user.findMany({
             where: { id: { in: ids } },
-            select: { id: true, name: true },
+            select: { id: true, name: true, equipeId: true },
           });
     const nameById = new Map(users.map((u) => [u.id, u.name]));
+    const equipeById = new Map(users.map((u) => [u.id, u.equipeId]));
     const from = params.fromCorretorId
       ? (nameById.get(params.fromCorretorId) ?? 'corretor anterior')
       : 'sem corretor';
@@ -1913,14 +1924,37 @@ export class LeadsService {
       : params.cacaLead
         ? 'Caça-lead: '
         : '';
-    await this.prisma.triagemEvent.create({
-      data: {
-        leadId: params.leadId,
-        autorId: params.autorId,
-        texto: `${prefix}${params.autorNome} ${acao} o lead de "${from}" para "${to}". O histórico de triagem anterior permanece neste lead.`,
-        origem,
-      },
-    });
+    const fromEquipeId =
+      params.fromEquipeId ??
+      (params.fromCorretorId
+        ? (equipeById.get(params.fromCorretorId) ?? null)
+        : null);
+    const toEquipeId =
+      params.toEquipeId ??
+      (params.toCorretorId
+        ? (equipeById.get(params.toCorretorId) ?? null)
+        : null);
+    await this.prisma.$transaction([
+      this.prisma.triagemEvent.create({
+        data: {
+          leadId: params.leadId,
+          autorId: params.autorId,
+          texto: `${prefix}${params.autorNome} ${acao} o lead de "${from}" para "${to}". O histórico de triagem anterior permanece neste lead.`,
+          origem,
+        },
+      }),
+      this.prisma.leadReatribuicao.create({
+        data: {
+          tenantId: params.tenantId,
+          leadId: params.leadId,
+          fromCorretorId: params.fromCorretorId,
+          fromEquipeId,
+          toCorretorId: params.toCorretorId,
+          toEquipeId,
+          origem,
+        },
+      }),
+    ]);
   }
 
   private isCorretor(requester: AuthenticatedUser): boolean {

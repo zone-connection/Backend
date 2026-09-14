@@ -39,6 +39,7 @@ import type {
   CorretorMonitoramento,
   LeadMonitoramento,
   LeadPrazoAdiamentoView,
+  MonitoramentoAtrasos,
   MonitoramentoFiltro,
   MotivoSemMovimentacao,
   ProblemaMonitoramento,
@@ -607,7 +608,7 @@ export class LeadMonitoramentoService {
 
   async listCorretores(
     requester: AuthenticatedUser,
-  ): Promise<CorretorMonitoramento[]> {
+  ): Promise<MonitoramentoAtrasos> {
     if (
       requester.role !== Role.admin &&
       requester.role !== Role.gerente &&
@@ -677,6 +678,7 @@ export class LeadMonitoramentoService {
           semMovimentacao: 0,
           foraDoPrazo: 0,
           tarefasAtrasadas: 0,
+          leadsPerdidosReatribuicao: 0,
           leads: [],
         };
         byCorretor.set(lead.corretorId, row);
@@ -694,9 +696,109 @@ export class LeadMonitoramentoService {
       });
     }
 
-    return [...byCorretor.values()].sort(
-      (a, b) => b.totalAtrasos - a.totalAtrasos || a.name.localeCompare(b.name),
+    const visibleIds = await this.teamScope.getVisibleCorretorIds(requester);
+    const reatribuicoes = await this.prisma.leadReatribuicao.findMany({
+      where: { tenantId },
+      select: {
+        leadId: true,
+        fromCorretorId: true,
+        fromEquipeId: true,
+        toCorretorId: true,
+        toEquipeId: true,
+      },
+    });
+
+    const perdidosPorCorretor = new Map<string, Set<string>>();
+    const perdidosPorEquipe = new Map<string, Set<string>>();
+    for (const row of reatribuicoes) {
+      if (
+        row.fromCorretorId &&
+        row.fromCorretorId !== row.toCorretorId &&
+        (visibleIds === null || visibleIds.includes(row.fromCorretorId))
+      ) {
+        let set = perdidosPorCorretor.get(row.fromCorretorId);
+        if (!set) {
+          set = new Set();
+          perdidosPorCorretor.set(row.fromCorretorId, set);
+        }
+        set.add(row.leadId);
+      }
+      if (row.fromEquipeId && row.fromEquipeId !== row.toEquipeId) {
+        let set = perdidosPorEquipe.get(row.fromEquipeId);
+        if (!set) {
+          set = new Set();
+          perdidosPorEquipe.set(row.fromEquipeId, set);
+        }
+        set.add(row.leadId);
+      }
+    }
+
+    for (const [corretorId, leads] of perdidosPorCorretor) {
+      const row = byCorretor.get(corretorId);
+      if (row) {
+        row.leadsPerdidosReatribuicao = leads.size;
+      }
+    }
+
+    const missingCorretorIds = [...perdidosPorCorretor.keys()].filter(
+      (id) => !byCorretor.has(id),
     );
+    if (missingCorretorIds.length > 0) {
+      const users = await this.prisma.user.findMany({
+        where: { tenantId, id: { in: missingCorretorIds } },
+        select: { id: true, name: true },
+      });
+      for (const user of users) {
+        byCorretor.set(user.id, {
+          id: user.id,
+          name: user.name,
+          totalAtrasos: 0,
+          semMovimentacao: 0,
+          foraDoPrazo: 0,
+          tarefasAtrasadas: 0,
+          leadsPerdidosReatribuicao:
+            perdidosPorCorretor.get(user.id)?.size ?? 0,
+          leads: [],
+        });
+      }
+    }
+
+    const equipeIds = [...perdidosPorEquipe.keys()];
+    const equipesDb =
+      equipeIds.length === 0
+        ? []
+        : await this.prisma.equipe.findMany({
+            where: {
+              tenantId,
+              id: { in: equipeIds },
+              ...(requester.role === Role.gerente && visibleIds !== null
+                ? { gerenteId: requester.id }
+                : {}),
+            },
+            select: { id: true, name: true },
+          });
+    const equipes = equipesDb
+      .map((equipe) => ({
+        id: equipe.id,
+        name: equipe.name,
+        leadsPerdidosReatribuicao: perdidosPorEquipe.get(equipe.id)?.size ?? 0,
+      }))
+      .filter((equipe) => equipe.leadsPerdidosReatribuicao > 0)
+      .sort(
+        (a, b) =>
+          b.leadsPerdidosReatribuicao - a.leadsPerdidosReatribuicao ||
+          a.name.localeCompare(b.name),
+      );
+
+    return {
+      corretores: [...byCorretor.values()].sort(
+        (a, b) =>
+          b.totalAtrasos - a.totalAtrasos ||
+          b.leadsPerdidosReatribuicao - a.leadsPerdidosReatribuicao ||
+          a.name.localeCompare(b.name),
+      ),
+      equipes,
+    };
   }
 
   /**

@@ -93,5 +93,17 @@ export type CorretorMonitoramento = {
   semMovimentacao: number;
   foraDoPrazo: number;
   tarefasAtrasadas: number;
+  leadsPerdidosReatribuicao: number;
   leads: CorretorMonitoramentoLead[];
+};
+
+export type EquipeReatribuicaoResumo = {
+  id: string;
+  name: string;
+  leadsPerdidosReatribuicao: number;
+};
+
+export type MonitoramentoAtrasos = {
+  corretores: CorretorMonitoramento[];
+  equipes: EquipeReatribuicaoResumo[];
 };

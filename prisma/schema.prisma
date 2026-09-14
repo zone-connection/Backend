@@ -202,6 +202,7 @@ model Tenant {
   equipeFunis                    EquipeFunil[]
   funcionarios                   Funcionario[]
   contracheques                  Contracheque[]
+  leadReatribuicoes              LeadReatribuicao[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -581,6 +582,7 @@ model Lead {
   triagemOrigemHerdada  AtrasoLiberacaoDestino?
 
   triagemEvents TriagemEvent[]
+  reatribuicoes LeadReatribuicao[]
   prazoAdiamentos LeadPrazoAdiamento[]
   documentacoes Documentacao[]
   propostas     Proposta[]
@@ -740,6 +742,27 @@ model TriagemEvent {
   @@index([autorId])
   @@index([createdAt])
   @@map("triagem_events")
+}
+
+/// Troca de corretor/equipe: o anterior perdeu o lead na reatribuição.
+model LeadReatribuicao {
+  id             String        @id @default(uuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId         String
+  lead           Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromCorretorId String?
+  fromEquipeId   String?
+  toCorretorId   String?
+  toEquipeId     String?
+  origem         TriagemOrigem
+  createdAt      DateTime      @default(now())
+
+  @@index([tenantId, fromCorretorId])
+  @@index([tenantId, fromEquipeId])
+  @@index([leadId])
+  @@index([createdAt])
+  @@map("lead_reatribuicoes")
 }
 
 /// Construtora parceira (cadastro admin; gerente só visualiza).
