@@ -27,6 +27,10 @@ import { isCorretorLike } from '../common/utils/roles';
 import { prismaTableOrderBy } from '../common/utils/table-sort';
 import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import { normalizeCor } from '../common/utils/cor';
+import {
+  isDeliverableEmail,
+  parseOptionalNotifyEmail,
+} from '../mailer/mailer.service';
 import { SALT_ROUNDS } from '../config/security.constants';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -98,6 +102,7 @@ export class UsersService {
         tenantId,
         name: dto.name.trim(),
         email,
+        notifyEmail: this.requireNotifyEmail(dto.notifyEmail) ?? null,
         password: await bcrypt.hash(dto.password, SALT_ROUNDS),
         phone: dto.phone,
         whatsapp: dto.whatsapp,
@@ -206,6 +211,16 @@ export class UsersService {
         'Informe o número do CRECI ao marcar a etapa como recebido.',
       );
     }
+  }
+
+  private requireNotifyEmail(
+    value: string | null | undefined,
+  ): string | null | undefined {
+    const parsed = parseOptionalNotifyEmail(value);
+    if (parsed && !isDeliverableEmail(parsed)) {
+      throw new BadRequestException('Informe um e-mail de avisos válido.');
+    }
+    return parsed;
   }
 
   private async assertRoleAllowed(tenantId: string, role: Role) {
@@ -408,6 +423,9 @@ export class UsersService {
       data: {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(email ? { email } : {}),
+        ...(dto.notifyEmail !== undefined
+          ? { notifyEmail: this.requireNotifyEmail(dto.notifyEmail) ?? null }
+          : {}),
         ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
         ...(dto.whatsapp !== undefined ? { whatsapp: dto.whatsapp } : {}),
         ...(dataNascimento !== undefined ? { dataNascimento } : {}),

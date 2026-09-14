@@ -441,4 +441,68 @@ export class NotificacoesService {
       select: notifSelect,
     });
   }
+
+  /** Lead atribuído ao corretor. Idempotente por usuário + eventoChave. */
+  async createLeadAtribuido(params: {
+    userId: string;
+    leadId: string | null;
+    titulo: string;
+    corpo: string;
+    eventoChave: string;
+  }) {
+    return this.createUniqueLeadAlert({
+      ...params,
+      tipo: NotificacaoTipo.lead_atribuido,
+    });
+  }
+
+  /** Lead novo no pool (sem corretor). Idempotente por usuário + lead. */
+  async createLeadPool(params: {
+    userId: string;
+    leadId: string | null;
+    titulo: string;
+    corpo: string;
+    eventoChave: string;
+  }) {
+    return this.createUniqueLeadAlert({
+      ...params,
+      tipo: NotificacaoTipo.lead_pool,
+    });
+  }
+
+  private async createUniqueLeadAlert(params: {
+    userId: string;
+    leadId: string | null;
+    titulo: string;
+    corpo: string;
+    eventoChave: string;
+    tipo:
+      | typeof NotificacaoTipo.lead_atribuido
+      | typeof NotificacaoTipo.lead_pool;
+  }) {
+    const existing = await this.prisma.notificacao.findFirst({
+      where: {
+        userId: params.userId,
+        tipo: params.tipo,
+        eventoChave: params.eventoChave,
+        ...(params.leadId ? { leadId: params.leadId } : {}),
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: params.tipo,
+        titulo: params.titulo,
+        corpo: params.corpo,
+        leadId: params.leadId,
+        eventoChave: params.eventoChave,
+      },
+      select: notifSelect,
+    });
+  }
 }

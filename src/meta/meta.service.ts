@@ -12,6 +12,7 @@ import {
   type LeadgenEvent,
 } from './meta-webhook.parser';
 import { decryptPageAccessToken, metaTokenKey } from './meta-token.crypto';
+import { LeadNotifyService } from '../lead-notify/lead-notify.service';
 
 type TenantMetaConn = {
   tenantId: string;
@@ -29,6 +30,7 @@ export class MetaService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly graphApi: MetaGraphApiService,
+    private readonly leadNotify: LeadNotifyService,
   ) {}
 
   verifyChallenge(mode?: string, token?: string, challenge?: string) {
@@ -203,7 +205,7 @@ export class MetaService {
       `Importando lead da Graph leadgen_id=${leadgenId} tenantId=${connection.tenantId}`,
     );
 
-    const lead = await this.findOrCreateLead(
+    const { lead, created } = await this.findOrCreateLead(
       mapped,
       event,
       metaLead,
@@ -225,6 +227,9 @@ export class MetaService {
     this.logger.log(
       `Lead importado leadgen_id=${leadgenId} crmLeadId=${lead.id} tenantId=${connection.tenantId}`,
     );
+    if (created) {
+      this.queueLeadNotify(connection.tenantId, lead);
+    }
     return 'created';
   }
 
@@ -357,7 +362,7 @@ export class MetaService {
         `Criando lead no CRM leadgen_id=${event.leadgenId} tenantId=${connection.tenantId}`,
       );
 
-      const lead = await this.findOrCreateLead(
+      const { lead, created } = await this.findOrCreateLead(
         mapped,
         event,
         metaLead,
@@ -380,6 +385,9 @@ export class MetaService {
       this.logger.log(
         `Lead criado leadgen_id=${event.leadgenId} crmLeadId=${lead.id} tenantId=${connection.tenantId}`,
       );
+      if (created && !dummy) {
+        this.queueLeadNotify(connection.tenantId, lead);
+      }
       return { ok: true, leadId: lead.id };
     } catch (error) {
       // Libera a chave para a Meta reenviar o evento após falha (Graph API, etc.).
@@ -402,7 +410,7 @@ export class MetaService {
       this.logger.log(
         `Lead reutilizado crmLeadId=${reusable.id} tenantId=${tenantId} leadgen_id=${event.leadgenId}`,
       );
-      return reusable;
+      return { lead: reusable, created: false };
     }
 
     const tags = [
@@ -415,7 +423,7 @@ export class MetaService {
         : []),
     ];
 
-    return this.prisma.lead.create({
+    const lead = await this.prisma.lead.create({
       data: {
         tenantId,
         nome: mapped.nome,
@@ -430,6 +438,7 @@ export class MetaService {
         tags,
       },
     });
+    return { lead, created: true };
   }
 
   /** Reusa lead existente sem vínculo Meta (evita conflito no leadId unique). */
@@ -586,5 +595,29 @@ export class MetaService {
 
   private withDecryptedToken<T extends { pageAccessToken: string }>(row: T): T {
     return { ...row, pageAccessToken: this.decryptToken(row.pageAccessToken) };
+  }
+
+  private queueLeadNotify(
+    tenantId: string,
+    lead: {
+      id: string;
+      nome: string;
+      telefone: string;
+      origem: string;
+      cidade: string;
+      corretorId: string | null;
+    },
+  ) {
+    void this.leadNotify.notifyNewLead({
+      tenantId,
+      lead: {
+        id: lead.id,
+        nome: lead.nome,
+        telefone: lead.telefone,
+        origem: lead.origem,
+        cidade: lead.cidade,
+        corretorId: lead.corretorId,
+      },
+    });
   }
 }

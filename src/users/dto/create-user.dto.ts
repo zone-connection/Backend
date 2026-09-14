@@ -28,6 +28,12 @@ export class CreateUserDto {
   @MaxLength(255)
   email!: string;
 
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
+  @IsEmail({}, { message: 'Informe um e-mail de avisos válido.' })
+  @MaxLength(255)
+  notifyEmail?: string | null;
+
   @IsString()
   @MaxLength(72, { message: 'A senha deve ter no máximo 72 caracteres.' })
   @Matches(PASSWORD_REGEX, { message: PASSWORD_RULE_MESSAGE })

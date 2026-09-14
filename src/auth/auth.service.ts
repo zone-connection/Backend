@@ -26,6 +26,10 @@ import {
 } from '../common/utils/tenant-branding';
 import { normalizeCor } from '../common/utils/cor';
 import {
+  isDeliverableEmail,
+  parseOptionalNotifyEmail,
+} from '../mailer/mailer.service';
+import {
   FAILED_LOGIN_WINDOW_MS,
   LOCKOUT_DURATION_MS,
   MAX_FAILED_LOGIN_ATTEMPTS,
@@ -268,7 +272,7 @@ export class AuthService {
     };
   }
 
-  /** Atualiza preferências visuais e o CRECI do próprio usuário. */
+  /** Atualiza preferências visuais, CRECI e e-mail de avisos do próprio usuário. */
   async updateAppearance(
     userId: string,
     dto: UpdateAppearanceDto,
@@ -279,6 +283,7 @@ export class AuthService {
           ? dto.creci.trim()
           : null
         : undefined;
+    const notifyEmail = this.requireNotifyEmail(dto.notifyEmail);
 
     await this.prisma.user.update({
       where: { id: userId },
@@ -298,6 +303,7 @@ export class AuthService {
               ...(creci ? { creciStatus: CreciProcessoStatus.creci_recebido } : {}),
             }
           : {}),
+        ...(notifyEmail !== undefined ? { notifyEmail } : {}),
       },
     });
 
@@ -352,6 +358,16 @@ export class AuthService {
       data: { avatar: null },
     });
     return this.me(userId);
+  }
+
+  private requireNotifyEmail(
+    value: string | null | undefined,
+  ): string | null | undefined {
+    const parsed = parseOptionalNotifyEmail(value);
+    if (parsed && !isDeliverableEmail(parsed)) {
+      throw new BadRequestException('Informe um e-mail de avisos válido.');
+    }
+    return parsed;
   }
 
   async changePassword(
@@ -565,6 +581,7 @@ export class AuthService {
       tenantId: user.tenantId,
       name: user.name,
       email: user.email,
+      notifyEmail: user.notifyEmail,
       phone: user.phone,
       whatsapp: user.whatsapp,
       dataNascimento: user.dataNascimento,

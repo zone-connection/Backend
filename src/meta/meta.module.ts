@@ -7,9 +7,10 @@ import { MetaController } from './meta.controller';
 import { MetaOAuthController } from './meta-oauth.controller';
 import { MetaOAuthService } from './meta-oauth.service';
 import { MetaService } from './meta.service';
+import { LeadNotifyModule } from '../lead-notify/lead-notify.module';
 
 @Module({
-  imports: [JwtModule.register({})],
+  imports: [JwtModule.register({}), LeadNotifyModule],
   controllers: [MetaController, MetaOAuthController],
   providers: [
     MetaService,

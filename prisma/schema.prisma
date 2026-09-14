@@ -291,6 +291,8 @@ model User {
   tenant    Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name      String
   email     String
+  /// E-mail para avisos (leads). Se vazio, usa o e-mail de login.
+  notifyEmail String?
   password  String
   phone     String?
   /// WhatsApp do corretor (admin cadastra; usado para enviar resultado da análise).
@@ -574,7 +576,7 @@ model Lead {
 
   /// Preenchido quando a automação de atraso desvincula o corretor.
   origemAtrasoLiberacao AtrasoLiberacaoDestino?
-          atrasoLiberadoAt      DateTime?
+  atrasoLiberadoAt      DateTime?
   /// Destaque na triagem do novo corretor (histórico anterior permanece no lead).
   triagemOrigemHerdada  AtrasoLiberacaoDestino?
 
@@ -1264,6 +1266,8 @@ enum NotificacaoTipo {
   tarefa_atrasada
   imovel_compativel
   proposta_vencimento_proximo
+  lead_atribuido
+  lead_pool
 }
 
 /// Aviso in-app para o usuário (ex.: resultado da análise para o corretor).

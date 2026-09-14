@@ -8,6 +8,7 @@ import { FunisModule } from '../funis/funis.module';
 import { LeadMonitoramentoModule } from './lead-monitoramento.module';
 import { LeadAtrasoLiberacaoService } from './lead-atraso-liberacao.service';
 import { DocumentacaoModule } from '../documentacao/documentacao.module';
+import { LeadNotifyModule } from '../lead-notify/lead-notify.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { DocumentacaoModule } from '../documentacao/documentacao.module';
     FunisModule,
     LeadMonitoramentoModule,
     DocumentacaoModule,
+    LeadNotifyModule,
   ],
   controllers: [LeadsController],
   providers: [LeadsService, LeadAtrasoLiberacaoService],

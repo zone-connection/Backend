@@ -44,6 +44,8 @@ import {
   DistribuirEquipesDto,
 } from './dto/distribuir-leads.dto';
 import { sanitizeProspeccao } from './lead-prospeccao';
+import { LeadNotifyService } from '../lead-notify/lead-notify.service';
+import type { LeadNotifySnapshot } from '../lead-notify/lead-notify.messages';
 
 /** Dígitos nacionais (DDD + número), ignora DDI 55. */
 function nationalPhoneKey(value: string): string {
@@ -113,6 +115,7 @@ export class LeadsService {
     private readonly funis: FunisService,
     private readonly monitoramento: LeadMonitoramentoService,
     private readonly documentacao: DocumentacaoService,
+    private readonly leadNotify: LeadNotifyService,
   ) {}
 
   async create(
@@ -187,6 +190,11 @@ export class LeadsService {
         ...timing,
       },
       select: leadSelect,
+    });
+    void this.leadNotify.notifyNewLead({
+      tenantId,
+      lead: this.notifySnapshot(created),
+      actorUserId: requester.id,
     });
     return this.decorateOne(created, requester);
   }
@@ -479,6 +487,17 @@ export class LeadsService {
       }
     });
 
+    for (const item of resultado) {
+      void this.leadNotify.notifyTeamPool({
+        tenantId,
+        gerenteId: item.gerenteId,
+        quantidade: item.quantidade,
+        equipeNome: item.nome,
+        leadId: item.primeiroLeadId,
+        actorUserId: requester.id,
+      });
+    }
+
     return {
       ok: true,
       total: totalPedido,
@@ -576,6 +595,8 @@ export class LeadsService {
         }
       });
 
+      this.notifyDistribuicaoCorretores(tenantId, requester.id, resultado);
+
       return {
         ok: true,
         total: totalPedido,
@@ -650,6 +671,16 @@ export class LeadsService {
           },
         }),
       ),
+    );
+
+    this.notifyDistribuicaoCorretores(
+      tenantId,
+      requester.id,
+      corretores.map((c) => ({
+        corretorId: c.id,
+        quantidade: counts.get(c.id) ?? 0,
+        primeiroLeadId: firstLead.get(c.id) ?? null,
+      })),
     );
 
     return {
@@ -1210,6 +1241,16 @@ export class LeadsService {
         retrabalho:
           previousOrigemAtraso === AtrasoLiberacaoDestino.retrabalho,
         cacaLead: previousOrigemAtraso === AtrasoLiberacaoDestino.caca_lead,
+      });
+    }
+    if (
+      assignment?.corretorId &&
+      assignment.corretorId !== previousCorretorId
+    ) {
+      void this.leadNotify.notifyAssigned({
+        tenantId,
+        userId: assignment.corretorId,
+        lead: this.notifySnapshot(updated),
       });
     }
     return this.decorateOne(updated, requester);
@@ -1904,6 +1945,44 @@ export class LeadsService {
       corretorId: null,
       equipeId: null,
     };
+  }
+
+  private notifySnapshot(lead: {
+    id: string;
+    nome: string;
+    telefone: string;
+    origem: string;
+    cidade: string;
+    corretorId: string | null;
+  }): LeadNotifySnapshot & { corretorId: string | null } {
+    return {
+      id: lead.id,
+      nome: lead.nome,
+      telefone: lead.telefone,
+      origem: lead.origem,
+      cidade: lead.cidade,
+      corretorId: lead.corretorId,
+    };
+  }
+
+  private notifyDistribuicaoCorretores(
+    tenantId: string,
+    actorUserId: string,
+    items: Array<{
+      corretorId: string;
+      quantidade: number;
+      primeiroLeadId: string | null;
+    }>,
+  ) {
+    for (const item of items) {
+      void this.leadNotify.notifyAssignedBatch({
+        tenantId,
+        userId: item.corretorId,
+        quantidade: item.quantidade,
+        leadId: item.primeiroLeadId,
+        actorUserId,
+      });
+    }
   }
 
   private async ensureCanAccess(

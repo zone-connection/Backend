@@ -133,6 +133,7 @@ function createService(opts: {
     prisma as never,
     { get: () => undefined } as never,
     graphApi as unknown as MetaGraphApiService,
+    { notifyNewLead: async () => undefined } as never,
   );
 
   return { service, createdLeads, deletedKeys, upserts };

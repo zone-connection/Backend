@@ -6,6 +6,7 @@ export const publicUserSelect = {
   tenantId: true,
   name: true,
   email: true,
+  notifyEmail: true,
   phone: true,
   whatsapp: true,
   dataNascimento: true,

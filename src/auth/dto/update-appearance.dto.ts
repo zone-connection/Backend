@@ -1,4 +1,5 @@
 import {
+  IsEmail,
   IsOptional,
   IsString,
   Matches,
@@ -15,6 +16,12 @@ export class UpdateAppearanceDto {
   @MinLength(3, { message: 'Informe o CRECI com ao menos 3 caracteres.' })
   @MaxLength(40, { message: 'O CRECI deve ter no máximo 40 caracteres.' })
   creci?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== '')
+  @IsEmail({}, { message: 'Informe um e-mail de avisos válido.' })
+  @MaxLength(255)
+  notifyEmail?: string | null;
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null && value !== '')

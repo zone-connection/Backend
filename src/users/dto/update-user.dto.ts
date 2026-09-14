@@ -27,6 +27,12 @@ export class UpdateUserDto {
   email?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
+  @IsEmail({}, { message: 'Informe um e-mail de avisos válido.' })
+  @MaxLength(255)
+  notifyEmail?: string | null;
+
+  @IsOptional()
   @IsString()
   phone?: string;
 
