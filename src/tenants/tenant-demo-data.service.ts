@@ -28,7 +28,6 @@ import {
   ProprietarioPortalStatus,
   PropostaStatus,
   Role,
-  TenantPlano,
   TriagemOrigem,
   UserStatus,
   VendaUsadoHistoricoTipo,
@@ -55,8 +54,6 @@ import {
 } from '../catalog/catalog.defaults';
 import { slugify } from '../catalog/catalog.util';
 import { isStatusVendido } from '../common/utils/documentacao-status';
-import { applyPlanoModules } from './tenant-plan';
-import { mergeOperationModules } from './tenant-operation.util';
 import {
   DEMO_CAPTATION_IMOVEIS,
   DEMO_CATALOG,
@@ -186,8 +183,6 @@ export class TenantDemoDataService {
       interessadosUsados: 0,
       vendasUsados: 0,
     };
-
-    await this.enableCaptacaoOperations(tenantId, tenant.plano, tenant.modules);
 
     counts.catalogItems = await this.seedCatalogAndFunil(tenantId);
 
@@ -615,25 +610,6 @@ export class TenantDemoDataService {
     }
 
     return criadas;
-  }
-
-  private async enableCaptacaoOperations(
-    tenantId: string,
-    plano: TenantPlano,
-    modules: Prisma.JsonValue,
-  ) {
-    const current = applyPlanoModules(plano, modules);
-    const next = applyPlanoModules(
-      plano,
-      mergeOperationModules(current, {
-        captacao: true,
-        imoveisUsados: true,
-      }),
-    );
-    await this.prisma.tenant.update({
-      where: { id: tenantId },
-      data: { modules: next as Prisma.InputJsonValue },
-    });
   }
 
   private async seedEquipeFunis(tenantId: string) {
