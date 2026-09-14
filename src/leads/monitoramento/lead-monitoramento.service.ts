@@ -416,9 +416,22 @@ export class LeadMonitoramentoService {
       decorated.map((lead) => lead.id),
       now,
     );
-    return decorated.map((lead) =>
-      this.mergeTarefasAtrasadas(lead, byLead.get(lead.id) ?? []),
-    );
+    return decorated.map((lead) => {
+      const etapa = ctx.etapasBySlug.get(lead.stage);
+      if (isEtapaTerminal(etapa?.papel)) {
+        return {
+          ...lead,
+          monitoramento: {
+            ...lead.monitoramento,
+            problemas: [],
+            nivel: 'normal' as const,
+            visual: 'none' as const,
+            tarefasAtrasadas: [],
+          },
+        };
+      }
+      return this.mergeTarefasAtrasadas(lead, byLead.get(lead.id) ?? []);
+    });
   }
 
   async decorateLeadWithTarefas<T extends LeadTimingRow>(
