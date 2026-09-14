@@ -15,6 +15,7 @@ import {
   VendaUsadoVisitaStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { IMOVEL_MAX_FOTOS } from '../captacao/captacao.constants';
 import { pickFirstActiveEtapa } from '../captacao/captacao.util';
 import { stageChangeTiming } from '../operacao/operacao-monitoramento.util';
 import type {
@@ -262,9 +263,9 @@ export class PortalProprietarioImoveisService {
     const count = await this.prisma.imovelFoto.count({
       where: { imovelId: row.id, tenantId: session.tenantId },
     });
-    if (count >= 4) {
+    if (count >= IMOVEL_MAX_FOTOS) {
       throw new BadRequestException(
-        'O imóvel já tem 4 fotos. Remova uma para enviar outra.',
+        `O imóvel já tem ${IMOVEL_MAX_FOTOS} fotos. Remova uma para enviar outra.`,
       );
     }
     const file = media.requireFile(rawFile);

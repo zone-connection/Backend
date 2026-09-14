@@ -18,7 +18,7 @@ import { FunilResolverService } from '../funis/funil-resolver.service';
 import { MediaService } from '../media/media.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
-import { imovelTitulo } from './captacao.constants';
+import { IMOVEL_MAX_FOTOS, imovelTitulo } from './captacao.constants';
 import {
   moneyEqual,
   pickFirstActiveEtapa,
@@ -437,8 +437,10 @@ export class CaptacaoService {
       select: { id: true, _count: { select: { fotos: true } } },
     });
     if (!current) throw new NotFoundException('Imóvel não encontrado.');
-    if (current._count.fotos >= 4) {
-      throw new BadRequestException('O imóvel já tem 4 fotos. Remova uma para enviar outra.');
+    if (current._count.fotos >= IMOVEL_MAX_FOTOS) {
+      throw new BadRequestException(
+        `O imóvel já tem ${IMOVEL_MAX_FOTOS} fotos. Remova uma para enviar outra.`,
+      );
     }
     const file = media.requireFile(rawFile);
     const uploaded = await media.uploadImage({

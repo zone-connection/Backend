@@ -1,5 +1,7 @@
 import { CaptacaoImovelTipo } from '@prisma/client';
 
+export const IMOVEL_MAX_FOTOS = 15;
+
 export const CAPTACAO_ORIGENS_PADRAO = [
   'indicação',
   'site',

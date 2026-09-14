@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 
 export type StoredImage = { url: string; publicId: string };
 
-export const EMPREENDIMENTO_MAX_IMAGES = 2;
+export const EMPREENDIMENTO_MAX_IMAGES = 15;
 export const CONSTRUTORA_MAX_IMAGES = 1;
 
 export function parseStoredImages(
