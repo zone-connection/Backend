@@ -650,7 +650,7 @@ export class LeadMonitoramentoService {
         equipeId: true,
         createdAt: true,
         ...leadTimingSelect,
-        corretor: { select: { id: true, name: true } },
+        corretor: { select: { id: true, name: true, equipeId: true } },
       },
       take: 2000,
     });
@@ -674,6 +674,7 @@ export class LeadMonitoramentoService {
         row = {
           id: lead.corretor.id,
           name: lead.corretor.name,
+          equipeId: lead.corretor.equipeId,
           totalAtrasos: 0,
           semMovimentacao: 0,
           foraDoPrazo: 0,
@@ -708,35 +709,31 @@ export class LeadMonitoramentoService {
       },
     });
 
-    const perdidosPorCorretor = new Map<string, Set<string>>();
-    const perdidosPorEquipe = new Map<string, Set<string>>();
+    const perdidosPorCorretor = new Map<string, number>();
+    const perdidosPorEquipe = new Map<string, number>();
     for (const row of reatribuicoes) {
       if (
         row.fromCorretorId &&
         row.fromCorretorId !== row.toCorretorId &&
         (visibleIds === null || visibleIds.includes(row.fromCorretorId))
       ) {
-        let set = perdidosPorCorretor.get(row.fromCorretorId);
-        if (!set) {
-          set = new Set();
-          perdidosPorCorretor.set(row.fromCorretorId, set);
-        }
-        set.add(row.leadId);
+        perdidosPorCorretor.set(
+          row.fromCorretorId,
+          (perdidosPorCorretor.get(row.fromCorretorId) ?? 0) + 1,
+        );
       }
       if (row.fromEquipeId && row.fromEquipeId !== row.toEquipeId) {
-        let set = perdidosPorEquipe.get(row.fromEquipeId);
-        if (!set) {
-          set = new Set();
-          perdidosPorEquipe.set(row.fromEquipeId, set);
-        }
-        set.add(row.leadId);
+        perdidosPorEquipe.set(
+          row.fromEquipeId,
+          (perdidosPorEquipe.get(row.fromEquipeId) ?? 0) + 1,
+        );
       }
     }
 
-    for (const [corretorId, leads] of perdidosPorCorretor) {
+    for (const [corretorId, total] of perdidosPorCorretor) {
       const row = byCorretor.get(corretorId);
       if (row) {
-        row.leadsPerdidosReatribuicao = leads.size;
+        row.leadsPerdidosReatribuicao = total;
       }
     }
 
@@ -746,18 +743,18 @@ export class LeadMonitoramentoService {
     if (missingCorretorIds.length > 0) {
       const users = await this.prisma.user.findMany({
         where: { tenantId, id: { in: missingCorretorIds } },
-        select: { id: true, name: true },
+        select: { id: true, name: true, equipeId: true },
       });
       for (const user of users) {
         byCorretor.set(user.id, {
           id: user.id,
           name: user.name,
+          equipeId: user.equipeId,
           totalAtrasos: 0,
           semMovimentacao: 0,
           foraDoPrazo: 0,
           tarefasAtrasadas: 0,
-          leadsPerdidosReatribuicao:
-            perdidosPorCorretor.get(user.id)?.size ?? 0,
+          leadsPerdidosReatribuicao: perdidosPorCorretor.get(user.id) ?? 0,
           leads: [],
         });
       }
@@ -781,7 +778,7 @@ export class LeadMonitoramentoService {
       .map((equipe) => ({
         id: equipe.id,
         name: equipe.name,
-        leadsPerdidosReatribuicao: perdidosPorEquipe.get(equipe.id)?.size ?? 0,
+        leadsPerdidosReatribuicao: perdidosPorEquipe.get(equipe.id) ?? 0,
       }))
       .filter((equipe) => equipe.leadsPerdidosReatribuicao > 0)
       .sort(
