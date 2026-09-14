@@ -70,14 +70,13 @@ export class LeadNotifyService {
     lead: LeadNotifySnapshot;
   }): Promise<void> {
     const copy = leadAtribuidoCopy(params.lead);
-    const created = await this.notificacoes.createLeadAtribuido({
+    await this.notificacoes.createLeadAtribuido({
       userId: params.userId,
       leadId: params.lead.id,
       titulo: copy.titulo,
       corpo: copy.corpo,
       eventoChave: `lead_atribuido:${params.lead.id}`,
     });
-    if (!created) return;
     this.queueOutbound({
       tenantId: params.tenantId,
       userId: params.userId,
@@ -99,14 +98,13 @@ export class LeadNotifyService {
   }): Promise<void> {
     if (params.quantidade <= 0 || params.userId === params.actorUserId) return;
     const copy = leadLoteCopy(params.quantidade);
-    const created = await this.notificacoes.createLeadAtribuido({
+    await this.notificacoes.createLeadAtribuido({
       userId: params.userId,
       leadId: params.leadId ?? null,
       titulo: copy.titulo,
       corpo: copy.corpo,
       eventoChave: `lead_atribuido_lote:${params.userId}:${params.leadId ?? 'lote'}:${params.quantidade}`,
     });
-    if (!created) return;
     this.queueOutbound({
       tenantId: params.tenantId,
       userId: params.userId,
@@ -131,14 +129,13 @@ export class LeadNotifyService {
       return;
     }
     const copy = equipePoolCopy(params.quantidade, params.equipeNome);
-    const created = await this.notificacoes.createLeadPool({
+    await this.notificacoes.createLeadPool({
       userId: params.gerenteId,
       leadId: params.leadId ?? null,
       titulo: copy.titulo,
       corpo: copy.corpo,
       eventoChave: `lead_pool_equipe:${params.gerenteId}:${params.leadId ?? 'lote'}:${params.quantidade}`,
     });
-    if (!created) return;
     this.queueOutbound({
       tenantId: params.tenantId,
       userId: params.gerenteId,
@@ -167,14 +164,13 @@ export class LeadNotifyService {
     });
     const copy = leadPoolCopy(params.lead);
     for (const manager of managers) {
-      const created = await this.notificacoes.createLeadPool({
+      await this.notificacoes.createLeadPool({
         userId: manager.id,
         leadId: params.lead.id,
         titulo: copy.titulo,
         corpo: copy.corpo,
         eventoChave: `lead_pool:${params.lead.id}`,
       });
-      if (!created) continue;
       this.queueOutbound({
         tenantId: params.tenantId,
         userId: manager.id,
@@ -204,7 +200,7 @@ export class LeadNotifyService {
   }
 
   /**
-   * WhatsApp via OZap quando a imobiliária tem instância; senão e-mail.
+   * WhatsApp (OZap) e e-mail (SMTP) em paralelo.
    * Sem os dois canais, o aviso fica só no sino.
    */
   private async sendOutbound(params: {
@@ -213,9 +209,10 @@ export class LeadNotifyService {
     subject: string;
     text: string;
   }) {
-    const sentWhatsApp = await this.tryWhatsApp(params);
-    if (sentWhatsApp) return;
-    await this.tryEmail(params);
+    await Promise.allSettled([
+      this.tryWhatsApp(params),
+      this.tryEmail(params),
+    ]);
   }
 
   private async tryWhatsApp(params: {
@@ -265,8 +262,8 @@ export class LeadNotifyService {
     text: string;
   }) {
     if (!this.mailer.isConfigured()) {
-      this.logger.debug(
-        `SMTP ausente e sem OZap — aviso só no sino user=${params.userId}.`,
+      this.logger.warn(
+        `SMTP ausente — e-mail de lead não enviado user=${params.userId}.`,
       );
       return;
     }
@@ -277,8 +274,8 @@ export class LeadNotifyService {
     });
     const to = resolveNotifyEmail(user ?? {});
     if (!to) {
-      this.logger.debug(
-        `Usuário ${params.userId} sem e-mail válido — aviso só no sino.`,
+      this.logger.warn(
+        `Usuário ${params.userId} sem e-mail válido (login/avisos) — e-mail não enviado.`,
       );
       return;
     }
@@ -288,6 +285,7 @@ export class LeadNotifyService {
       subject: params.subject,
       text: params.text,
     });
+    this.logger.log(`E-mail de lead enviado user=${params.userId} to=${to}`);
   }
 
   private crmUrl(leadId?: string | null): string | null {

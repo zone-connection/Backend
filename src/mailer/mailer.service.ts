@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
@@ -45,10 +45,18 @@ function escapeHtml(value: string) {
 
 @Injectable()
 export class MailerService {
+  private readonly logger = new Logger(MailerService.name);
   private transporter: Transporter | null = null;
 
   constructor(private readonly config: ConfigService) {
     this.transporter = this.createTransporter();
+    if (this.isConfigured()) {
+      this.logger.log('SMTP de avisos ativo.');
+    } else {
+      this.logger.warn(
+        'SMTP de avisos ausente (SMTP_HOST/USER/PASS/FROM). E-mail de lead desligado.',
+      );
+    }
   }
 
   isConfigured(): boolean {
@@ -71,13 +79,19 @@ export class MailerService {
       throw new Error('E-mail do destinatário inválido.');
     }
 
-    await this.transporter.sendMail({
-      from,
-      to: params.to,
-      subject: params.subject,
-      text: params.text,
-      html: this.toHtml(params.text),
-    });
+    try {
+      await this.transporter.sendMail({
+        from,
+        to: params.to,
+        subject: params.subject,
+        text: params.text,
+        html: this.toHtml(params.text),
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'erro';
+      this.logger.warn(`Falha SMTP to=${params.to}: ${detail}`);
+      throw error;
+    }
   }
 
   private fromAddress(): string {
