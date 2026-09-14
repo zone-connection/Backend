@@ -9,6 +9,7 @@ import {
   ContatoTipo,
   CatalogType,
   FunilEtapaPapel,
+  FunilTipo,
   Prisma,
   Role,
   TriagemOrigem,
@@ -1771,6 +1772,7 @@ export class LeadsService {
 
   async listCacaLead(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
+    await this.assertCacaLeadAtivo(tenantId);
     const ctx = await this.monitoramento.loadFunilContext(tenantId);
     const now = new Date();
     const data = await this.prisma.lead.findMany({
@@ -1804,6 +1806,7 @@ export class LeadsService {
   async pegarCacaLead(id: string, requester: AuthenticatedUser) {
     this.assertPodePegarCacaLead(requester);
     const tenantId = requireTenantId(requester);
+    await this.assertCacaLeadAtivo(tenantId);
     const self = await this.prisma.user.findFirst({
       where: { id: requester.id, tenantId },
       select: { id: true, equipeId: true },
@@ -1933,6 +1936,31 @@ export class LeadsService {
     ) {
       throw new ForbiddenException(
         'Somente corretor, gerente ou admin podem pegar um lead do Caça-lead.',
+      );
+    }
+  }
+
+  private async assertCacaLeadAtivo(tenantId: string) {
+    const select = {
+      atrasoLiberacaoAtiva: true,
+      atrasoLiberacaoDestino: true,
+    } as const;
+    const funil =
+      (await this.prisma.funil.findFirst({
+        where: { tenantId, tipo: FunilTipo.comercial, ativo: true },
+        select,
+      })) ??
+      (await this.prisma.funil.findFirst({
+        where: { tenantId, tipo: FunilTipo.comercial },
+        orderBy: { updatedAt: 'desc' },
+        select,
+      }));
+    if (
+      !funil?.atrasoLiberacaoAtiva ||
+      funil.atrasoLiberacaoDestino !== AtrasoLiberacaoDestino.caca_lead
+    ) {
+      throw new ForbiddenException(
+        'O Caça-lead está desativado neste tenant.',
       );
     }
   }

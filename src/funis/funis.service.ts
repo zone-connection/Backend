@@ -1,10 +1,11 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CatalogType, FunilEtapaPapel, FunilTipo, Prisma } from '@prisma/client';
+import { CatalogType, FunilEtapaPapel, FunilTipo, Prisma, Role } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { PrismaService } from '../prisma/prisma.service';
@@ -190,6 +191,16 @@ export class FunisService {
     }
     if (dto.inatividadeUnidade !== undefined) {
       data.inatividadeUnidade = dto.inatividadeUnidade;
+    }
+    const atrasoFieldsTouched =
+      dto.atrasoLiberacaoAtiva !== undefined ||
+      dto.atrasoLiberacaoDestino !== undefined ||
+      dto.atrasoLiberacaoValor !== undefined ||
+      dto.atrasoLiberacaoUnidade !== undefined;
+    if (atrasoFieldsTouched && requester.role !== Role.admin) {
+      throw new ForbiddenException(
+        'Somente o administrador pode ativar ou desativar o Caça-lead.',
+      );
     }
     if (dto.atrasoLiberacaoAtiva !== undefined) {
       data.atrasoLiberacaoAtiva = dto.atrasoLiberacaoAtiva;
