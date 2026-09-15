@@ -1,10 +1,16 @@
 import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
   IsIn,
+  IsInt,
   IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
   MinLength,
   ValidateIf,
 } from 'class-validator';
@@ -15,6 +21,7 @@ export const AGENDAMENTO_TIPOS = [
   'reuniao',
   'tarefa',
   'outro',
+  'bloqueio',
 ] as const;
 
 export const AGENDAMENTO_STATUS = [
@@ -25,7 +32,19 @@ export const AGENDAMENTO_STATUS = [
 
 export const AGENDAMENTO_ESCOPOS = ['pessoal', 'com_gerente'] as const;
 
-export const AGENDAMENTO_ALVOS = ['nenhum', 'todos', 'equipe', 'gerente'] as const;
+export const AGENDAMENTO_ALVOS = [
+  'nenhum',
+  'todos',
+  'equipe',
+  'gerente',
+  'gerentes',
+] as const;
+
+export const AGENDAMENTO_RECURRENCE_FREQ = [
+  'unica',
+  'semanal',
+  'mensal',
+] as const;
 
 export class CreateAgendamentoDto {
   /** Opcional em tarefa pessoal; obrigatório quando envolve o gerente. */
@@ -33,6 +52,12 @@ export class CreateAgendamentoDto {
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID('4', { message: 'Lead/cliente inválido.' })
   leadId?: string | null;
+
+  /** Usuário que recebe a tarefa (admin: qualquer; gerente: corretor da equipe). */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Corretor inválido.' })
+  atribuidoParaId?: string | null;
 
   @IsString()
   @MinLength(2, { message: 'O título deve ter ao menos 2 caracteres.' })
@@ -46,7 +71,7 @@ export class CreateAgendamentoDto {
   @IsIn(AGENDAMENTO_ESCOPOS, { message: 'Escopo inválido.' })
   escopo!: (typeof AGENDAMENTO_ESCOPOS)[number];
 
-  /** Público de eventos do admin (todos / equipe / gerente). */
+  /** Público de eventos do admin (todos / equipe / gerente / gerentes). */
   @IsOptional()
   @IsIn(AGENDAMENTO_ALVOS, { message: 'Público do evento inválido.' })
   alvoTipo?: (typeof AGENDAMENTO_ALVOS)[number];
@@ -80,4 +105,33 @@ export class CreateAgendamentoDto {
   @IsString()
   @MaxLength(2000)
   observacoes?: string | null;
+
+  /** Etapa do funil quando a tarefa nasce no quadro. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsString()
+  @MaxLength(80)
+  funilStage?: string | null;
+
+  /** Recorrência de bloqueio: unica | semanal | mensal. */
+  @IsOptional()
+  @IsIn(AGENDAMENTO_RECURRENCE_FREQ, {
+    message: 'Frequência de recorrência inválida.',
+  })
+  recurrenceFreq?: (typeof AGENDAMENTO_RECURRENCE_FREQ)[number];
+
+  /** Dias da semana 0–6 (Dom–Sáb) quando semanal. */
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @ArrayMaxSize(7)
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  recurrenceDays?: number[];
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsISO8601({}, { message: 'Data final da recorrência inválida.' })
+  recurrenceUntil?: string | null;
 }

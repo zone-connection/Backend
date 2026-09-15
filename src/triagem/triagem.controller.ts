@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -14,6 +15,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { CreateTriagemDto } from './dto/create-triagem.dto';
+import { UpdateTriagemDto } from './dto/update-triagem.dto';
 import { QueryTriagemLeadsDto } from './dto/query-triagem-leads.dto';
 import { TriagemService } from './triagem.service';
 
@@ -23,12 +25,23 @@ export class TriagemController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(Role.corretor)
+  @Roles(Role.corretor, Role.treinee, Role.gerente, Role.admin, Role.super_admin)
   create(
     @Body() dto: CreateTriagemDto,
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.triagemService.create(dto, requester);
+  }
+
+  @Patch('events/:id')
+  @UseGuards(RolesGuard)
+  @Roles(Role.corretor, Role.treinee, Role.gerente, Role.admin, Role.super_admin)
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateTriagemDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.triagemService.update(id, dto, requester);
   }
 
   /** Antes de GET :leadId — lista contatos da tela. */

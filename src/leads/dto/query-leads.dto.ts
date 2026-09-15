@@ -1,13 +1,6 @@
 import { Type } from 'class-transformer';
-import {
-  IsIn,
-  IsInt,
-  IsOptional,
-  IsString,
-  IsUUID,
-  Max,
-  Min,
-} from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import { AtrasoLiberacaoDestino } from '@prisma/client';
 import { LEAD_INTERESSES, LEAD_PRIORIDADES, CONTATO_TIPOS } from '../lead.constants';
 
 export class QueryLeadsDto {
@@ -59,4 +52,39 @@ export class QueryLeadsDto {
   @Min(1)
   @Max(500)
   limit?: number = 20;
+
+  @IsOptional()
+  @IsIn(['created_desc', 'created_asc', 'nome_asc', 'nome_desc'], {
+    message:
+      'Ordenação inválida. Use created_desc, created_asc, nome_asc ou nome_desc.',
+  })
+  sort?: 'created_desc' | 'created_asc' | 'nome_asc' | 'nome_desc';
+
+  /** Filtro de monitoramento de prazo/inatividade (calculado no backend). */
+  @IsOptional()
+  @IsIn(
+    [
+      'todos',
+      'sem_movimentacao',
+      'proximo_vencimento',
+      'em_atraso',
+      'dentro_prazo',
+    ],
+    {
+      message:
+        'Filtro de monitoramento inválido. Use todos, sem_movimentacao, proximo_vencimento, em_atraso ou dentro_prazo.',
+    },
+  )
+  monitoramento?:
+    | 'todos'
+    | 'sem_movimentacao'
+    | 'proximo_vencimento'
+    | 'em_atraso'
+    | 'dentro_prazo';
+
+  @IsOptional()
+  @IsEnum(AtrasoLiberacaoDestino, {
+    message: 'Origem inválida. Use caca_lead ou retrabalho.',
+  })
+  origemAtrasoLiberacao?: AtrasoLiberacaoDestino;
 }

@@ -7,15 +7,28 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { LoginFailureReason, Role, User, UserStatus } from '@prisma/client';
+import {
+  CreciProcessoStatus,
+  LoginFailureReason,
+  Role,
+  User,
+  UserStatus,
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { PresenceService } from '../presence/presence.service';
+import { MediaService } from '../media/media.service';
 import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import {
   tenantBrandingSelect,
   type TenantBranding,
 } from '../common/utils/tenant-branding';
+import { normalizeCor } from '../common/utils/cor';
+import {
+  isDeliverableEmail,
+  parseOptionalNotifyEmail,
+} from '../mailer/mailer.service';
 import {
   FAILED_LOGIN_WINDOW_MS,
   LOCKOUT_DURATION_MS,
@@ -24,6 +37,11 @@ import {
   SALT_ROUNDS,
 } from '../config/security.constants';
 import { JwtPayload } from './strategies/jwt.strategy';
+import { UpdateAppearanceDto } from './dto/update-appearance.dto';
+import { sanitizeUserPermissions } from '../common/utils/user-permissions';
+import { applyPlanoModules } from '../tenants/tenant-plan';
+import { isCorretorLike } from '../common/utils/roles';
+import { corretorTemVendaVinculada } from '../common/utils/corretor-venda';
 
 export interface AuthTokens {
   accessToken: string;
@@ -32,6 +50,7 @@ export interface AuthTokens {
 
 export type AuthUserPayload = PublicUser & {
   tenant: TenantBranding | null;
+  temVendaVinculada?: boolean;
 };
 
 export interface AuthResult extends AuthTokens {
@@ -62,6 +81,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly presence: PresenceService,
+    private readonly media: MediaService,
   ) {}
 
   async login(
@@ -122,6 +143,7 @@ export class AuthService {
       },
     });
     await this.recordAttempt(normalizedEmail, true, context);
+    await this.presence.heartbeat(user.id, user.tenantId);
 
     return { ...tokens, user: await this.toPublicUser(user) };
   }
@@ -219,6 +241,12 @@ export class AuthService {
       where: { id: userId },
       data: { hashedRefreshToken: null },
     });
+    await this.presence.closeOpenSegments(userId);
+  }
+
+  /** Mantém o segmento de sessão ativo enquanto o usuário usa o CRM. */
+  async heartbeat(userId: string, tenantId: string | null): Promise<void> {
+    await this.presence.heartbeat(userId, tenantId);
   }
 
   async me(userId: string): Promise<AuthUserPayload> {
@@ -239,7 +267,111 @@ export class AuthService {
     }
 
     const { tenant, ...rest } = user;
-    return { ...rest, tenant };
+    return {
+      ...rest,
+      temVendaVinculada: await this.resolveTemVendaVinculada(rest),
+      tenant: tenant
+        ? { ...tenant, modules: applyPlanoModules(tenant.plano, tenant.modules) }
+        : null,
+    };
+  }
+
+  /** Atualiza preferências visuais, CRECI e e-mail de avisos do próprio usuário. */
+  async updateAppearance(
+    userId: string,
+    dto: UpdateAppearanceDto,
+  ): Promise<AuthUserPayload> {
+    const creci =
+      dto.creci !== undefined
+        ? dto.creci?.trim()
+          ? dto.creci.trim()
+          : null
+        : undefined;
+    const notifyEmail = this.requireNotifyEmail(dto.notifyEmail);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(dto.corAside !== undefined && {
+          corAside: normalizeCor(dto.corAside),
+        }),
+        ...(dto.corPrincipal !== undefined && {
+          corPrincipal: normalizeCor(dto.corPrincipal),
+        }),
+        ...(dto.corModulo !== undefined && {
+          corModulo: normalizeCor(dto.corModulo),
+        }),
+        ...(creci !== undefined
+          ? {
+              creci,
+              ...(creci ? { creciStatus: CreciProcessoStatus.creci_recebido } : {}),
+            }
+          : {}),
+        ...(notifyEmail !== undefined ? { notifyEmail } : {}),
+      },
+    });
+
+    return this.me(userId);
+  }
+
+  async uploadAvatar(
+    userId: string,
+    rawFile: Express.Multer.File | undefined,
+  ): Promise<AuthUserPayload> {
+    const file = this.media.requireFile(rawFile);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, tenantId: true },
+    });
+    if (!user) {
+      throw new UnauthorizedException('Usuário não encontrado.');
+    }
+
+    const tenantKey = user.tenantId ?? 'platform';
+    const uploaded = await this.media.uploadImage({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      folder: `crm/${tenantKey}/avatars`,
+      publicId: user.id,
+      maxWidth: 1080,
+      maxHeight: 1080,
+      fit: 'cover',
+      minSide: 256,
+    });
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatar: uploaded.url },
+    });
+    return this.me(userId);
+  }
+
+  async removeAvatar(userId: string): Promise<AuthUserPayload> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, tenantId: true, avatar: true },
+    });
+    if (!user) {
+      throw new UnauthorizedException('Usuário não encontrado.');
+    }
+
+    const tenantKey = user.tenantId ?? 'platform';
+    await this.media.destroy(`crm/${tenantKey}/avatars/${user.id}`);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatar: null },
+    });
+    return this.me(userId);
+  }
+
+  private requireNotifyEmail(
+    value: string | null | undefined,
+  ): string | null | undefined {
+    const parsed = parseOptionalNotifyEmail(value);
+    if (parsed && !isDeliverableEmail(parsed)) {
+      throw new BadRequestException('Informe um e-mail de avisos válido.');
+    }
+    return parsed;
   }
 
   async changePassword(
@@ -408,6 +540,13 @@ export class AuthService {
       role: user.role as Role,
       name: user.name,
       tenantId: user.tenantId,
+      financeiroPerms: {
+        view: user.financeiroCanView !== false,
+        create: user.financeiroCanCreate !== false,
+        edit: user.financeiroCanEdit !== false,
+        delete: user.financeiroCanDelete !== false,
+      },
+      permissions: sanitizeUserPermissions(user.permissions),
     };
 
     const accessExpiresIn = this.config.get<string>(
@@ -446,17 +585,48 @@ export class AuthService {
       tenantId: user.tenantId,
       name: user.name,
       email: user.email,
+      notifyEmail: user.notifyEmail,
       phone: user.phone,
       whatsapp: user.whatsapp,
+      dataNascimento: user.dataNascimento,
       cargo: user.cargo,
+      creci: user.creci,
+      cpf: user.cpf,
+      rg: user.rg,
+      endereco: user.endereco,
+      cep: user.cep,
+      creciStatus: user.creciStatus,
       cor: user.cor,
+      corAside: user.corAside,
+      corPrincipal: user.corPrincipal,
+      corModulo: user.corModulo,
       role: user.role,
+      financeiroCanView: user.financeiroCanView,
+      financeiroCanCreate: user.financeiroCanCreate,
+      financeiroCanEdit: user.financeiroCanEdit,
+      financeiroCanDelete: user.financeiroCanDelete,
+      permissions: sanitizeUserPermissions(user.permissions),
       status: user.status,
       avatar: user.avatar,
       lastLoginAt: user.lastLoginAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      tenant,
+      temVendaVinculada: await this.resolveTemVendaVinculada(user),
+      tenant: tenant
+        ? { ...tenant, modules: applyPlanoModules(tenant.plano, tenant.modules) }
+        : null,
     };
+  }
+
+  private async resolveTemVendaVinculada(user: {
+    id: string;
+    role: Role;
+    tenantId: string | null;
+  }) {
+    if (!isCorretorLike(user.role) || !user.tenantId) return true;
+    return corretorTemVendaVinculada(this.prisma, {
+      tenantId: user.tenantId,
+      userId: user.id,
+    });
   }
 }

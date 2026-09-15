@@ -22,7 +22,7 @@ import { DocumentacaoService } from './documentacao.service';
 
 @Controller('documentacao')
 @UseGuards(RolesGuard)
-@Roles(Role.admin, Role.gerente, Role.corretor, Role.analista)
+@Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.analista, Role.super_admin)
 export class DocumentacaoController {
   constructor(private readonly documentacaoService: DocumentacaoService) {}
 
@@ -34,6 +34,25 @@ export class DocumentacaoController {
     return this.documentacaoService.list(query, requester);
   }
 
+  /**
+   * Usuários ativos do tenant para o select na ficha.
+   * Admin/gerente/analista/treinee: corretores, treinees e gerentes.
+   * Corretor: apenas o próprio.
+   * Precisa ficar antes de GET :id.
+   */
+  @Get('corretores')
+  @Roles(
+    Role.admin,
+    Role.gerente,
+    Role.corretor,
+    Role.treinee,
+    Role.analista,
+    Role.financeiro,
+  )
+  listCorretores(@CurrentUser() requester: AuthenticatedUser) {
+    return this.documentacaoService.listCorretores(requester);
+  }
+
   @Get(':id')
   findOne(
     @Param('id', ParseUUIDPipe) id: string,
@@ -43,6 +62,7 @@ export class DocumentacaoController {
   }
 
   @Post()
+  @Roles(Role.admin, Role.analista, Role.gerente, Role.treinee)
   create(
     @Body() dto: CreateDocumentacaoDto,
     @CurrentUser() requester: AuthenticatedUser,
@@ -51,6 +71,7 @@ export class DocumentacaoController {
   }
 
   @Patch(':id')
+  @Roles(Role.admin, Role.analista, Role.gerente)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateDocumentacaoDto,
@@ -60,6 +81,7 @@ export class DocumentacaoController {
   }
 
   @Delete(':id')
+  @Roles(Role.admin, Role.analista)
   remove(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() requester: AuthenticatedUser,

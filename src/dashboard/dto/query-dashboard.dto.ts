@@ -1,14 +1,21 @@
 import { Type } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
   Max,
   Min,
 } from 'class-validator';
+import { PERIODO_GRANULARIDADES, type PeriodoGranularidade } from '../../common/utils/periodo-brasil';
 
 export class QueryDashboardDto {
-  /** Mês calendário (1–12). Omite = mês atual (timezone BR). */
+  /** Recorte: mês, bimestre, trimestre, semestre ou ano. Omite = mês. */
+  @IsOptional()
+  @IsIn(PERIODO_GRANULARIDADES)
+  granularidade?: PeriodoGranularidade;
+
+  /** Mês calendário (1–12). Omite = mês atual (timezone BR). Alinha ao início do recorte. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()

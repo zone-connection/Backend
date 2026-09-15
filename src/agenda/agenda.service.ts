@@ -2,11 +2,14 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import {
   AgendamentoAlvo,
   AgendamentoEscopo,
+  AgendamentoRecurrenceFreq,
   AgendamentoSolicitacaoStatus,
   AgendamentoStatus,
   AgendamentoTipo,
@@ -20,11 +23,16 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { NotificacoesService } from '../notificacoes/notificacoes.service';
+import { LeadMonitoramentoService } from '../leads/monitoramento/lead-monitoramento.service';
+import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
-import { requireTenantId } from '../common/utils/tenant';
+import { resolveFinanceiroTenantId as requireTenantId } from '../common/utils/tenant';
+import { isCorretorLike } from '../common/utils/roles';
 import { CreateAgendamentoDto } from './dto/create-agendamento.dto';
 import { UpdateAgendamentoDto } from './dto/update-agendamento.dto';
 import { QueryAgendamentoDto } from './dto/query-agendamento.dto';
+
+const MAX_RECURRENCE_OCCURRENCES = 366;
 
 /** Etapas anteriores a "visita-agendada" — ao confirmar visita, avançamos o funil. */
 const STAGES_BEFORE_VISITA = new Set([
@@ -36,8 +44,10 @@ const STAGES_BEFORE_VISITA = new Set([
 
 const agendamentoSelect = {
   id: true,
+  tenantId: true,
   leadId: true,
   autorId: true,
+  atribuidoParaId: true,
   titulo: true,
   tipo: true,
   status: true,
@@ -46,15 +56,21 @@ const agendamentoSelect = {
   alvoTipo: true,
   alvoEquipeId: true,
   alvoGerenteId: true,
+  seriesId: true,
+  recurrenceFreq: true,
+  recurrenceDays: true,
+  recurrenceUntil: true,
   startsAt: true,
   endsAt: true,
   local: true,
   observacoes: true,
+  funilStage: true,
   motivoRecusa: true,
   aprovadoAt: true,
   createdAt: true,
   updatedAt: true,
   autor: { select: { id: true, name: true, role: true } },
+  atribuidoPara: { select: { id: true, name: true, role: true } },
   aprovadoPor: { select: { id: true, name: true } },
   alvoEquipe: { select: { id: true, name: true } },
   alvoGerente: { select: { id: true, name: true } },
@@ -71,22 +87,59 @@ const agendamentoSelect = {
   },
 } as const;
 
+const ANIVERSARIO_ID_PREFIX = 'aniversario:';
+
+type AgendamentoListItem = Prisma.AgendamentoGetPayload<{
+  select: typeof agendamentoSelect;
+}> & { isAniversario?: boolean };
+
+function isAniversarioId(id: string) {
+  return id.startsWith(ANIVERSARIO_ID_PREFIX);
+}
+
 @Injectable()
 export class AgendaService {
+  private readonly logger = new Logger(AgendaService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly teamScope: TeamScopeService,
     private readonly notificacoes: NotificacoesService,
+    private readonly monitoramento: LeadMonitoramentoService,
+    private readonly googleCalendar: GoogleCalendarService,
   ) {}
 
   /** Compromissos no calendário/tabela.
-   * - eventos do admin: conforme alvoTipo (todos / equipe / gerente)
+   * - eventos do admin: conforme alvoTipo (todos / equipe / gerente / gerentes)
    * - pessoal: só o autor
    * - com_gerente aprovado: autor + gerente/admin da equipe
    * - com_gerente pendente: corretor autor ainda vê no calendário
    */
-  async list(query: QueryAgendamentoDto, requester: AuthenticatedUser) {
+  async list(
+    query: QueryAgendamentoDto,
+    requester: AuthenticatedUser,
+  ): Promise<AgendamentoListItem[]> {
     const tenantId = requireTenantId(requester);
+    if (requester.role === Role.super_admin) {
+      const where: Prisma.AgendamentoWhereInput = {
+        tenantId,
+        autorId: requester.id,
+      };
+      if (query.tipo) where.tipo = query.tipo;
+      if (query.status) where.status = query.status;
+      if (query.from || query.to) {
+        where.startsAt = {};
+        if (query.from) where.startsAt.gte = new Date(query.from);
+        if (query.to) where.startsAt.lte = new Date(query.to);
+      }
+
+      return this.prisma.agendamento.findMany({
+        where,
+        select: agendamentoSelect,
+        orderBy: { startsAt: 'asc' },
+      });
+    }
+
     const sharedAccess = await this.buildSharedAccessFilter(
       requester,
       query.corretorId,
@@ -94,45 +147,71 @@ export class AgendaService {
     );
     if (!sharedAccess) return [];
 
-    const adminEventVisibility = await this.buildAdminEventVisibility(
-      requester,
-      query.equipeId,
-    );
+    const viewTarget = query.corretorId
+      ? await this.resolveAgendaViewTarget(query.corretorId, requester)
+      : null;
+
+    const adminEventVisibility = viewTarget
+      ? await this.buildAdminEventVisibilityForUser(viewTarget)
+      : await this.buildAdminEventVisibility(requester, query.equipeId);
+
+    const gerenteBloqueioVisibility = viewTarget
+      ? isCorretorLike(viewTarget.role)
+        ? await this.buildGerenteBloqueioVisibilityForCorretor(viewTarget.id)
+        : null
+      : await this.buildGerenteBloqueioVisibility(requester, query.corretorId);
+
+    const visibilityOr: Prisma.AgendamentoWhereInput[] = viewTarget
+      ? [
+          // Agenda do usuário: pessoais, bloqueios e com_gerente que ele criou.
+          {
+            autorId: viewTarget.id,
+            alvoTipo: AgendamentoAlvo.nenhum,
+          },
+          {
+            atribuidoParaId: viewTarget.id,
+            alvoTipo: AgendamentoAlvo.nenhum,
+          },
+          ...(adminEventVisibility ? [adminEventVisibility] : []),
+          ...(gerenteBloqueioVisibility ? [gerenteBloqueioVisibility] : []),
+        ]
+      : [
+          ...(adminEventVisibility ? [adminEventVisibility] : []),
+          {
+            escopo: AgendamentoEscopo.pessoal,
+            autorId: requester.id,
+            alvoTipo: AgendamentoAlvo.nenhum,
+          },
+          {
+            atribuidoParaId: requester.id,
+            alvoTipo: AgendamentoAlvo.nenhum,
+          },
+          ...(gerenteBloqueioVisibility ? [gerenteBloqueioVisibility] : []),
+          {
+            AND: [
+              {
+                escopo: AgendamentoEscopo.com_gerente,
+                solicitacaoStatus: AgendamentoSolicitacaoStatus.aprovada,
+                alvoTipo: AgendamentoAlvo.nenhum,
+              },
+              sharedAccess,
+            ],
+          },
+          ...(isCorretorLike(requester.role)
+            ? [
+                {
+                  autorId: requester.id,
+                  escopo: AgendamentoEscopo.com_gerente,
+                  solicitacaoStatus: AgendamentoSolicitacaoStatus.pendente,
+                  alvoTipo: AgendamentoAlvo.nenhum,
+                },
+              ]
+            : []),
+        ];
 
     const where: Prisma.AgendamentoWhereInput = {
       tenantId,
-      AND: [
-        {
-          OR: [
-            ...(adminEventVisibility ? [adminEventVisibility] : []),
-            {
-              escopo: AgendamentoEscopo.pessoal,
-              autorId: requester.id,
-              alvoTipo: AgendamentoAlvo.nenhum,
-            },
-            {
-              AND: [
-                {
-                  escopo: AgendamentoEscopo.com_gerente,
-                  solicitacaoStatus: AgendamentoSolicitacaoStatus.aprovada,
-                  alvoTipo: AgendamentoAlvo.nenhum,
-                },
-                sharedAccess,
-              ],
-            },
-            ...(requester.role === Role.corretor
-              ? [
-                  {
-                    autorId: requester.id,
-                    escopo: AgendamentoEscopo.com_gerente,
-                    solicitacaoStatus: AgendamentoSolicitacaoStatus.pendente,
-                    alvoTipo: AgendamentoAlvo.nenhum,
-                  },
-                ]
-              : []),
-          ],
-        },
-      ],
+      AND: [{ OR: visibilityOr }],
     };
 
     if (query.tipo) where.tipo = query.tipo;
@@ -144,11 +223,30 @@ export class AgendaService {
       if (query.to) where.startsAt.lte = new Date(query.to);
     }
 
-    return this.prisma.agendamento.findMany({
-      where,
-      select: agendamentoSelect,
-      orderBy: { startsAt: 'asc' },
+    const rows: AgendamentoListItem[] =
+      await this.prisma.agendamento.findMany({
+        where,
+        select: agendamentoSelect,
+        orderBy: { startsAt: 'asc' },
+      });
+
+    const aniversarios = await this.buildUsuarioAniversarios({
+      tenantId,
+      requester,
+      from: query.from ? new Date(query.from) : null,
+      to: query.to ? new Date(query.to) : null,
+      tipo: query.tipo,
+      status: query.status,
+      equipeId: query.equipeId,
+      corretorId: query.corretorId,
     });
+
+    if (aniversarios.length === 0) return rows;
+
+    return [...rows, ...aniversarios].sort(
+      (a, b) =>
+        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+    );
   }
 
   /** Solicitações pendentes: gerente aprova da equipe; corretor acompanha as próprias. Admin não recebe. */
@@ -174,7 +272,7 @@ export class AgendaService {
       ],
     };
 
-    if (requester.role === Role.corretor) {
+    if (isCorretorLike(requester.role)) {
       where.autorId = requester.id;
     }
 
@@ -195,19 +293,37 @@ export class AgendaService {
    * Chamado no login/polling do front — sem cron no servidor.
    */
   async syncLembretes(requester: AuthenticatedUser) {
+    // Analista não usa agenda operacional — evita 403 no shell e vazamento de solicitações.
+    if (requester.role === Role.analista) {
+      return {
+        urgencia: 'nenhuma' as const,
+        proximosCount: 0,
+        solicitacoesCount: 0,
+        proximos: [],
+        novasNotificacoes: [],
+      };
+    }
+
     const now = new Date();
     const horizon = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     const MS_1H = 60 * 60 * 1000;
     const MS_2H = 2 * MS_1H;
     const MS_1D = 24 * MS_1H;
 
-    const upcoming = await this.list(
-      {
-        status: AgendamentoStatus.agendado,
-        from: now.toISOString(),
-        to: horizon.toISOString(),
-      },
-      requester,
+    const upcoming = (
+      await this.list(
+        {
+          status: AgendamentoStatus.agendado,
+          from: now.toISOString(),
+          to: horizon.toISOString(),
+        },
+        requester,
+      )
+    ).filter(
+      (item) =>
+        !item.isAniversario &&
+        !isAniversarioId(item.id) &&
+        item.tipo !== AgendamentoTipo.bloqueio,
     );
 
     const corretorIds = Array.from(
@@ -215,7 +331,7 @@ export class AgendaService {
         upcoming
           .map((item) => {
             if (item.lead?.corretorId) return item.lead.corretorId;
-            if (item.autor.role === Role.corretor) return item.autorId;
+            if (isCorretorLike(item.autor.role)) return item.autorId;
             return null;
           })
           .filter((id): id is string => Boolean(id)),
@@ -254,10 +370,10 @@ export class AgendaService {
 
       const corretorId =
         item.lead?.corretorId ??
-        (item.autor.role === Role.corretor ? item.autorId : null);
+        (isCorretorLike(item.autor.role) ? item.autorId : null);
       const corretorNome =
         item.lead?.corretor?.name ??
-        (item.autor.role === Role.corretor ? item.autor.name : null);
+        (isCorretorLike(item.autor.role) ? item.autor.name : null);
       const info = corretorId
         ? equipeInfoByCorretorId.get(corretorId)
         : undefined;
@@ -281,7 +397,9 @@ export class AgendaService {
               ? item.alvoGerente?.name
                 ? `Gerente: ${item.alvoGerente.name}`
                 : 'Um gerente'
-              : null;
+              : item.alvoTipo === AgendamentoAlvo.gerentes
+                ? 'Todos os gerentes'
+                : null;
 
       return {
         id: item.id,
@@ -393,6 +511,11 @@ export class AgendaService {
   }
 
   async findOne(id: string, requester: AuthenticatedUser) {
+    if (isAniversarioId(id)) {
+      throw new NotFoundException(
+        'Aniversários são somente leitura e não podem ser abertos como compromisso.',
+      );
+    }
     const tenantId = requireTenantId(requester);
     const item = await this.prisma.agendamento.findFirst({
       where: { id, tenantId },
@@ -408,9 +531,62 @@ export class AgendaService {
 
   async create(dto: CreateAgendamentoDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    const escopo = dto.escopo as AgendamentoEscopo;
-    const leadId = dto.leadId?.trim() || null;
-    const alvo = await this.resolveAlvoOnCreate(dto, requester);
+    const isPlatformAgenda = requester.role === Role.super_admin;
+    const isBloqueio = dto.tipo === 'bloqueio';
+    const atribuidoParaIdRaw = dto.atribuidoParaId?.trim() || null;
+
+    if (isBloqueio && atribuidoParaIdRaw) {
+      throw new BadRequestException(
+        'Bloqueio de horário não pode ser atribuído a um corretor.',
+      );
+    }
+
+    if (isBloqueio) {
+      if (
+        requester.role !== Role.admin &&
+        requester.role !== Role.gerente
+      ) {
+        throw new ForbiddenException(
+          'Apenas admin e gerente podem travar horários na agenda.',
+        );
+      }
+    }
+
+    const atribuidoPara = atribuidoParaIdRaw
+      ? await this.resolveAtribuidoPara(atribuidoParaIdRaw, requester)
+      : null;
+
+    let escopo: AgendamentoEscopo;
+    if (isPlatformAgenda || isBloqueio || atribuidoPara) {
+      escopo = AgendamentoEscopo.pessoal;
+    } else {
+      escopo = dto.escopo as AgendamentoEscopo;
+    }
+
+    const leadId =
+      isPlatformAgenda || isBloqueio || atribuidoPara
+        ? null
+        : dto.leadId?.trim() || null;
+
+    const alvo = isPlatformAgenda
+      ? {
+          alvoTipo: AgendamentoAlvo.nenhum,
+          alvoEquipeId: null,
+          alvoGerenteId: null,
+        }
+      : isBloqueio && requester.role === Role.gerente
+        ? {
+            alvoTipo: AgendamentoAlvo.nenhum,
+            alvoEquipeId: null,
+            alvoGerenteId: null,
+          }
+        : atribuidoPara
+          ? {
+              alvoTipo: AgendamentoAlvo.nenhum,
+              alvoEquipeId: null,
+              alvoGerenteId: null,
+            }
+          : await this.resolveAlvoOnCreate(dto, requester);
 
     if (
       alvo.alvoTipo === AgendamentoAlvo.nenhum &&
@@ -430,10 +606,82 @@ export class AgendaService {
     const endsAt = this.parseOptionalDate(dto.endsAt);
     this.assertTimeRange(startsAt, endsAt);
 
+    if (isBloqueio && !endsAt) {
+      throw new BadRequestException(
+        'Informe o horário de término do bloqueio.',
+      );
+    }
+
+    const recurrenceFreq = isBloqueio
+      ? ((dto.recurrenceFreq as AgendamentoRecurrenceFreq | undefined) ??
+        AgendamentoRecurrenceFreq.unica)
+      : AgendamentoRecurrenceFreq.unica;
+    let recurrenceDays = isBloqueio
+      ? Array.from(
+          new Set(
+            (dto.recurrenceDays ?? []).filter(
+              (d) => Number.isInteger(d) && d >= 0 && d <= 6,
+            ),
+          ),
+        ).sort((a, b) => a - b)
+      : [];
+    const recurrenceUntil = isBloqueio
+      ? this.parseOptionalDate(dto.recurrenceUntil)
+      : null;
+
+    if (
+      isBloqueio &&
+      recurrenceFreq !== AgendamentoRecurrenceFreq.unica &&
+      !recurrenceUntil
+    ) {
+      throw new BadRequestException(
+        'Informe a data final da recorrência do bloqueio.',
+      );
+    }
+
+    if (
+      isBloqueio &&
+      recurrenceFreq === AgendamentoRecurrenceFreq.semanal &&
+      recurrenceDays.length === 0
+    ) {
+      recurrenceDays.push(startsAt.getDay());
+    }
+
+    const occurrences = isBloqueio
+      ? this.expandRecurrenceOccurrences({
+          startsAt,
+          endsAt: endsAt!,
+          freq: recurrenceFreq,
+          days: recurrenceDays,
+          until: recurrenceUntil,
+        })
+      : [{ startsAt, endsAt }];
+
+    if (!isBloqueio) {
+      const alsoGerenteIds =
+        escopo === AgendamentoEscopo.com_gerente &&
+        isCorretorLike(requester.role)
+          ? await this.resolveGerenteIds(requester.id)
+          : [];
+      await this.assertNoOverlapWithBloqueios({
+        tenantId,
+        startsAt,
+        endsAt,
+        affectedUserIds: atribuidoPara
+          ? [atribuidoPara.id]
+          : [requester.id],
+        alsoGerenteIds,
+        adminBroadcastBlocksAll: alvo.alvoTipo === AgendamentoAlvo.todos,
+        alvoEquipeId: alvo.alvoEquipeId,
+      });
+    }
+
     const needsApproval =
+      !isBloqueio &&
+      !atribuidoPara &&
       alvo.alvoTipo === AgendamentoAlvo.nenhum &&
       escopo === AgendamentoEscopo.com_gerente &&
-      requester.role === Role.corretor;
+      isCorretorLike(requester.role);
 
     const solicitacaoStatus = needsApproval
       ? AgendamentoSolicitacaoStatus.pendente
@@ -442,32 +690,66 @@ export class AgendaService {
         ? AgendamentoSolicitacaoStatus.aprovada
         : AgendamentoSolicitacaoStatus.nenhuma;
 
-    const created = await this.prisma.agendamento.create({
-      data: {
-        tenantId,
-        leadId: lead?.id ?? null,
-        autorId: requester.id,
-        titulo: dto.titulo.trim(),
-        tipo: dto.tipo as AgendamentoTipo,
-        escopo,
-        solicitacaoStatus,
-        status: AgendamentoStatus.agendado,
-        alvoTipo: alvo.alvoTipo,
-        alvoEquipeId: alvo.alvoEquipeId,
-        alvoGerenteId: alvo.alvoGerenteId,
-        startsAt,
-        endsAt,
-        local: dto.local?.trim() || null,
-        observacoes: dto.observacoes?.trim() || null,
-        ...(solicitacaoStatus === AgendamentoSolicitacaoStatus.aprovada
-          ? {
-              aprovadoPorId: requester.id,
-              aprovadoAt: new Date(),
-            }
-          : {}),
-      },
-      select: agendamentoSelect,
-    });
+    const seriesId =
+      isBloqueio && occurrences.length > 1 ? randomUUID() : null;
+
+    const commonData = {
+      tenantId,
+      leadId: lead?.id ?? null,
+      autorId: requester.id,
+      atribuidoParaId: atribuidoPara?.id ?? null,
+      titulo: dto.titulo.trim(),
+      tipo: dto.tipo as AgendamentoTipo,
+      escopo,
+      solicitacaoStatus,
+      status: AgendamentoStatus.agendado,
+      alvoTipo: alvo.alvoTipo,
+      alvoEquipeId: alvo.alvoEquipeId,
+      alvoGerenteId: alvo.alvoGerenteId,
+      seriesId,
+      recurrenceFreq,
+      recurrenceDays,
+      recurrenceUntil,
+      local: dto.local?.trim() || null,
+      observacoes: dto.observacoes?.trim() || null,
+      funilStage: dto.funilStage?.trim() || null,
+      ...(solicitacaoStatus === AgendamentoSolicitacaoStatus.aprovada
+        ? {
+            aprovadoPorId: requester.id,
+            aprovadoAt: new Date(),
+          }
+        : {}),
+    };
+
+    let created;
+    if (occurrences.length === 1) {
+      created = await this.prisma.agendamento.create({
+        data: {
+          ...commonData,
+          startsAt: occurrences[0].startsAt,
+          endsAt: occurrences[0].endsAt,
+        },
+        select: agendamentoSelect,
+      });
+    } else {
+      await this.prisma.agendamento.createMany({
+        data: occurrences.map((occ) => ({
+          ...commonData,
+          id: randomUUID(),
+          startsAt: occ.startsAt,
+          endsAt: occ.endsAt,
+        })),
+      });
+      created = await this.prisma.agendamento.findFirstOrThrow({
+        where: {
+          tenantId,
+          seriesId: seriesId!,
+          startsAt: occurrences[0].startsAt,
+        },
+        select: agendamentoSelect,
+        orderBy: { startsAt: 'asc' },
+      });
+    }
 
     if (needsApproval && lead) {
       const destinatarios = await this.resolveGerenteIds(requester.id);
@@ -498,6 +780,47 @@ export class AgendaService {
         requester.id,
         tenantId,
       );
+      await this.monitoramento.concludeOverdueTarefas(
+        tenantId,
+        lead.id,
+        new Date(),
+        created.id,
+      );
+    } else if (lead && created.tipo !== AgendamentoTipo.bloqueio) {
+      await this.monitoramento.recordMovement(
+        lead.id,
+        created.tipo === AgendamentoTipo.tarefa ? 'tarefa' : 'atividade',
+      );
+      await this.monitoramento.concludeOverdueTarefas(
+        tenantId,
+        lead.id,
+        new Date(),
+        created.id,
+      );
+    }
+
+    if (atribuidoPara) {
+      const when = startsAt.toLocaleString('pt-BR', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+      });
+      await this.notificacoes.createAgendaAtribuicao({
+        userId: atribuidoPara.id,
+        agendamentoId: created.id,
+        titulo: created.titulo,
+        autorNome: requester.name,
+        quando: when,
+      });
+    }
+
+    if (seriesId && occurrences.length > 1) {
+      const seriesItems = await this.prisma.agendamento.findMany({
+        where: { tenantId, seriesId },
+        select: agendamentoSelect,
+      });
+      for (const item of seriesItems) await this.queueGoogleSync(item);
+    } else {
+      await this.queueGoogleSync(created);
     }
 
     return created;
@@ -508,6 +831,11 @@ export class AgendaService {
     dto: UpdateAgendamentoDto,
     requester: AuthenticatedUser,
   ) {
+    if (isAniversarioId(id)) {
+      throw new BadRequestException(
+        'Aniversários de corretores são somente leitura.',
+      );
+    }
     const tenantId = requireTenantId(requester);
     const existing = await this.prisma.agendamento.findFirst({
       where: { id, tenantId },
@@ -515,6 +843,8 @@ export class AgendaService {
         id: true,
         leadId: true,
         autorId: true,
+        atribuidoParaId: true,
+        tipo: true,
         startsAt: true,
         endsAt: true,
         solicitacaoStatus: true,
@@ -530,11 +860,36 @@ export class AgendaService {
     }
 
     await this.ensureAgendamentoAccessible(existing, requester);
-    this.assertCanModifyAgendamento(existing, requester);
+
+    const isAssigneeConcluir =
+      existing.atribuidoParaId === requester.id &&
+      existing.autorId !== requester.id &&
+      dto.status === 'concluido' &&
+      dto.titulo === undefined &&
+      dto.tipo === undefined &&
+      dto.startsAt === undefined &&
+      dto.endsAt === undefined &&
+      dto.local === undefined &&
+      dto.observacoes === undefined &&
+      dto.alvoTipo === undefined;
+
+    if (!isAssigneeConcluir) {
+      this.assertCanModifyAgendamento(existing, requester);
+    }
+
+    if (
+      existing.atribuidoParaId === requester.id &&
+      existing.autorId !== requester.id &&
+      !isAssigneeConcluir
+    ) {
+      throw new ForbiddenException(
+        'Você só pode marcar como concluída a tarefa atribuída.',
+      );
+    }
 
     if (
       existing.solicitacaoStatus === AgendamentoSolicitacaoStatus.pendente &&
-      requester.role === Role.corretor &&
+      isCorretorLike(requester.role) &&
       existing.autorId !== requester.id
     ) {
       throw new ForbiddenException(
@@ -549,6 +904,27 @@ export class AgendaService {
         ? this.parseOptionalDate(dto.endsAt)
         : existing.endsAt;
     this.assertTimeRange(startsAt, endsAt);
+
+    const nextTipo = (dto.tipo as AgendamentoTipo | undefined) ?? existing.tipo;
+    if (nextTipo !== AgendamentoTipo.bloqueio) {
+      const alsoGerenteIds =
+        existing.escopo === AgendamentoEscopo.com_gerente &&
+        isCorretorLike(requester.role)
+          ? await this.resolveGerenteIds(requester.id)
+          : [];
+      await this.assertNoOverlapWithBloqueios({
+        tenantId,
+        startsAt,
+        endsAt,
+        affectedUserIds: existing.atribuidoParaId
+          ? [existing.atribuidoParaId]
+          : [existing.autorId],
+        alsoGerenteIds,
+        adminBroadcastBlocksAll: existing.alvoTipo === AgendamentoAlvo.todos,
+        alvoEquipeId: existing.alvoEquipeId,
+        excludeId: existing.id,
+      });
+    }
 
     const data: Prisma.AgendamentoUpdateInput = {};
     if (dto.titulo !== undefined) data.titulo = dto.titulo.trim();
@@ -586,11 +962,13 @@ export class AgendaService {
         : { disconnect: true };
     }
 
-    return this.prisma.agendamento.update({
+    const updated = await this.prisma.agendamento.update({
       where: { id },
       data,
       select: agendamentoSelect,
     });
+    await this.queueGoogleSync(updated);
+    return updated;
   }
 
   async aprovar(id: string, requester: AuthenticatedUser) {
@@ -656,6 +1034,7 @@ export class AgendaService {
       );
     }
 
+    await this.queueGoogleSync(updated);
     return updated;
   }
 
@@ -711,10 +1090,20 @@ export class AgendaService {
       motivo: motivo?.trim(),
     });
 
+    await this.queueGoogleSync(updated);
     return updated;
   }
 
-  async remove(id: string, requester: AuthenticatedUser) {
+  async remove(
+    id: string,
+    requester: AuthenticatedUser,
+    seriesMode: 'one' | 'all' = 'one',
+  ) {
+    if (isAniversarioId(id)) {
+      throw new BadRequestException(
+        'Aniversários de corretores são somente leitura.',
+      );
+    }
     const tenantId = requireTenantId(requester);
     const existing = await this.prisma.agendamento.findFirst({
       where: { id, tenantId },
@@ -722,10 +1111,13 @@ export class AgendaService {
         id: true,
         leadId: true,
         autorId: true,
+        atribuidoParaId: true,
+        tipo: true,
         escopo: true,
         alvoTipo: true,
         alvoEquipeId: true,
         alvoGerenteId: true,
+        seriesId: true,
         autor: { select: { role: true } },
       },
     });
@@ -735,10 +1127,9 @@ export class AgendaService {
 
     await this.ensureAgendamentoAccessible(existing, requester);
     this.assertCanModifyAgendamento(existing, requester);
-    this.assertCanModifyAgendamento(existing, requester);
 
     if (
-      requester.role === Role.corretor &&
+      isCorretorLike(requester.role) &&
       existing.autorId !== requester.id
     ) {
       throw new ForbiddenException(
@@ -746,8 +1137,47 @@ export class AgendaService {
       );
     }
 
+    if (
+      seriesMode === 'all' &&
+      existing.seriesId &&
+      (requester.role === Role.admin ||
+        requester.role === Role.gerente ||
+        existing.autorId === requester.id)
+    ) {
+      const series = await this.prisma.agendamento.findMany({
+        where: { tenantId, seriesId: existing.seriesId },
+        select: { id: true },
+      });
+      await this.googleCalendar
+        .removeMany(series.map((item) => item.id))
+        .catch((err) =>
+          this.logger.warn(
+            `Falha ao remover série no Google Calendar: ${err instanceof Error ? err.message : err}`,
+          ),
+        );
+      await this.prisma.agendamento.deleteMany({
+        where: { tenantId, seriesId: existing.seriesId },
+      });
+      return { ok: true, deletedSeries: true };
+    }
+
+    await this.googleCalendar.removeAgendamento(id).catch((err) =>
+      this.logger.warn(
+        `Falha ao remover evento no Google Calendar: ${err instanceof Error ? err.message : err}`,
+      ),
+    );
     await this.prisma.agendamento.delete({ where: { id } });
     return { ok: true };
+  }
+
+  private async queueGoogleSync(item: AgendamentoListItem) {
+    try {
+      await this.googleCalendar.syncAgendamento(item);
+    } catch (err) {
+      this.logger.warn(
+        `Falha ao sincronizar com Google Calendar: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   private assertSomenteGerente(requester: AuthenticatedUser) {
@@ -773,7 +1203,7 @@ export class AgendaService {
       ...(await this.teamScope.leadScope(requester)),
     };
 
-    if (filterEquipeId && requester.role !== Role.corretor) {
+    if (filterEquipeId && !isCorretorLike(requester.role)) {
       const equipe = await this.prisma.equipe.findFirst({
         where: { id: filterEquipeId, tenantId },
         select: {
@@ -810,7 +1240,7 @@ export class AgendaService {
       return { lead: leadFilter };
     }
 
-    if (filterCorretorId && requester.role !== Role.corretor) {
+    if (filterCorretorId && !isCorretorLike(requester.role)) {
       const allowed = await this.teamScope.canAccessCorretor(
         requester,
         filterCorretorId,
@@ -824,7 +1254,7 @@ export class AgendaService {
 
   /**
    * Visibilidade de eventos do admin (alvoTipo != nenhum).
-   * Admin sempre vê; demais conforme todos / equipe / gerente.
+   * Admin sempre vê; demais conforme todos / equipe / gerente / gerentes.
    */
   private async buildAdminEventVisibility(
     requester: AuthenticatedUser,
@@ -839,6 +1269,7 @@ export class AgendaService {
               AgendamentoAlvo.todos,
               AgendamentoAlvo.equipe,
               AgendamentoAlvo.gerente,
+              AgendamentoAlvo.gerentes,
             ],
           },
         };
@@ -853,6 +1284,7 @@ export class AgendaService {
       return {
         OR: [
           { alvoTipo: AgendamentoAlvo.todos },
+          { alvoTipo: AgendamentoAlvo.gerentes },
           {
             alvoTipo: AgendamentoAlvo.equipe,
             alvoEquipeId: filterEquipeId,
@@ -884,7 +1316,8 @@ export class AgendaService {
         alvoTipo: AgendamentoAlvo.gerente,
         alvoGerenteId: requester.id,
       });
-    } else if (requester.role === Role.corretor) {
+      clauses.push({ alvoTipo: AgendamentoAlvo.gerentes });
+    } else if (isCorretorLike(requester.role)) {
       const user = await this.prisma.user.findUnique({
         where: { id: requester.id },
         select: { equipeId: true },
@@ -919,7 +1352,7 @@ export class AgendaService {
     const tipo = (dto.alvoTipo as AgendamentoAlvo | undefined) ?? AgendamentoAlvo.todos;
     if (tipo === AgendamentoAlvo.nenhum) {
       return {
-        alvoTipo: AgendamentoAlvo.todos,
+        alvoTipo: AgendamentoAlvo.nenhum,
         alvoEquipeId: null,
         alvoGerenteId: null,
       };
@@ -955,9 +1388,11 @@ export class AgendaService {
     const tipo =
       (dto.alvoTipo as AgendamentoAlvo | undefined) ?? existing.alvoTipo;
     if (tipo === AgendamentoAlvo.nenhum) {
-      throw new BadRequestException(
-        'Eventos do admin devem ter público: todos, equipe ou gerente.',
-      );
+      return {
+        alvoTipo: AgendamentoAlvo.nenhum,
+        alvoEquipeId: null,
+        alvoGerenteId: null,
+      };
     }
 
     const equipeId =
@@ -990,6 +1425,14 @@ export class AgendaService {
     if (tipo === AgendamentoAlvo.todos) {
       return {
         alvoTipo: AgendamentoAlvo.todos,
+        alvoEquipeId: null,
+        alvoGerenteId: null,
+      };
+    }
+
+    if (tipo === AgendamentoAlvo.gerentes) {
+      return {
+        alvoTipo: AgendamentoAlvo.gerentes,
         alvoEquipeId: null,
         alvoGerenteId: null,
       };
@@ -1040,7 +1483,9 @@ export class AgendaService {
     item: {
       leadId: string | null;
       autorId: string;
+      atribuidoParaId?: string | null;
       escopo?: AgendamentoEscopo;
+      tipo?: AgendamentoTipo;
       alvoTipo?: AgendamentoAlvo;
       alvoEquipeId?: string | null;
       alvoGerenteId?: string | null;
@@ -1055,6 +1500,12 @@ export class AgendaService {
       if (requester.role === Role.admin) return;
       if (alvoTipo === AgendamentoAlvo.todos) return;
       if (
+        alvoTipo === AgendamentoAlvo.gerentes &&
+        requester.role === Role.gerente
+      ) {
+        return;
+      }
+      if (
         alvoTipo === AgendamentoAlvo.gerente &&
         item.alvoGerenteId === requester.id
       ) {
@@ -1068,7 +1519,7 @@ export class AgendaService {
           });
           if (equipe) return;
         }
-        if (requester.role === Role.corretor) {
+        if (isCorretorLike(requester.role)) {
           const user = await this.prisma.user.findUnique({
             where: { id: requester.id },
             select: { equipeId: true },
@@ -1077,6 +1528,10 @@ export class AgendaService {
         }
       }
       throw new NotFoundException('Agendamento não encontrado.');
+    }
+
+    if (item.atribuidoParaId === requester.id) {
+      return;
     }
 
     const autorRole =
@@ -1088,6 +1543,24 @@ export class AgendaService {
         })
       )?.role;
 
+    // Bloqueio do gerente: visível para a equipe.
+    if (
+      item.tipo === AgendamentoTipo.bloqueio &&
+      autorRole === Role.gerente &&
+      isCorretorLike(requester.role)
+    ) {
+      const equipes = await this.prisma.equipe.findMany({
+        where: { gerenteId: item.autorId, tenantId },
+        select: {
+          membros: {
+            where: { id: requester.id },
+            select: { id: true },
+          },
+        },
+      });
+      if (equipes.some((e) => e.membros.length > 0)) return;
+    }
+
     // Compromissos legados criados por admin sem alvo: visíveis para todos.
     if (autorRole === Role.admin) {
       return;
@@ -1097,7 +1570,13 @@ export class AgendaService {
     if (item.escopo === AgendamentoEscopo.pessoal) {
       if (
         item.autorId === requester.id ||
-        requester.role === Role.admin
+        requester.role === Role.admin ||
+        (requester.role === Role.gerente &&
+          item.atribuidoParaId &&
+          (await this.teamScope.canAccessCorretor(
+            requester,
+            item.atribuidoParaId,
+          )))
       ) {
         return;
       }
@@ -1114,6 +1593,143 @@ export class AgendaService {
     }
 
     throw new NotFoundException('Agendamento não encontrado.');
+  }
+
+  /**
+   * Aniversários virtuais da equipe (admin, gerente, analista, corretor)
+   * na agenda do admin. Projetados no intervalo from/to — não são persistidos.
+   */
+  private async buildUsuarioAniversarios(opts: {
+    tenantId: string;
+    requester: AuthenticatedUser;
+    from: Date | null;
+    to: Date | null;
+    tipo?: AgendamentoTipo;
+    status?: AgendamentoStatus;
+    equipeId?: string;
+    corretorId?: string;
+  }): Promise<AgendamentoListItem[]> {
+    const { requester, from, to } = opts;
+    if (requester.role !== Role.admin) return [];
+    if (!from || !to) return [];
+    if (opts.tipo && opts.tipo !== AgendamentoTipo.outro) return [];
+    if (opts.status && opts.status !== AgendamentoStatus.agendado) return [];
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return [];
+    if (from.getTime() > to.getTime()) return [];
+
+    const roleLabel: Record<Role, string> = {
+      [Role.admin]: 'Administrador',
+      [Role.gerente]: 'Gerente',
+      [Role.analista]: 'Analista',
+      [Role.treinee]: 'Treinee',
+      [Role.corretor]: 'Corretor',
+      [Role.financeiro]: 'Financeiro',
+      [Role.assistente]: 'Assistente',
+      [Role.super_admin]: 'Plataforma',
+    };
+
+    // Filtro por corretor específico: só esse usuário.
+    // Filtro por equipe: membros da equipe + gerente da equipe.
+    const equipeOr = opts.equipeId
+      ? {
+          OR: [
+            { equipeId: opts.equipeId },
+            { equipeGerenciada: { id: opts.equipeId } },
+          ],
+        }
+      : {};
+
+    const usuarios = await this.prisma.user.findMany({
+      where: {
+        tenantId: opts.tenantId,
+        role: {
+          in: [Role.admin, Role.gerente, Role.analista, Role.corretor, Role.treinee],
+        },
+        status: UserStatus.ativo,
+        dataNascimento: { not: null },
+        ...(opts.corretorId ? { id: opts.corretorId } : {}),
+        ...equipeOr,
+      },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        dataNascimento: true,
+        equipeId: true,
+        equipe: { select: { id: true, name: true } },
+        equipeGerenciada: { select: { id: true, name: true } },
+      },
+    });
+    if (usuarios.length === 0) return [];
+
+    const years = new Set<number>();
+    // Usa partes UTC: dataNascimento é salva ao meio-dia UTC.
+    const fromY = from.getUTCFullYear();
+    const toY = to.getUTCFullYear();
+    for (let y = fromY; y <= toY; y += 1) years.add(y);
+    // Janela que cruza virada do ano com from/to em UTC.
+    years.add(fromY - 1);
+    years.add(toY + 1);
+
+    const now = new Date();
+    const items: AgendamentoListItem[] = [];
+    for (const usuario of usuarios) {
+      const nasc = usuario.dataNascimento;
+      if (!nasc) continue;
+      const month = nasc.getUTCMonth();
+      const day = nasc.getUTCDate();
+      const perfil = roleLabel[usuario.role] ?? 'Usuário';
+      const equipe =
+        usuario.equipe ?? usuario.equipeGerenciada ?? null;
+      for (const year of years) {
+        // 09:00 BRT = 12:00 UTC — cai na grade diária da agenda.
+        const startsAt = new Date(Date.UTC(year, month, day, 12, 0, 0));
+        if (startsAt < from || startsAt > to) continue;
+        const dayKey = startsAt.toISOString().slice(0, 10);
+        items.push({
+          id: `${ANIVERSARIO_ID_PREFIX}${usuario.id}:${dayKey}`,
+          tenantId: opts.tenantId,
+          leadId: null,
+          autorId: usuario.id,
+          atribuidoParaId: null,
+          titulo: `Aniversário — ${usuario.name}`,
+          tipo: AgendamentoTipo.outro,
+          status: AgendamentoStatus.agendado,
+          escopo: AgendamentoEscopo.pessoal,
+          solicitacaoStatus: AgendamentoSolicitacaoStatus.nenhuma,
+          alvoTipo: AgendamentoAlvo.todos,
+          alvoEquipeId: equipe?.id ?? usuario.equipeId,
+          alvoGerenteId: null,
+          seriesId: null,
+          recurrenceFreq: AgendamentoRecurrenceFreq.unica,
+          recurrenceDays: [],
+          recurrenceUntil: null,
+          startsAt,
+          endsAt: null,
+          local: null,
+          observacoes: `Aniversário · ${perfil} (somente leitura).`,
+          funilStage: null,
+          motivoRecusa: null,
+          aprovadoAt: null,
+          createdAt: now,
+          updatedAt: now,
+          autor: {
+            id: usuario.id,
+            name: usuario.name,
+            role: usuario.role,
+          },
+          atribuidoPara: null,
+          aprovadoPor: null,
+          alvoEquipe: equipe
+            ? { id: equipe.id, name: equipe.name }
+            : null,
+          alvoGerente: null,
+          lead: null,
+          isAniversario: true,
+        });
+      }
+    }
+    return items;
   }
 
   /** Compromissos do admin só podem ser alterados por admin. */
@@ -1203,6 +1819,430 @@ export class AgendaService {
     return new Date(value);
   }
 
+  private async resolveAgendaViewTarget(
+    userId: string,
+    requester: AuthenticatedUser,
+  ): Promise<{
+    id: string;
+    role: Role;
+    equipeId: string | null;
+  } | null> {
+    if (requester.role !== Role.admin && requester.role !== Role.gerente) {
+      return null;
+    }
+
+    const tenantId = requireTenantId(requester);
+    const target = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        tenantId,
+        status: UserStatus.ativo,
+        role: {
+          in:
+            requester.role === Role.admin
+              ? [Role.corretor, Role.treinee, Role.gerente]
+              : [Role.corretor, Role.treinee],
+        },
+      },
+      select: { id: true, role: true, equipeId: true },
+    });
+    if (!target) {
+      throw new ForbiddenException(
+        'Você não pode visualizar a agenda deste usuário.',
+      );
+    }
+
+    if (isCorretorLike(target.role)) {
+      const allowed = await this.teamScope.canAccessCorretor(
+        requester,
+        target.id,
+      );
+      if (!allowed) {
+        throw new ForbiddenException(
+          'Você não pode visualizar a agenda deste corretor.',
+        );
+      }
+    }
+
+    return target;
+  }
+
+  private async buildAdminEventVisibilityForUser(user: {
+    id: string;
+    role: Role;
+    equipeId: string | null;
+  }): Promise<Prisma.AgendamentoWhereInput | null> {
+    const clauses: Prisma.AgendamentoWhereInput[] = [
+      { alvoTipo: AgendamentoAlvo.todos },
+    ];
+
+    if (user.role === Role.gerente) {
+      const equipe = await this.prisma.equipe.findFirst({
+        where: { gerenteId: user.id },
+        select: { id: true },
+      });
+      if (equipe) {
+        clauses.push({
+          alvoTipo: AgendamentoAlvo.equipe,
+          alvoEquipeId: equipe.id,
+        });
+      }
+      clauses.push({
+        alvoTipo: AgendamentoAlvo.gerente,
+        alvoGerenteId: user.id,
+      });
+      clauses.push({ alvoTipo: AgendamentoAlvo.gerentes });
+    } else if (isCorretorLike(user.role) && user.equipeId) {
+      clauses.push({
+        alvoTipo: AgendamentoAlvo.equipe,
+        alvoEquipeId: user.equipeId,
+      });
+    }
+
+    return { OR: clauses };
+  }
+
+  private async buildGerenteBloqueioVisibilityForCorretor(
+    corretorId: string,
+  ): Promise<Prisma.AgendamentoWhereInput | null> {
+    const gerenteIds = await this.resolveGerenteIds(corretorId);
+    if (gerenteIds.length === 0) return null;
+    return {
+      tipo: AgendamentoTipo.bloqueio,
+      alvoTipo: AgendamentoAlvo.nenhum,
+      status: { not: AgendamentoStatus.cancelado },
+      autorId: { in: gerenteIds },
+    };
+  }
+
+  private async buildGerenteBloqueioVisibility(
+    requester: AuthenticatedUser,
+    filterCorretorId?: string,
+  ): Promise<Prisma.AgendamentoWhereInput | null> {
+    const tenantId = requireTenantId(requester);
+
+    if (isCorretorLike(requester.role)) {
+      const gerenteIds = await this.resolveGerenteIds(requester.id);
+      if (gerenteIds.length === 0) return null;
+      return {
+        tipo: AgendamentoTipo.bloqueio,
+        alvoTipo: AgendamentoAlvo.nenhum,
+        status: { not: AgendamentoStatus.cancelado },
+        autorId: { in: gerenteIds },
+      };
+    }
+
+    if (requester.role === Role.gerente) {
+      // Próprios bloqueios já entram via autorId; inclui bloqueios ao filtrar corretor da equipe.
+      if (!filterCorretorId) return null;
+      const allowed = await this.teamScope.canAccessCorretor(
+        requester,
+        filterCorretorId,
+      );
+      if (!allowed) return null;
+      return {
+        tipo: AgendamentoTipo.bloqueio,
+        alvoTipo: AgendamentoAlvo.nenhum,
+        status: { not: AgendamentoStatus.cancelado },
+        autorId: requester.id,
+      };
+    }
+
+    if (requester.role === Role.admin && filterCorretorId) {
+      const gerenteIds = await this.resolveGerenteIds(filterCorretorId);
+      if (gerenteIds.length === 0) return null;
+      return {
+        tipo: AgendamentoTipo.bloqueio,
+        alvoTipo: AgendamentoAlvo.nenhum,
+        status: { not: AgendamentoStatus.cancelado },
+        autorId: { in: gerenteIds },
+        tenantId,
+      };
+    }
+
+    return null;
+  }
+
+  private async resolveAtribuidoPara(
+    userId: string,
+    requester: AuthenticatedUser,
+  ) {
+    if (requester.role !== Role.admin && requester.role !== Role.gerente) {
+      throw new ForbiddenException(
+        'Apenas admin e gerente podem atribuir tarefas na agenda.',
+      );
+    }
+
+    const tenantId = requireTenantId(requester);
+    const allowedRoles =
+      requester.role === Role.admin
+        ? [Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.analista]
+        : [Role.corretor, Role.treinee];
+
+    const target = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        tenantId,
+        role: { in: allowedRoles },
+        status: UserStatus.ativo,
+      },
+      select: { id: true, name: true, role: true },
+    });
+    if (!target) {
+      throw new BadRequestException(
+        requester.role === Role.admin
+          ? 'Usuário não encontrado.'
+          : 'Corretor não encontrado.',
+      );
+    }
+
+    if (requester.role === Role.gerente) {
+      const allowed = await this.teamScope.canAccessCorretor(
+        requester,
+        target.id,
+      );
+      if (!allowed) {
+        throw new ForbiddenException(
+          'Você não pode atribuir tarefas a este corretor.',
+        );
+      }
+    }
+
+    return target;
+  }
+
+  private expandRecurrenceOccurrences(opts: {
+    startsAt: Date;
+    endsAt: Date;
+    freq: AgendamentoRecurrenceFreq;
+    days: number[];
+    until: Date | null;
+  }): Array<{ startsAt: Date; endsAt: Date }> {
+    const durationMs = Math.max(
+      0,
+      opts.endsAt.getTime() - opts.startsAt.getTime(),
+    );
+
+    if (opts.freq === AgendamentoRecurrenceFreq.unica) {
+      return [{ startsAt: opts.startsAt, endsAt: opts.endsAt }];
+    }
+
+    if (!opts.until) {
+      throw new BadRequestException(
+        'Informe a data final da recorrência do bloqueio.',
+      );
+    }
+
+    const untilEnd = new Date(opts.until);
+    untilEnd.setHours(23, 59, 59, 999);
+
+    if (untilEnd.getTime() < opts.startsAt.getTime()) {
+      throw new BadRequestException(
+        'A data final da recorrência deve ser posterior ao início.',
+      );
+    }
+
+    const out: Array<{ startsAt: Date; endsAt: Date }> = [];
+
+    if (opts.freq === AgendamentoRecurrenceFreq.semanal) {
+      const days =
+        opts.days.length > 0 ? opts.days : [opts.startsAt.getDay()];
+      const cursor = new Date(opts.startsAt);
+      while (
+        out.length < MAX_RECURRENCE_OCCURRENCES &&
+        cursor.getTime() <= untilEnd.getTime()
+      ) {
+        if (days.includes(cursor.getDay())) {
+          const startsAt = new Date(cursor);
+          out.push({
+            startsAt,
+            endsAt: new Date(startsAt.getTime() + durationMs),
+          });
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    } else if (opts.freq === AgendamentoRecurrenceFreq.mensal) {
+      const cursor = new Date(opts.startsAt);
+      while (
+        out.length < MAX_RECURRENCE_OCCURRENCES &&
+        cursor.getTime() <= untilEnd.getTime()
+      ) {
+        const startsAt = new Date(cursor);
+        out.push({
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + durationMs),
+        });
+        cursor.setMonth(cursor.getMonth() + 1);
+      }
+    }
+
+    if (out.length === 0) {
+      throw new BadRequestException(
+        'Nenhuma ocorrência gerada para a recorrência informada.',
+      );
+    }
+
+    return out;
+  }
+
+  private async assertNoOverlapWithBloqueios(opts: {
+    tenantId: string;
+    startsAt: Date;
+    endsAt: Date | null;
+    affectedUserIds: string[];
+    alsoGerenteIds: string[];
+    adminBroadcastBlocksAll?: boolean;
+    alvoEquipeId?: string | null;
+    excludeId?: string;
+  }) {
+    const end = opts.endsAt ?? opts.startsAt;
+    const candidatos = await this.prisma.agendamento.findMany({
+      where: {
+        tenantId: opts.tenantId,
+        tipo: AgendamentoTipo.bloqueio,
+        status: { not: AgendamentoStatus.cancelado },
+        ...(opts.excludeId ? { id: { not: opts.excludeId } } : {}),
+        startsAt: { lt: end },
+      },
+      select: {
+        id: true,
+        titulo: true,
+        startsAt: true,
+        endsAt: true,
+        autorId: true,
+        alvoTipo: true,
+        alvoEquipeId: true,
+        alvoGerenteId: true,
+        autor: { select: { role: true } },
+      },
+      take: 500,
+    });
+
+    for (const b of candidatos) {
+      const bEnd = b.endsAt ?? b.startsAt;
+      if (bEnd.getTime() <= opts.startsAt.getTime()) continue;
+      if (
+        !this.rangesOverlap(opts.startsAt, end, b.startsAt, bEnd)
+      ) {
+        continue;
+      }
+
+      if (opts.adminBroadcastBlocksAll) {
+        throw new BadRequestException(
+          `Horário bloqueado ("${b.titulo}"). Escolha outro horário.`,
+        );
+      }
+
+      const applies = await this.bloqueioAppliesToUsers(b, {
+        userIds: opts.affectedUserIds,
+        gerenteIdsExtra: opts.alsoGerenteIds,
+        alvoEquipeId: opts.alvoEquipeId,
+      });
+      if (applies) {
+        throw new BadRequestException(
+          `Horário bloqueado ("${b.titulo}"). Escolha outro horário.`,
+        );
+      }
+    }
+  }
+
+  private rangesOverlap(
+    aStart: Date,
+    aEnd: Date,
+    bStart: Date,
+    bEnd: Date,
+  ) {
+    return (
+      aStart.getTime() < bEnd.getTime() && aEnd.getTime() > bStart.getTime()
+    );
+  }
+
+  private async bloqueioAppliesToUsers(
+    bloqueio: {
+      autorId: string;
+      alvoTipo: AgendamentoAlvo;
+      alvoEquipeId: string | null;
+      alvoGerenteId: string | null;
+      autor: { role: Role };
+    },
+    opts: {
+      userIds: string[];
+      gerenteIdsExtra: string[];
+      alvoEquipeId?: string | null;
+    },
+  ): Promise<boolean> {
+    const users = new Set(
+      [...opts.userIds, ...opts.gerenteIdsExtra].filter(Boolean),
+    );
+    if (users.size === 0) return false;
+
+    if (bloqueio.alvoTipo === AgendamentoAlvo.todos) {
+      return true;
+    }
+
+    if (bloqueio.alvoTipo === AgendamentoAlvo.gerente) {
+      return (
+        bloqueio.alvoGerenteId != null && users.has(bloqueio.alvoGerenteId)
+      );
+    }
+
+    if (bloqueio.alvoTipo === AgendamentoAlvo.gerentes) {
+      if (opts.gerenteIdsExtra.some((id) => users.has(id))) return true;
+      const count = await this.prisma.user.count({
+        where: {
+          id: { in: [...users] },
+          role: Role.gerente,
+        },
+      });
+      return count > 0;
+    }
+
+    if (
+      bloqueio.alvoTipo === AgendamentoAlvo.equipe &&
+      bloqueio.alvoEquipeId
+    ) {
+      if (
+        opts.alvoEquipeId &&
+        opts.alvoEquipeId === bloqueio.alvoEquipeId
+      ) {
+        return true;
+      }
+      const equipe = await this.prisma.equipe.findFirst({
+        where: { id: bloqueio.alvoEquipeId },
+        select: {
+          gerenteId: true,
+          membros: { select: { id: true } },
+        },
+      });
+      if (!equipe) return false;
+      const memberIds = new Set([
+        equipe.gerenteId,
+        ...equipe.membros.map((m) => m.id),
+      ]);
+      return [...users].some((id) => memberIds.has(id));
+    }
+
+    // Bloqueio pessoal do gerente (visível/aplicável à equipe).
+    if (
+      bloqueio.alvoTipo === AgendamentoAlvo.nenhum &&
+      bloqueio.autor.role === Role.gerente
+    ) {
+      if (users.has(bloqueio.autorId)) return true;
+      const equipes = await this.prisma.equipe.findMany({
+        where: { gerenteId: bloqueio.autorId },
+        select: {
+          membros: { select: { id: true } },
+        },
+      });
+      const memberIds = new Set(
+        equipes.flatMap((e) => e.membros.map((m) => m.id)),
+      );
+      return [...users].some((id) => memberIds.has(id));
+    }
+
+    return false;
+  }
+
   private assertTimeRange(startsAt: Date, endsAt: Date | null) {
     if (Number.isNaN(startsAt.getTime())) {
       throw new BadRequestException('Data/hora de início inválida.');
@@ -1224,9 +2264,20 @@ export class AgendaService {
     tenantId: string,
   ) {
     const stageNovo = 'visita-agendada';
+    const now = new Date();
+    const timing = await this.monitoramento.stageChangeData(
+      tenantId,
+      stageNovo,
+      now,
+    );
     await this.prisma.lead.update({
       where: { id: leadId },
-      data: { stage: stageNovo },
+      data: {
+        stage: stageNovo,
+        ...timing,
+        lastAtividadeAt: now,
+        lastTriagemAt: now,
+      },
     });
 
     const [fromLabel, toLabel] = await Promise.all([
