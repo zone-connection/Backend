@@ -12,10 +12,11 @@ import {
   Min,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { HEX_COR_REGEX } from '../../common/utils/cor';
-import { toDateOnly } from './create-empreendimento.dto';
+import { toDateOnly, EmpreendimentoVitrineDto } from './create-empreendimento.dto';
 
 function emptyToNull({ value }: { value: unknown }) {
   if (value === '') return null;
@@ -134,4 +135,9 @@ export class UpdateEmpreendimentoDto {
   @IsOptional()
   @IsBoolean()
   ativo?: boolean;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EmpreendimentoVitrineDto)
+  vitrine?: EmpreendimentoVitrineDto | null;
 }

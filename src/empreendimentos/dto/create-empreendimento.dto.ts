@@ -12,6 +12,7 @@ import {
   Min,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { HEX_COR_REGEX } from '../../common/utils/cor';
@@ -141,4 +142,53 @@ export class CreateEmpreendimentoDto {
   @IsOptional()
   @IsBoolean()
   ativo?: boolean;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EmpreendimentoVitrineDto)
+  vitrine?: EmpreendimentoVitrineDto | null;
+}
+
+export class EmpreendimentoVitrineDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  headline?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8000)
+  descricao?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(160, { each: true })
+  diferenciais?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(80, { each: true })
+  lazer?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  numero?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  bairro?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  estado?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(12)
+  cep?: string | null;
 }

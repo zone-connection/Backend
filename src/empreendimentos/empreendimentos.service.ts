@@ -21,6 +21,21 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma, Role } from "@prisma/client";
+import { normalizeEmpreendimentoVitrine } from "./empreendimento-vitrine";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function slugifyPublico(value: string) {
+  const slug = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return slug || "empreendimento";
+}
 
 const MATCHING_FIELDS = [
   "cidade",
@@ -46,6 +61,7 @@ const empreendimentoSelect = {
   previsaoEntrega: true,
   tags: true,
   observacao: true,
+  vitrine: true,
   quartos: true,
   banheiros: true,
   vagas: true,
@@ -109,24 +125,61 @@ export class EmpreendimentosService {
 
   /** Ficha pública para compartilhar (sem dados internos do CRM). */
   async findPublic(id: string) {
+    if (!UUID_RE.test(id)) {
+      throw new NotFoundException("Empreendimento não encontrado.");
+    }
     const item = await this.prisma.empreendimento.findFirst({
       where: { id },
-      select: {
-        ...empreendimentoSelect,
-        tenant: {
-          select: {
-            name: true,
-            logoUrl: true,
-            telefone: true,
-            primaryColor: true,
-          },
-        },
-      },
+      select: this.publicSelect(),
     });
     if (!item) throw new NotFoundException("Empreendimento não encontrado.");
+    return this.presentPublic(item);
+  }
+
+  async findPublicBySlug(tenantSlug: string, slug: string) {
+    const tenant = await this.prisma.tenant.findFirst({
+      where: { slug: tenantSlug },
+      select: { id: true },
+    });
+    if (!tenant) throw new NotFoundException("Empreendimento não encontrado.");
+    const rows = await this.prisma.empreendimento.findMany({
+      where: { tenantId: tenant.id },
+      select: { id: true, nome: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const hit = rows.find((row) => slugifyPublico(row.nome) === slug);
+    if (!hit) throw new NotFoundException("Empreendimento não encontrado.");
+    return this.findPublic(hit.id);
+  }
+
+  private publicSelect() {
+    return {
+      ...empreendimentoSelect,
+      tenant: {
+        select: {
+          name: true,
+          slug: true,
+          logoUrl: true,
+          telefone: true,
+          primaryColor: true,
+        },
+      },
+    } as const;
+  }
+
+  private presentPublic(
+    item: EmpreendimentoRow & {
+      tenant: {
+        name: string;
+        slug: string;
+        logoUrl: string | null;
+        telefone: string;
+        primaryColor: string | null;
+      };
+    },
+  ) {
     const stored = resolveEmpreendimentoImages(item);
     return {
-      id: item.id,
       nome: item.nome,
       cidade: item.cidade,
       endereco: item.endereco,
@@ -143,7 +196,10 @@ export class EmpreendimentosService {
       imagens: stored.map((image) => image.url),
       localidade: item.localidade?.nome ?? null,
       construtora: item.construtora?.nome ?? null,
+      vitrine: normalizeEmpreendimentoVitrine(item.vitrine),
       imobiliaria: item.tenant.name,
+      tenantSlug: item.tenant.slug,
+      slug: slugifyPublico(item.nome),
       logoUrl: item.tenant.logoUrl,
       telefone: item.tenant.telefone || null,
       cor: item.tenant.primaryColor || item.cor,
@@ -191,6 +247,7 @@ export class EmpreendimentosService {
         previsaoEntrega: this.toDate(dto.previsaoEntrega),
         tags: this.normalizeTags(dto.tags),
         observacao: dto.observacao?.trim() || null,
+        vitrine: this.toVitrineJson(dto.vitrine),
         quartos: dto.quartos ?? null,
         banheiros: dto.banheiros ?? null,
         vagas: dto.vagas ?? null,
@@ -271,6 +328,9 @@ export class EmpreendimentosService {
           ? { externalUrl: dto.externalUrl?.trim() || null }
           : {}),
         ...(dto.ativo !== undefined ? { ativo: dto.ativo } : {}),
+        ...(dto.vitrine !== undefined
+          ? { vitrine: this.toVitrineJson(dto.vitrine) }
+          : {}),
       },
       select: empreendimentoSelect,
     });
@@ -396,9 +456,10 @@ export class EmpreendimentosService {
 
   private present(item: EmpreendimentoRow) {
     const stored = resolveEmpreendimentoImages(item);
-    const { tenantId: _tenantId, previsaoEntrega, ...rest } = item;
+    const { tenantId: _tenantId, previsaoEntrega, vitrine, ...rest } = item;
     return {
       ...rest,
+      vitrine: normalizeEmpreendimentoVitrine(vitrine),
       previsaoEntrega: previsaoEntrega
         ? previsaoEntrega.toISOString().slice(0, 10)
         : null,
@@ -409,6 +470,11 @@ export class EmpreendimentosService {
       imagens: stored.map((image) => image.url),
       imagemUrl: stored[0]?.url ?? null,
     };
+  }
+
+  private toVitrineJson(value: unknown) {
+    const next = normalizeEmpreendimentoVitrine(value);
+    return next === null ? Prisma.JsonNull : next;
   }
 
   private normalizeTags(tags?: string[] | null) {

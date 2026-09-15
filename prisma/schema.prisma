@@ -839,6 +839,8 @@ model Empreendimento {
   previsaoEntrega DateTime? @db.Date
   tags        String[] @default([])
   observacao  String?
+  /// Texto e detalhes da página pública de compartilhamento.
+  vitrine     Json?
   quartos     Int?
   banheiros   Int?
   /// Vagas de garagem (opcional) — usado no matching.
