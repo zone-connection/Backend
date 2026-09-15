@@ -21,6 +21,7 @@ import {
 } from "../common/utils/documentacao-status";
 import { resolveFinanceiroTenantId } from "../common/utils/tenant";
 import { isCorretorLike } from "../common/utils/roles";
+import { corretorTemVendaVinculada } from "../common/utils/corretor-venda";
 import { hasUserModule } from "../common/utils/user-permissions";
 import { DocumentacaoService } from "../documentacao/documentacao.service";
 import { LeadsService } from "../leads/leads.service";
@@ -1537,7 +1538,7 @@ export class FinanceiroService {
   // ─── Comissões ───────────────────────────────────────────────
 
   async listVendasElegiveis(requester: AuthenticatedUser) {
-    this.assertComissaoAccess(requester);
+    await this.assertComissaoAccess(requester);
     const tenantId = resolveFinanceiroTenantId(requester);
     const corretorSelect = {
       id: true,
@@ -1590,7 +1591,7 @@ export class FinanceiroService {
   }
 
   async listComissoes(requester: AuthenticatedUser) {
-    this.assertComissaoAccess(requester);
+    await this.assertComissaoAccess(requester);
     const tenantId = resolveFinanceiroTenantId(requester);
     const where: Prisma.FinanceiroComissaoWhereInput = { tenantId };
     if (isCorretorLike(requester.role)) where.corretorId = requester.id;
@@ -4519,7 +4520,7 @@ export class FinanceiroService {
     return row;
   }
 
-  private assertComissaoAccess(requester: AuthenticatedUser) {
+  private async assertComissaoAccess(requester: AuthenticatedUser) {
     if (
       requester.role === Role.admin ||
       requester.role === Role.gerente ||
@@ -4530,6 +4531,20 @@ export class FinanceiroService {
       hasUserModule(requester.role, requester.permissions, "comissao") ||
       hasUserModule(requester.role, requester.permissions, "financeiro")
     ) {
+      if (isCorretorLike(requester.role)) {
+        const tenantId = requester.tenantId;
+        if (
+          !tenantId ||
+          !(await corretorTemVendaVinculada(this.prisma, {
+            tenantId,
+            userId: requester.id,
+          }))
+        ) {
+          throw new ForbiddenException(
+            "Comissões ficam disponíveis quando houver uma venda vinculada.",
+          );
+        }
+      }
       return;
     }
     throw new ForbiddenException("Você não possui acesso às comissões.");

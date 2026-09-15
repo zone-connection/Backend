@@ -40,6 +40,8 @@ import { JwtPayload } from './strategies/jwt.strategy';
 import { UpdateAppearanceDto } from './dto/update-appearance.dto';
 import { sanitizeUserPermissions } from '../common/utils/user-permissions';
 import { applyPlanoModules } from '../tenants/tenant-plan';
+import { isCorretorLike } from '../common/utils/roles';
+import { corretorTemVendaVinculada } from '../common/utils/corretor-venda';
 
 export interface AuthTokens {
   accessToken: string;
@@ -48,6 +50,7 @@ export interface AuthTokens {
 
 export type AuthUserPayload = PublicUser & {
   tenant: TenantBranding | null;
+  temVendaVinculada?: boolean;
 };
 
 export interface AuthResult extends AuthTokens {
@@ -266,6 +269,7 @@ export class AuthService {
     const { tenant, ...rest } = user;
     return {
       ...rest,
+      temVendaVinculada: await this.resolveTemVendaVinculada(rest),
       tenant: tenant
         ? { ...tenant, modules: applyPlanoModules(tenant.plano, tenant.modules) }
         : null,
@@ -607,9 +611,22 @@ export class AuthService {
       lastLoginAt: user.lastLoginAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+      temVendaVinculada: await this.resolveTemVendaVinculada(user),
       tenant: tenant
         ? { ...tenant, modules: applyPlanoModules(tenant.plano, tenant.modules) }
         : null,
     };
+  }
+
+  private async resolveTemVendaVinculada(user: {
+    id: string;
+    role: Role;
+    tenantId: string | null;
+  }) {
+    if (!isCorretorLike(user.role) || !user.tenantId) return true;
+    return corretorTemVendaVinculada(this.prisma, {
+      tenantId: user.tenantId,
+      userId: user.id,
+    });
   }
 }
