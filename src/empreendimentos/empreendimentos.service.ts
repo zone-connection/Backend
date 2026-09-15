@@ -161,6 +161,10 @@ export class EmpreendimentosService {
           slug: true,
           logoUrl: true,
           telefone: true,
+          email: true,
+          endereco: true,
+          cidade: true,
+          creci: true,
           primaryColor: true,
         },
       },
@@ -174,6 +178,10 @@ export class EmpreendimentosService {
         slug: string;
         logoUrl: string | null;
         telefone: string;
+        email: string;
+        endereco: string;
+        cidade: string;
+        creci: string;
         primaryColor: string | null;
       };
     },
@@ -202,6 +210,10 @@ export class EmpreendimentosService {
       slug: slugifyPublico(item.nome),
       logoUrl: item.tenant.logoUrl,
       telefone: item.tenant.telefone || null,
+      email: item.tenant.email || null,
+      imobiliariaEndereco: item.tenant.endereco || null,
+      imobiliariaCidade: item.tenant.cidade || null,
+      creci: item.tenant.creci || null,
       cor: item.tenant.primaryColor || item.cor,
     };
   }
