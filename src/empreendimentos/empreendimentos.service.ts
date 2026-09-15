@@ -107,6 +107,49 @@ export class EmpreendimentosService {
     return presented;
   }
 
+  /** Ficha pública para compartilhar (sem dados internos do CRM). */
+  async findPublic(id: string) {
+    const item = await this.prisma.empreendimento.findFirst({
+      where: { id },
+      select: {
+        ...empreendimentoSelect,
+        tenant: {
+          select: {
+            name: true,
+            logoUrl: true,
+            telefone: true,
+            primaryColor: true,
+          },
+        },
+      },
+    });
+    if (!item) throw new NotFoundException("Empreendimento não encontrado.");
+    const stored = resolveEmpreendimentoImages(item);
+    return {
+      id: item.id,
+      nome: item.nome,
+      cidade: item.cidade,
+      endereco: item.endereco,
+      tipo: item.tipo,
+      status: item.status,
+      previsaoEntrega: item.previsaoEntrega
+        ? item.previsaoEntrega.toISOString().slice(0, 10)
+        : null,
+      quartos: item.quartos,
+      banheiros: item.banheiros,
+      vagas: item.vagas,
+      valorReferencia: item.valorReferencia,
+      areaM2: item.areaM2,
+      imagens: stored.map((image) => image.url),
+      localidade: item.localidade?.nome ?? null,
+      construtora: item.construtora?.nome ?? null,
+      imobiliaria: item.tenant.name,
+      logoUrl: item.tenant.logoUrl,
+      telefone: item.tenant.telefone || null,
+      cor: item.tenant.primaryColor || item.cor,
+    };
+  }
+
   private async findRow(id: string, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
     const item = await this.prisma.empreendimento.findFirst({
