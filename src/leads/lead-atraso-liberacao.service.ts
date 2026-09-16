@@ -15,7 +15,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.service';
 import {
-  atrasoStartedAtMs,
+  atrasoElegivelParaLiberacao,
   isEtapaTerminal,
   prazoToMs,
 } from './monitoramento/prazo.util';
@@ -233,15 +233,18 @@ export class LeadAtrasoLiberacaoService implements OnModuleInit, OnModuleDestroy
       const ids: string[] = [];
       for (const lead of leads) {
         const etapa = ctx.etapasBySlug.get(lead.stage);
-        const started = atrasoStartedAtMs({
-          nowMs,
-          terminal: isEtapaTerminal(etapa?.papel),
-          prazoDueAt: lead.prazoDueAt,
-          lastMovementAt: lead.lastMovementAt,
-          inatividadeMs: ctx.inatividadeMs,
-        });
-        if (started == null) continue;
-        if (nowMs - started < delayMs) continue;
+        if (
+          !atrasoElegivelParaLiberacao({
+            nowMs,
+            terminal: isEtapaTerminal(etapa?.papel),
+            prazoDueAt: lead.prazoDueAt,
+            lastMovementAt: lead.lastMovementAt,
+            inatividadeMs: ctx.inatividadeMs,
+            delayMs,
+          })
+        ) {
+          continue;
+        }
         ids.push(lead.id);
       }
 

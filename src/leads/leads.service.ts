@@ -475,7 +475,12 @@ export class LeadsService {
         offset += aloc.quantidade;
         await tx.lead.updateMany({
           where: { id: { in: slice.map((l) => l.id) } },
-          data: { equipeId: aloc.equipeId, origemAtrasoLiberacao: null },
+          data: {
+            equipeId: aloc.equipeId,
+            origemAtrasoLiberacao: null,
+            atrasoLiberadoAt: null,
+            lastMovementAt: new Date(),
+          },
         });
         const eq = equipes.find((e) => e.id === aloc.equipeId)!;
         resultado.push({
@@ -585,6 +590,10 @@ export class LeadsService {
               corretorId: corretor.id,
               equipeId: corretor.equipeId,
               origemAtrasoLiberacao: null,
+              atrasoLiberadoAt: null,
+              lastMovementAt: new Date(),
+              prazoDueAt: null,
+              alertaProximoAt: null,
             },
           });
           resultado.push({
@@ -669,6 +678,10 @@ export class LeadsService {
             corretorId: a.corretorId,
             equipeId: a.equipeId,
             origemAtrasoLiberacao: null,
+            atrasoLiberadoAt: null,
+            lastMovementAt: new Date(),
+            prazoDueAt: null,
+            alertaProximoAt: null,
           },
         }),
       ),
@@ -1236,16 +1249,19 @@ export class LeadsService {
           ? {
               corretorId: assignment.corretorId,
               equipeId: assignment.equipeId,
+              origemAtrasoLiberacao: null,
+              atrasoLiberadoAt: null,
+              lastMovementAt: new Date(),
               ...(assignment.corretorId
                 ? {
-                    origemAtrasoLiberacao: null,
-                    atrasoLiberadoAt: null,
                     triagemOrigemHerdada:
                       previousOrigemAtraso ===
                       AtrasoLiberacaoDestino.retrabalho
                         ? AtrasoLiberacaoDestino.retrabalho
                         : AtrasoLiberacaoDestino.caca_lead,
                     lastTriagemAt: new Date(),
+                    prazoDueAt: null,
+                    alertaProximoAt: null,
                   }
                 : {}),
             }
@@ -1882,6 +1898,9 @@ export class LeadsService {
         equipeId: self.equipeId,
         origemAtrasoLiberacao: null,
         atrasoLiberadoAt: null,
+        lastMovementAt: now,
+        prazoDueAt: null,
+        alertaProximoAt: null,
         triagemOrigemHerdada: AtrasoLiberacaoDestino.caca_lead,
         lastTriagemAt: now,
       },
@@ -2041,6 +2060,7 @@ export class LeadsService {
       perdidoAt: null,
       corretorId: null,
       equipeId: null,
+      ...whereNotRetrabalho,
     };
   }
 

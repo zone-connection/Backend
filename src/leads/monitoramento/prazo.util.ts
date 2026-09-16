@@ -100,3 +100,21 @@ export function atrasoStartedAtMs(params: {
   if (starts.length === 0) return null;
   return Math.min(...starts);
 }
+
+/**
+ * Retrabalho só após o atraso persistir desde o último movimento.
+ * Sem isso, um lead redistribuído com SLA antigo volta imediatamente ao pool.
+ */
+export function atrasoElegivelParaLiberacao(params: {
+  nowMs: number;
+  terminal: boolean;
+  prazoDueAt: Date | null;
+  lastMovementAt: Date;
+  inatividadeMs: number;
+  delayMs: number;
+}): boolean {
+  const started = atrasoStartedAtMs(params);
+  if (started == null) return false;
+  const clockStart = Math.max(started, params.lastMovementAt.getTime());
+  return params.nowMs - clockStart >= params.delayMs;
+}
