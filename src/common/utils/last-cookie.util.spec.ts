@@ -23,4 +23,16 @@ describe('applyLastWinsCookies', () => {
     ]);
     assert.equal(cookies.crm_csrf, 'ultimo');
   });
+
+  it('aplica last-wins também nos cookies do portal do proprietário', () => {
+    const cookies: Record<string, unknown> = {
+      crm_portal_access: 'antigo',
+    };
+    applyLastWinsCookies(
+      cookies,
+      'crm_portal_access=antigo; crm_portal_access=novo',
+      ['crm_portal_access'],
+    );
+    assert.equal(cookies.crm_portal_access, 'novo');
+  });
 });

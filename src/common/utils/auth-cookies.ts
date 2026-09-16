@@ -18,7 +18,14 @@ export const PORTAL_COOKIE = {
 
 export const CSRF_HEADER = 'x-csrf-token';
 
-const AUTH_COOKIE_NAMES = [COOKIE.access, COOKIE.refresh, COOKIE.csrf] as const;
+const AUTH_COOKIE_NAMES = [
+  COOKIE.access,
+  COOKIE.refresh,
+  COOKIE.csrf,
+  PORTAL_COOKIE.access,
+  PORTAL_COOKIE.refresh,
+  PORTAL_COOKIE.csrf,
+] as const;
 
 /** Converte "15m" / "7d" em milissegundos para maxAge do cookie. */
 export function parseDurationMs(value: string, fallbackMs: number): number {
