@@ -26,6 +26,7 @@ import { hasUserModule } from "../common/utils/user-permissions";
 import { DocumentacaoService } from "../documentacao/documentacao.service";
 import { LeadsService } from "../leads/leads.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { calcularEncargosAtraso } from "./titulo-atraso";
 import { BaixarTituloDto } from "./dto/baixar-titulo.dto";
 import { CreateCategoriaDto } from "./dto/create-categoria.dto";
 import { CreateComissaoDto } from "./dto/create-comissao.dto";
@@ -205,6 +206,21 @@ const RECORRENCIA_HORIZONTE_MESES = 120;
 
 function todayIsoBrasil(): string {
   return isoDateOnly(new Date());
+}
+
+function statusAbertoPorVencimento(
+  status: string,
+  vencimento: Date,
+): FinanceiroTituloStatus {
+  if (
+    status !== FinanceiroTituloStatus.aberto &&
+    status !== FinanceiroTituloStatus.atrasado
+  ) {
+    return status as FinanceiroTituloStatus;
+  }
+  return isoDateOnly(vencimento) < todayIsoBrasil()
+    ? FinanceiroTituloStatus.atrasado
+    : FinanceiroTituloStatus.aberto;
 }
 
 function startOfMonthIso(iso: string): string {
@@ -914,6 +930,7 @@ export class FinanceiroService {
     } catch {
       // Não bloqueia a listagem se a renovação falhar.
     }
+    await this.syncTitulosAtrasados(tenantId).catch(() => undefined);
     return this.prisma.financeiroTitulo
       .findMany({
         where: {
@@ -953,9 +970,15 @@ export class FinanceiroService {
       dto.parceiroId,
       dto.parceiroNome,
     );
-    const status = dto.status ?? FinanceiroTituloStatus.aberto;
     const vencimento = parseDayStart(dto.vencimento);
-    const jaPago = status === FinanceiroTituloStatus.pago;
+    const jaPago = (dto.status ?? FinanceiroTituloStatus.aberto) ===
+      FinanceiroTituloStatus.pago;
+    const status = jaPago
+      ? FinanceiroTituloStatus.pago
+      : statusAbertoPorVencimento(
+          dto.status ?? FinanceiroTituloStatus.aberto,
+          vencimento,
+        );
     const descricao = dto.descricao.trim();
     const { categoria, centro } = this.resolveTituloCategoriaCentro(
       dto.tipo,
@@ -1072,7 +1095,10 @@ export class FinanceiroService {
             natureza,
             vencimento: parseDayStart(p.vencimento),
             valor: p.valor,
-            status: FinanceiroTituloStatus.aberto,
+            status: statusAbertoPorVencimento(
+              FinanceiroTituloStatus.aberto,
+              parseDayStart(p.vencimento),
+            ),
             parcela: dto.indeterminado
               ? mesParcelaLabel(isoDateOnly(parseDayStart(p.vencimento)))
               : `${i + 1}/${n}`,
@@ -1087,6 +1113,43 @@ export class FinanceiroService {
     );
 
     return rows.map((r) => this.mapTitulo(r));
+  }
+
+  /** Aberto com vencimento anterior a hoje vira atrasado (e o inverso, se a data for prorrogada). */
+  private async syncTitulosAtrasados(tenantId: string) {
+    const hoje = parseDayStart(todayIsoBrasil());
+    await this.prisma.financeiroTitulo.updateMany({
+      where: {
+        tenantId,
+        status: FinanceiroTituloStatus.aberto,
+        vencimento: { lt: hoje },
+      },
+      data: { status: FinanceiroTituloStatus.atrasado },
+    });
+    await this.prisma.financeiroTitulo.updateMany({
+      where: {
+        tenantId,
+        status: FinanceiroTituloStatus.atrasado,
+        vencimento: { gte: hoje },
+      },
+      data: { status: FinanceiroTituloStatus.aberto },
+    });
+    await this.prisma.financeiroMovimento.updateMany({
+      where: {
+        tenantId,
+        status: FinanceiroTituloStatus.aberto,
+        titulo: { status: FinanceiroTituloStatus.atrasado },
+      },
+      data: { status: FinanceiroTituloStatus.atrasado },
+    });
+    await this.prisma.financeiroMovimento.updateMany({
+      where: {
+        tenantId,
+        status: FinanceiroTituloStatus.atrasado,
+        titulo: { status: FinanceiroTituloStatus.aberto },
+      },
+      data: { status: FinanceiroTituloStatus.aberto },
+    });
   }
 
   /** Mantém anos à frente nas contas mensais sem data de término. */
@@ -1179,7 +1242,15 @@ export class FinanceiroService {
       );
     }
 
-    const nextStatus = dto.status ?? existing.status;
+    const nextStatusRequested = dto.status ?? existing.status;
+    const vencimentoNext =
+      dto.vencimento !== undefined
+        ? parseDayStart(dto.vencimento)
+        : existing.vencimento;
+    const nextStatus = statusAbertoPorVencimento(
+      nextStatusRequested,
+      vencimentoNext,
+    );
     const estornar =
       existing.status === FinanceiroTituloStatus.pago &&
       nextStatus !== FinanceiroTituloStatus.pago;
@@ -1212,7 +1283,7 @@ export class FinanceiroService {
             ? { vencimento: parseDayStart(dto.vencimento) }
             : {}),
           ...(dto.valor !== undefined ? { valor: dto.valor } : {}),
-          ...(dto.status !== undefined ? { status: dto.status } : {}),
+          status: nextStatus,
           ...(dto.parcela !== undefined
             ? { parcela: dto.parcela?.trim() || "" }
             : {}),
@@ -1365,7 +1436,14 @@ export class FinanceiroService {
         const item = parcelaUpdates.get(row.id);
         if (!item && !hasShared) continue;
 
-        const nextStatus = item?.status ?? row.status;
+        const vencimentoNext =
+          item?.vencimento !== undefined
+            ? parseDayStart(item.vencimento)
+            : row.vencimento;
+        const nextStatus = statusAbertoPorVencimento(
+          item?.status ?? row.status,
+          vencimentoNext,
+        );
         const estornar =
           row.status === FinanceiroTituloStatus.pago &&
           nextStatus !== FinanceiroTituloStatus.pago;
@@ -1383,7 +1461,7 @@ export class FinanceiroService {
               ? { vencimento: parseDayStart(item.vencimento) }
               : {}),
             ...(item?.valor !== undefined ? { valor: item.valor } : {}),
-            ...(item?.status !== undefined ? { status: item.status } : {}),
+            status: nextStatus,
             ...(estornar ? { dataPagamento: null } : {}),
           },
         });
@@ -1493,6 +1571,12 @@ export class FinanceiroService {
     }
     const tenantId = resolveFinanceiroTenantId(requester);
     const dataPagamento = parseDayStart(dto.dataPagamento);
+    const encargos = calcularEncargosAtraso(
+      existing.valor,
+      isoDateOnly(existing.vencimento),
+      dto.dataPagamento.slice(0, 10),
+    );
+    const valorBaixa = encargos.valorAtualizado;
     const tipoMov =
       existing.tipo === FinanceiroTituloTipo.receber
         ? FinanceiroMovimentoTipo.entrada
@@ -1517,7 +1601,7 @@ export class FinanceiroService {
           centro: existing.centro,
           natureza: existing.natureza,
           tipo: tipoMov,
-          valor: existing.valor,
+          valor: valorBaixa,
           status: FinanceiroTituloStatus.pago,
           formaPagamento: dto.formaPagamento?.trim() || "",
           tituloId: existing.id,
@@ -1844,6 +1928,7 @@ export class FinanceiroService {
     const boundsAnt = slackBoundsVisao(anoAnt, mesAnt);
 
     await this.syncComissoesParaTitulos(tenantId).catch(() => undefined);
+    await this.syncTitulosAtrasados(tenantId).catch(() => undefined);
 
     const [movJanela, movJanelaAnt, titulosReceber, titulosPagar, movAbertosParceiro, comissoesJanela] =
       await Promise.all([
@@ -3363,6 +3448,7 @@ export class FinanceiroService {
     to: string,
   ): Promise<FluxoEvento[]> {
     await this.extendIndeterminateRecurrences(tenantId).catch(() => undefined);
+    await this.syncTitulosAtrasados(tenantId).catch(() => undefined);
     await this.syncComissoesParaTitulos(tenantId).catch(() => undefined);
     const fromDate = parseDayStart(from);
     const toExclusive = parseDayEnd(to);
@@ -3871,6 +3957,19 @@ export class FinanceiroService {
     natureza?: FinanceiroDespesaNatureza | null;
     movimento?: { formaPagamento: string } | null;
   }) {
+    const status = statusAbertoPorVencimento(row.status, row.vencimento);
+    const atraso =
+      status === FinanceiroTituloStatus.atrasado
+        ? calcularEncargosAtraso(
+            row.valor,
+            isoDateOnly(row.vencimento),
+            todayIsoBrasil(),
+          )
+        : calcularEncargosAtraso(
+            row.valor,
+            isoDateOnly(row.vencimento),
+            isoDateOnly(row.vencimento),
+          );
     return {
       id: row.id,
       tipo: row.tipo,
@@ -3882,7 +3981,12 @@ export class FinanceiroService {
       vencimento: isoDateOnly(row.vencimento),
       dataPagamento: row.dataPagamento ? isoDateOnly(row.dataPagamento) : null,
       valor: row.valor,
-      status: row.status,
+      status,
+      diasAtraso: atraso.diasAtraso,
+      multa: atraso.multa,
+      juros: atraso.juros,
+      valorAtraso: atraso.valorAtraso,
+      valorAtualizado: atraso.valorAtualizado,
       parcela: row.parcela,
       grupoParcelasId: row.grupoParcelasId ?? null,
       recorrenciaIndeterminada: row.recorrenciaIndeterminada ?? false,

@@ -371,21 +371,28 @@ export class DashboardService {
         },
       ],
     });
-    const docVendaWhere = (periodo: Periodo) => ({
+    const docEscopoWhere = {
       tenantId,
-      ...documentacaoVendaNoPeriodoWhere(periodo),
+      ...documentacaoOperacionalWhere(),
       ...(corretorIds
         ? documentacaoVinculadaAoCorretorWhere(corretorIds)
         : {}),
-      ...(origem ? { lead: { origem } } : {}),
-    });
-    const docPipelineWhere = (periodo: Periodo) => ({
-      tenantId,
-      createdAt: { gte: periodo.inicio, lt: periodo.fim },
       lead: {
         ...leadScope,
         ...(origem ? { origem } : {}),
       },
+    };
+    /** Vendas/VGV: mesma regra de Ranking e da lista de Vendas. */
+    const docVendaWhere = (periodo: Periodo) => ({
+      ...docEscopoWhere,
+      AND: [status2VendidoWhere(), documentacaoVendaNoPeriodoWhere(periodo)],
+    });
+    /** Pipeline ao vivo: mesmas fichas da tela Documentação (sem recorte de cadastro). */
+    const docPipelineStockWhere = () => docEscopoWhere;
+    /** Fichas abertas no período — denominador da taxa de conversão. */
+    const docCriadasWhere = (periodo: Periodo) => ({
+      ...docEscopoWhere,
+      createdAt: { gte: periodo.inicio, lt: periodo.fim },
     });
     const perdidoWhere = (periodo: Periodo): Prisma.LeadWhereInput => ({
       ...leadScope,
@@ -411,6 +418,7 @@ export class DashboardService {
       vgvMesAnt,
       documentacaoStatusMes,
       documentacaoStatusMesAnt,
+      documentacaoPipelineStock,
       agendaHoje,
       agendaAtrasados,
       corretores,
@@ -494,12 +502,17 @@ export class DashboardService {
       }),
       this.prisma.documentacao.groupBy({
         by: ['status1'],
-        where: docPipelineWhere(mesAtual),
+        where: docCriadasWhere(mesAtual),
         _count: { _all: true },
       }),
       this.prisma.documentacao.groupBy({
         by: ['status1'],
-        where: docPipelineWhere(mesAnterior),
+        where: docCriadasWhere(mesAnterior),
+        _count: { _all: true },
+      }),
+      this.prisma.documentacao.groupBy({
+        by: ['status1'],
+        where: docPipelineStockWhere(),
         _count: { _all: true },
       }),
       this.prisma.agendamento.findMany({
@@ -622,7 +635,7 @@ export class DashboardService {
         },
         { aprovadas: 0, reprovadas: 0, emAnalise: 0 },
       );
-    const pipelineAtual = pipelineCounts(documentacaoStatusMes);
+    const pipelineAtual = pipelineCounts(documentacaoPipelineStock);
     const pipelineAnterior = pipelineCounts(documentacaoStatusMesAnt);
 
     const ranking = await this.buildRanking(
