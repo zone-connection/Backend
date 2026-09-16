@@ -47,6 +47,7 @@ import {
 import { sanitizeProspeccao } from './lead-prospeccao';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
 import type { LeadNotifySnapshot } from '../lead-notify/lead-notify.messages';
+import { PresenceService } from '../presence/presence.service';
 
 /** Dígitos nacionais (DDD + número), ignora DDI 55. */
 function nationalPhoneKey(value: string): string {
@@ -117,6 +118,7 @@ export class LeadsService {
     private readonly monitoramento: LeadMonitoramentoService,
     private readonly documentacao: DocumentacaoService,
     private readonly leadNotify: LeadNotifyService,
+    private readonly presence: PresenceService,
   ) {}
 
   async create(
@@ -398,6 +400,13 @@ export class LeadsService {
       }),
     ]);
 
+    const onlineIds = new Set(
+      await this.presence.listOnlineUserIds(
+        tenantId,
+        corretores.map((c) => c.id),
+      ),
+    );
+
     return {
       disponiveis,
       equipes: equipes.map((e) => ({
@@ -411,6 +420,7 @@ export class LeadsService {
         id: c.id,
         nome: c.name,
         equipeNome: c.equipe?.name ?? null,
+        online: onlineIds.has(c.id),
       })),
     };
   }
