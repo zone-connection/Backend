@@ -7,8 +7,10 @@ import { AnaliseModule } from '../analise/analise.module';
 import { FunisModule } from '../funis/funis.module';
 import { LeadMonitoramentoModule } from './lead-monitoramento.module';
 import { LeadAtrasoLiberacaoService } from './lead-atraso-liberacao.service';
+import { LeadDistribuicaoAutoService } from './lead-distribuicao-auto.service';
 import { DocumentacaoModule } from '../documentacao/documentacao.module';
 import { LeadNotifyModule } from '../lead-notify/lead-notify.module';
+import { PresenceModule } from '../presence/presence.module';
 
 @Module({
   imports: [
@@ -19,9 +21,14 @@ import { LeadNotifyModule } from '../lead-notify/lead-notify.module';
     LeadMonitoramentoModule,
     DocumentacaoModule,
     LeadNotifyModule,
+    PresenceModule,
   ],
   controllers: [LeadsController],
-  providers: [LeadsService, LeadAtrasoLiberacaoService],
+  providers: [
+    LeadsService,
+    LeadAtrasoLiberacaoService,
+    LeadDistribuicaoAutoService,
+  ],
   exports: [LeadsService],
 })
 export class LeadsModule {}

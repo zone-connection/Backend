@@ -60,6 +60,7 @@ const funilSelect = {
   atrasoLiberacaoDestino: true,
   atrasoLiberacaoValor: true,
   atrasoLiberacaoUnidade: true,
+  distribuicaoAutoAtiva: true,
   createdAt: true,
   updatedAt: true,
   etapas: {
@@ -213,6 +214,15 @@ export class FunisService {
     }
     if (dto.atrasoLiberacaoUnidade !== undefined) {
       data.atrasoLiberacaoUnidade = dto.atrasoLiberacaoUnidade;
+    }
+
+    if (dto.distribuicaoAutoAtiva !== undefined) {
+      if (requester.role !== Role.admin) {
+        throw new ForbiddenException(
+          'Somente o administrador pode ativar a distribuição automática.',
+        );
+      }
+      data.distribuicaoAutoAtiva = dto.distribuicaoAutoAtiva;
     }
 
     const novoTipo =

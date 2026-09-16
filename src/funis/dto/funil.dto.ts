@@ -139,6 +139,10 @@ export class UpdateFunilDto {
     message: 'Unidade inválida. Use minutos, horas ou dias.',
   })
   atrasoLiberacaoUnidade?: PrazoUnidade;
+
+  @IsOptional()
+  @IsBoolean()
+  distribuicaoAutoAtiva?: boolean;
 }
 
 export class UpdateFunilEtapaDto {

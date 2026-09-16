@@ -1378,6 +1378,8 @@ model Funil {
   atrasoLiberacaoDestino  AtrasoLiberacaoDestino  @default(retrabalho)
   atrasoLiberacaoValor    Int                     @default(24)
   atrasoLiberacaoUnidade  PrazoUnidade            @default(horas)
+  /// Pool "Chegaram": envia automaticamente para corretores online.
+  distribuicaoAutoAtiva   Boolean                 @default(false)
 
   etapas FunilEtapa[]
   captacoes Captacao[]

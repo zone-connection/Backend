@@ -196,6 +196,14 @@ export class PresenceService {
     });
   }
 
+  async listOnlineUserIds(
+    tenantId: string,
+    userIds: string[],
+  ): Promise<string[]> {
+    const rows = await this.summarizeToday(tenantId, userIds);
+    return rows.filter((row) => row.online).map((row) => row.userId);
+  }
+
   /** Tempo ativo por dia na semana atual (seg–dom, fuso BR). */
   async summarizeWeekByDay(
     tenantId: string,
