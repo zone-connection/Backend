@@ -16,6 +16,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { CreateTriagemDto } from './dto/create-triagem.dto';
 import { UpdateTriagemDto } from './dto/update-triagem.dto';
+import { QueryTriagemKpisDto } from './dto/query-triagem-kpis.dto';
 import { QueryTriagemLeadsDto } from './dto/query-triagem-leads.dto';
 import { TriagemService } from './triagem.service';
 
@@ -51,6 +52,14 @@ export class TriagemController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.triagemService.listLeads(query, requester);
+  }
+
+  @Get('kpis')
+  kpis(
+    @Query() query: QueryTriagemKpisDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.triagemService.kpis(query, requester);
   }
 
   @Get(':leadId')

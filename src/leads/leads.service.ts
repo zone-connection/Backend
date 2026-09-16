@@ -983,6 +983,41 @@ export class LeadsService {
     return this.findLostByTipo(tenantId, ContatoTipo.lead, query);
   }
 
+  /** Contagem de leads perdidos por motivo (cards do topo). */
+  async findLostKpis(requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    if (!canViewLostLeads(requester)) {
+      throw new ForbiddenException(
+        'Apenas administradores podem ver leads perdidos.',
+      );
+    }
+
+    const groups = await this.prisma.lead.groupBy({
+      by: ['motivoPerda'],
+      where: {
+        tenantId,
+        tipo: ContatoTipo.lead,
+        perdidoAt: { not: null },
+      },
+      _count: { _all: true },
+    });
+
+    const total = groups.reduce((sum, row) => sum + row._count._all, 0);
+    const motivos = groups
+      .map((row) => {
+        const motivo = row.motivoPerda?.trim() || 'Sem motivo';
+        const count = row._count._all;
+        return {
+          motivo,
+          count,
+          pct: total > 0 ? Math.round((count / total) * 1000) / 10 : 0,
+        };
+      })
+      .sort((a, b) => b.count - a.count || a.motivo.localeCompare(b.motivo, 'pt-BR'));
+
+    return { total, motivos };
+  }
+
   /**
    * Lista clientes marcados como perdidos — exclusivo do corretor (própria carteira).
    */

@@ -51,6 +51,17 @@ export class AgendaController {
     return this.agendaService.syncLembretes(requester);
   }
 
+  @Get('kpis')
+  kpis(
+    @Query() query: QueryAgendamentoDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.agendaService.kpis(requester, {
+      corretorId: query.corretorId,
+      equipeId: query.equipeId,
+    });
+  }
+
   @Get(':id')
   findOne(
     @Param('id', ParseUUIDPipe) id: string,

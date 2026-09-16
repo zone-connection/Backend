@@ -24,6 +24,7 @@ import {
   isStatusAprovado,
   isStatusParecerFinal,
   isStatusVendido,
+  documentacaoVinculadaAoCorretorWhere,
 } from '../common/utils/documentacao-status';
 import { PLATFORM_TENANT_ID, requireTenantId } from '../common/utils/tenant';
 import { hasUserModule } from '../common/utils/user-permissions';
@@ -135,12 +136,7 @@ export class DocumentacaoService {
     }
 
     if (query.corretorId && requester.role === Role.admin) {
-      andFilters.push({
-        OR: [
-          { corretorId: query.corretorId },
-          { lead: { corretorId: query.corretorId } },
-        ],
-      });
+      andFilters.push(documentacaoVinculadaAoCorretorWhere(query.corretorId));
     }
 
     const docs = await this.prisma.documentacao.findMany({
@@ -639,12 +635,7 @@ export class DocumentacaoService {
         return {};
       case Role.corretor:
       case Role.treinee:
-        return {
-          OR: [
-            { corretorId: requester.id },
-            { lead: { corretorId: requester.id } },
-          ],
-        };
+        return documentacaoVinculadaAoCorretorWhere(requester.id);
       case Role.gerente: {
         const teamCorretorIds =
           (await this.teamScope.getVisibleCorretorIds(requester)) ?? [];
@@ -652,8 +643,7 @@ export class DocumentacaoService {
         return {
           OR: [
             { gerenteId: requester.id },
-            { corretorId: { in: teamActorIds } },
-            { lead: { corretorId: { in: teamActorIds } } },
+            documentacaoVinculadaAoCorretorWhere(teamActorIds),
           ],
         };
       }

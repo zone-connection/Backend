@@ -27,6 +27,27 @@ export function documentacaoOperacionalWhere(): Prisma.DocumentacaoWhereInput {
   };
 }
 
+/**
+ * Venda/VGV do corretor: ficha com ele vinculado.
+ * Só usa o dono do lead se a ficha ainda não tiver corretor.
+ */
+export function documentacaoVinculadaAoCorretorWhere(
+  corretorIds: string | string[],
+): Prisma.DocumentacaoWhereInput {
+  const ids = Array.isArray(corretorIds) ? corretorIds : [corretorIds];
+  if (ids.length === 0) {
+    return { id: { in: [] } };
+  }
+  return {
+    OR: [
+      { corretorId: { in: ids } },
+      {
+        AND: [{ corretorId: null }, { lead: { corretorId: { in: ids } } }],
+      },
+    ],
+  };
+}
+
 /** Remove acentos, caixa e caracteres não alfanuméricos. */
 export function normalizeDocStatus(
   status: string | null | undefined,

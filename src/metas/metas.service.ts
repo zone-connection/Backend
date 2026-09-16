@@ -18,6 +18,7 @@ import {
   isStatusVendido,
   documentacaoOperacionalWhere,
   documentacaoVendaNoPeriodoWhere,
+  documentacaoVinculadaAoCorretorWhere,
 } from '../common/utils/documentacao-status';
 import { requireTenantId, isPlatformAdmin } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
@@ -481,12 +482,7 @@ export class MetasService {
     const creditedTo =
       corretorIds === null
         ? {}
-        : {
-            OR: [
-              { corretorId: { in: corretorIds } },
-              { lead: { corretorId: { in: corretorIds } } },
-            ],
-          };
+        : documentacaoVinculadaAoCorretorWhere(corretorIds);
 
     if (meta.tipo === MetaTipo.documentacoes) {
       atual = await this.prisma.documentacao.count({
@@ -496,7 +492,7 @@ export class MetasService {
           AND: [documentacaoOperacionalWhere()],
           ...(corretorIds === null
             ? {}
-            : { corretorId: { in: corretorIds } }),
+            : documentacaoVinculadaAoCorretorWhere(corretorIds)),
         },
       });
     } else if (meta.tipo === MetaTipo.vendas) {

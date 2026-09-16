@@ -131,6 +131,13 @@ export class LeadsController {
     return this.leadsService.listAssignees(requester);
   }
 
+  @Get('perdidos-kpis')
+  @UseGuards(RolesGuard)
+  @Roles(Role.admin, Role.super_admin)
+  lostKpis(@CurrentUser() requester: AuthenticatedUser) {
+    return this.leadsService.findLostKpis(requester);
+  }
+
   /** Leads perdidos — só admin. Antes de GET :id. */
   @Get('perdidos')
   @UseGuards(RolesGuard)

@@ -30,6 +30,7 @@ import {
   isStatusReprovado,
   documentacaoOperacionalWhere,
   documentacaoVendaNoPeriodoWhere,
+  documentacaoVinculadaAoCorretorWhere,
   isStatusVendido,
   status2VendidoWhere,
   sumVgvVendido,
@@ -169,13 +170,9 @@ export class DashboardService {
     );
     const inicioAmanha = new Date(inicioHoje.getTime() + 24 * 60 * 60 * 1000);
     const leadWhere = { tenantId, corretorId: requester.id, perdidoAt: null };
-    // Fichas creditadas ao corretor (mesmo se o admin criou a documentação).
     const docWhereCorretor = {
       tenantId,
-      OR: [
-        { corretorId: requester.id },
-        { lead: { corretorId: requester.id } },
-      ],
+      ...documentacaoVinculadaAoCorretorWhere(requester.id),
     };
 
     const periodoMes = { inicio: inicioMes, fim: inicioProximoMes };
@@ -377,7 +374,9 @@ export class DashboardService {
     const docVendaWhere = (periodo: Periodo) => ({
       tenantId,
       ...documentacaoVendaNoPeriodoWhere(periodo),
-      ...(corretorIds ? { corretorId: { in: corretorIds } } : {}),
+      ...(corretorIds
+        ? documentacaoVinculadaAoCorretorWhere(corretorIds)
+        : {}),
       ...(origem ? { lead: { origem } } : {}),
     });
     const docPipelineWhere = (periodo: Periodo) => ({
@@ -923,20 +922,13 @@ export class DashboardService {
       vgv.set(corretorId, (vgv.get(corretorId) ?? 0) + value);
     };
 
-    // Credita pela ficha OU pelo lead (admin/analista pode criar a doc sem
-    // preencher corretorId; o dono fica em lead.corretorId).
     const corretorIdSet = new Set(corretorIds);
     const docs = await this.prisma.documentacao.findMany({
       where: {
         tenantId,
         AND: [
           documentacaoOperacionalWhere(),
-          {
-            OR: [
-              { corretorId: { in: corretorIds } },
-              { lead: { corretorId: { in: corretorIds } } },
-            ],
-          },
+          documentacaoVinculadaAoCorretorWhere(corretorIds),
           documentacaoVendaNoPeriodoWhere(periodo),
           ...(origem ? [{ lead: { origem } }] : []),
         ],
@@ -981,13 +973,12 @@ export class DashboardService {
     const rows = await this.prisma.documentacao.findMany({
       where: {
         tenantId,
-        AND: [documentacaoOperacionalWhere()],
-        OR: [
-          { corretorId: { in: ids } },
-          { lead: { corretorId: { in: ids } } },
+        AND: [
+          documentacaoOperacionalWhere(),
+          documentacaoVinculadaAoCorretorWhere(ids),
+          { createdAt: { gte: periodo.inicio, lt: periodo.fim } },
+          ...(origem ? [{ lead: { origem } }] : []),
         ],
-        createdAt: { gte: periodo.inicio, lt: periodo.fim },
-        ...(origem ? { lead: { origem } } : {}),
       },
       select: {
         corretorId: true,
@@ -1755,11 +1746,12 @@ export class DashboardService {
       rankingCorretores.map((r) => [r.corretorId, r]),
     );
 
-    // Ranking de gerentes é visão administrativa (comparação entre equipes).
+    // Ranking/pódio de gerentes: só admin do tenant (e super_admin no tenant).
     const rankingGerentes =
-      requester.role === Role.gerente
+      requester.role !== Role.admin && requester.role !== Role.super_admin
         ? []
         : equipes
+            .filter((eq) => Boolean(eq.gerente))
             .map((eq) => {
               let leads = 0;
               let entradas = 0;
@@ -1840,14 +1832,7 @@ export class DashboardService {
           documentacaoVendaNoPeriodoWhere(mesAtual),
           ...(origem ? [{ lead: { origem } }] : []),
           ...(corretorIds
-            ? [
-                {
-                  OR: [
-                    { corretorId: { in: corretorIds } },
-                    { lead: { corretorId: { in: corretorIds } } },
-                  ],
-                },
-              ]
+            ? [documentacaoVinculadaAoCorretorWhere(corretorIds)]
             : []),
         ],
       },
@@ -1956,12 +1941,7 @@ export class DashboardService {
         AND: [
           status2VendidoWhere(),
           documentacaoVendaNoPeriodoWhere(mesAtual),
-          {
-            OR: [
-              { corretorId },
-              { lead: { corretorId } },
-            ],
-          },
+          documentacaoVinculadaAoCorretorWhere(corretorId),
         ],
       },
       select: {
@@ -1971,6 +1951,7 @@ export class DashboardService {
         dataVenda: true,
         createdAt: true,
         status2: true,
+        corretorId: true,
         construtora: { select: { nome: true } },
         gerente: { select: { name: true } },
         empreendimento: {
@@ -2012,6 +1993,10 @@ export class DashboardService {
 
     const items = rows
       .filter((row) => isStatusVendido(row.status2))
+      .filter((row) => {
+        const creditedId = row.corretorId ?? row.lead.corretor?.id ?? null;
+        return creditedId === corretorId;
+      })
       .map((row) => {
         const credited = row.corretor ?? row.lead.corretor;
         return {

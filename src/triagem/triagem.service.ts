@@ -17,6 +17,7 @@ import { isCorretorLike, canWriteTriagem } from '../common/utils/roles';
 import { CreateTriagemDto } from './dto/create-triagem.dto';
 import { UpdateTriagemDto } from './dto/update-triagem.dto';
 import { QueryTriagemLeadsDto } from './dto/query-triagem-leads.dto';
+import { QueryTriagemKpisDto } from './dto/query-triagem-kpis.dto';
 
 const leadListSelect = {
   id: true,
@@ -334,6 +335,131 @@ export class TriagemService {
     return event;
   }
 
+  /**
+   * KPIs da tela: tempo médio até o próximo relato, atualizações no dia
+   * e corretor com menor tempo médio no escopo.
+   */
+  async kpis(query: QueryTriagemKpisDto, requester: AuthenticatedUser) {
+    const scope = await this.teamScope.leadScope(requester);
+    const equipeWhere = query.semEquipe
+      ? { equipeId: null }
+      : query.equipeId
+        ? { equipeId: query.equipeId }
+        : {};
+
+    const events = await this.prisma.triagemEvent.findMany({
+      where: {
+        lead: {
+          AND: [
+            scope,
+            { tipo: ContatoTipo.lead, perdidoAt: null },
+            equipeWhere,
+          ],
+        },
+      },
+      select: {
+        leadId: true,
+        createdAt: true,
+        lead: {
+          select: {
+            createdAt: true,
+            corretorId: true,
+            corretor: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: [{ leadId: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    const { start: todayStart, end: todayEnd } = saoPauloDayBounds();
+    const yesterdayStart = new Date(todayStart.getTime() - 86_400_000);
+
+    const durations: { ms: number; corretorId: string | null; nome: string }[] =
+      [];
+    let prevLeadId: string | null = null;
+    let prevAt: Date | null = null;
+
+    for (const event of events) {
+      const baseline =
+        event.leadId === prevLeadId && prevAt
+          ? prevAt
+          : event.lead.createdAt;
+      const ms = event.createdAt.getTime() - baseline.getTime();
+      if (ms > 0) {
+        durations.push({
+          ms,
+          corretorId: event.lead.corretorId,
+          nome: event.lead.corretor?.name?.trim() || 'Sem corretor',
+        });
+      }
+      prevLeadId = event.leadId;
+      prevAt = event.createdAt;
+    }
+
+    const avgMs = durations.length
+      ? Math.round(
+          durations.reduce((sum, item) => sum + item.ms, 0) / durations.length,
+        )
+      : 0;
+
+    const byCorretor = new Map<
+      string,
+      { nome: string; total: number; count: number }
+    >();
+    for (const item of durations) {
+      const key = item.corretorId ?? '__none__';
+      const current = byCorretor.get(key) ?? {
+        nome: item.nome,
+        total: 0,
+        count: 0,
+      };
+      current.total += item.ms;
+      current.count += 1;
+      byCorretor.set(key, current);
+    }
+
+    let maisRapida: {
+      corretorId: string | null;
+      nome: string;
+      tempoMedioMs: number;
+    } | null = null;
+    for (const [key, stats] of byCorretor) {
+      const tempoMedioMs = Math.round(stats.total / stats.count);
+      if (!maisRapida || tempoMedioMs < maisRapida.tempoMedioMs) {
+        maisRapida = {
+          corretorId: key === '__none__' ? null : key,
+          nome: stats.nome,
+          tempoMedioMs,
+        };
+      }
+    }
+
+    const atualizadosHoje = new Set(
+      events
+        .filter(
+          (event) =>
+            event.createdAt >= todayStart && event.createdAt < todayEnd,
+        )
+        .map((event) => event.leadId),
+    ).size;
+    const atualizadosOntem = new Set(
+      events
+        .filter(
+          (event) =>
+            event.createdAt >= yesterdayStart && event.createdAt < todayStart,
+        )
+        .map((event) => event.leadId),
+    ).size;
+
+    return {
+      tempoMedioMs: avgMs,
+      amostra: durations.length,
+      atualizadosHoje,
+      atualizadosOntem,
+      maisRapida,
+    };
+  }
+
   private async ensureLeadAccessible(
     leadId: string,
     requester: AuthenticatedUser,
@@ -386,4 +512,20 @@ export class TriagemService {
       throw new BadRequestException('Etapa do funil inválida.');
     }
   }
+}
+
+/** Meia-noite em America/Sao_Paulo (UTC-3 o ano inteiro). */
+function saoPauloDayBounds(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const year = Number(parts.find((p) => p.type === 'year')?.value);
+  const month = Number(parts.find((p) => p.type === 'month')?.value);
+  const day = Number(parts.find((p) => p.type === 'day')?.value);
+  const start = new Date(Date.UTC(year, month - 1, day, 3, 0, 0, 0));
+  const end = new Date(start.getTime() + 86_400_000);
+  return { start, end };
 }
