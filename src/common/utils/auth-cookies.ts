@@ -16,6 +16,13 @@ export const PORTAL_COOKIE = {
   csrf: 'crm_portal_csrf',
 } as const;
 
+/** Portal de corretores parceiros. */
+export const PARCEIRO_COOKIE = {
+  access: 'crm_parceiro_access',
+  refresh: 'crm_parceiro_refresh',
+  csrf: 'crm_parceiro_csrf',
+} as const;
+
 export const CSRF_HEADER = 'x-csrf-token';
 
 const AUTH_COOKIE_NAMES = [
@@ -25,6 +32,9 @@ const AUTH_COOKIE_NAMES = [
   PORTAL_COOKIE.access,
   PORTAL_COOKIE.refresh,
   PORTAL_COOKIE.csrf,
+  PARCEIRO_COOKIE.access,
+  PARCEIRO_COOKIE.refresh,
+  PARCEIRO_COOKIE.csrf,
 ] as const;
 
 /** Converte "15m" / "7d" em milissegundos para maxAge do cookie. */
@@ -221,6 +231,49 @@ export function setPortalAuthCookies(
 
 export function clearPortalAuthCookies(res: Response): void {
   clearAllPortalCookieVariants(res);
+}
+
+function clearAllParceiroCookieVariants(res: Response): void {
+  clearCookieAllVariants(res, PARCEIRO_COOKIE.access, true);
+  clearCookieAllVariants(res, PARCEIRO_COOKIE.refresh, true);
+  clearCookieAllVariants(res, PARCEIRO_COOKIE.csrf, false);
+}
+
+export function setParceiroAuthCookies(
+  res: Response,
+  config: ConfigService,
+  tokens: { accessToken: string; refreshToken: string; csrfToken: string },
+): void {
+  const accessMs = parseDurationMs(
+    config.get<string>('JWT_ACCESS_EXPIRES_IN', '15m'),
+    15 * 60_000,
+  );
+  const refreshMs = parseDurationMs(
+    config.get<string>('JWT_REFRESH_EXPIRES_IN', '7d'),
+    7 * 86_400_000,
+  );
+  const base = baseCookieOptions(config);
+
+  clearAllParceiroCookieVariants(res);
+
+  res.cookie(PARCEIRO_COOKIE.access, tokens.accessToken, {
+    ...base,
+    maxAge: accessMs,
+  });
+
+  res.cookie(PARCEIRO_COOKIE.refresh, tokens.refreshToken, {
+    ...base,
+    maxAge: refreshMs,
+  });
+
+  res.cookie(PARCEIRO_COOKIE.csrf, tokens.csrfToken, {
+    ...csrfCookieOptions(config),
+    maxAge: refreshMs,
+  });
+}
+
+export function clearParceiroAuthCookies(res: Response): void {
+  clearAllParceiroCookieVariants(res);
 }
 
 export { AUTH_COOKIE_NAMES };

@@ -14,6 +14,7 @@ describe('módulos de operação no plano', () => {
     assert.equal(preset.captacao, false);
     assert.equal(preset.imoveisUsados, false);
     assert.equal(preset.locacao, false);
+    assert.equal(preset.parcerias, false);
   });
 
   it('tenant antigo sem as chaves novas não perde o comercial', () => {

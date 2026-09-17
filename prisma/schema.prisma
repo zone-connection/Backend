@@ -199,6 +199,7 @@ model Tenant {
   vendaUsadoPosVendas            VendaUsadoPosVenda[]
   vendaUsadoPosVendaPendencias   VendaUsadoPosVendaPendencia[]
   proprietarioPortalAcessos      ProprietarioPortalAcesso[]
+  parcerias                      Parceria[]
   equipeFunis                    EquipeFunil[]
   funcionarios                   Funcionario[]
   contracheques                  Contracheque[]
@@ -428,6 +429,8 @@ model User {
   imovelChaveMovimentos           ImovelChaveMovimento[] @relation("ImovelChaveMovimentoAutor")
   vendasUsadoPosVenda             VendaUsadoPosVenda[] @relation("VendaUsadoPosVendaResponsavel")
   vendasUsadoPosVendaPendencia    VendaUsadoPosVendaPendencia[] @relation("VendaUsadoPosVendaPendenciaResponsavel")
+  parceriasConvidadas             Parceria[] @relation("ParceriaConvidadoPor")
+  parceriasParticipacaoCasa       ParceriaParticipacao[] @relation("ParceriaParticipacaoResponsavel")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -591,6 +594,7 @@ model Lead {
   notificacoes  Notificacao[]
   ozapLink      LeadOzapLink?
   metaLink      LeadMetaLink?
+  participacoesParceria ParceriaParticipacao[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1530,6 +1534,139 @@ model ProprietarioPortalAcesso {
   @@map("proprietario_portal_acessos")
 }
 
+enum ParceriaStatus {
+  convite
+  ativa
+  suspensa
+  encerrada
+}
+
+enum ParceriaParticipacaoStatus {
+  pendente
+  ativa
+  expirada
+  encerrada
+}
+
+enum ParceriaRepasseStatus {
+  prevista
+  devida
+  paga
+}
+
+/// Corretor de outra imobiliária (identidade global, login do portal de parceiros).
+model CorretorParceiro {
+  id                 String   @id @default(uuid())
+  email              String   @unique
+  nome               String
+  creci              String   @default("")
+  imobiliariaOrigem  String   @default("")
+  telefone           String   @default("")
+  password           String
+  hashedRefreshToken String?
+  lastLoginAt        DateTime?
+  ativo              Boolean  @default(true)
+
+  parcerias Parceria[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("corretor_parceiros")
+}
+
+/// Vínculo imobiliária × parceiro (contrato). Acesso e split nascem daqui.
+model Parceria {
+  id                  String         @id @default(uuid())
+  tenantId            String
+  tenant              Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parceiroId          String
+  parceiro            CorretorParceiro @relation(fields: [parceiroId], references: [id], onDelete: Cascade)
+  status              ParceriaStatus @default(convite)
+  percentualParceiro  Decimal        @default(50) @db.Decimal(7, 4)
+  podeVerEstoque      Boolean        @default(true)
+  podeReceberLead     Boolean        @default(true)
+  podeIndicar         Boolean        @default(true)
+  slaDias             Int            @default(7)
+  convidadoPorId      String?
+  convidadoPor        User?          @relation("ParceriaConvidadoPor", fields: [convidadoPorId], references: [id], onDelete: SetNull)
+  aceitoAt            DateTime?
+  encerradoAt         DateTime?
+
+  interesses     ParceriaInteresse[]
+  participacoes  ParceriaParticipacao[]
+  repasses       ParceriaRepasse[]
+  eventos        ParceriaEvento[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, parceiroId])
+  @@index([tenantId, status])
+  @@index([parceiroId])
+  @@map("parcerias")
+}
+
+model ParceriaInteresse {
+  id         String   @id @default(uuid())
+  parceriaId String
+  parceria   Parceria @relation(fields: [parceriaId], references: [id], onDelete: Cascade)
+  imovelId   String
+  imovel     Imovel   @relation(fields: [imovelId], references: [id], onDelete: Cascade)
+  mensagem   String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@unique([parceriaId, imovelId])
+  @@index([imovelId])
+  @@map("parceria_interesses")
+}
+
+model ParceriaParticipacao {
+  id               String                      @id @default(uuid())
+  parceriaId       String
+  parceria         Parceria                    @relation(fields: [parceriaId], references: [id], onDelete: Cascade)
+  leadId           String
+  lead             Lead                        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  responsavelCasaId String?
+  responsavelCasa   User?                      @relation("ParceriaParticipacaoResponsavel", fields: [responsavelCasaId], references: [id], onDelete: SetNull)
+  status           ParceriaParticipacaoStatus  @default(pendente)
+  expiresAt        DateTime?
+  aceitoAt         DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([parceriaId, leadId])
+  @@index([leadId])
+  @@map("parceria_participacoes")
+}
+
+model ParceriaRepasse {
+  id         String                 @id @default(uuid())
+  parceriaId String
+  parceria   Parceria               @relation(fields: [parceriaId], references: [id], onDelete: Cascade)
+  descricao  String
+  valor      Decimal                @db.Decimal(18, 2)
+  status     ParceriaRepasseStatus  @default(prevista)
+  pagoAt     DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([parceriaId, status])
+  @@map("parceria_repasses")
+}
+
+model ParceriaEvento {
+  id         String   @id @default(uuid())
+  parceriaId String
+  parceria   Parceria @relation(fields: [parceriaId], references: [id], onDelete: Cascade)
+  tipo       String
+  texto      String
+  createdAt  DateTime @default(now())
+
+  @@index([parceriaId, createdAt])
+  @@map("parceria_eventos")
+}
+
 /// Imóvel individual vinculado a um proprietário do tenant.
 model Imovel {
   id              String             @id @default(uuid())
@@ -1566,6 +1703,10 @@ model Imovel {
   fotoUrl         String?
   fotoPublicId    String?
   fotos           ImovelFoto[]
+
+  /// Visível na vitrine do portal de corretores parceiros (sem dados do dono).
+  liberadoParaParceria Boolean @default(false)
+  interessesParceria   ParceriaInteresse[]
 
   captacoes Captacao[]
   vendaUsado VendaUsado?

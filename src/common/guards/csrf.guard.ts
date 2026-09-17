@@ -8,7 +8,12 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
-import { COOKIE, CSRF_HEADER, PORTAL_COOKIE } from '../utils/auth-cookies';
+import {
+  COOKIE,
+  CSRF_HEADER,
+  PARCEIRO_COOKIE,
+  PORTAL_COOKIE,
+} from '../utils/auth-cookies';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -40,9 +45,11 @@ export class CsrfGuard implements CanActivate {
     if (SAFE_METHODS.has(request.method.toUpperCase())) return true;
 
     const path = `${request.originalUrl ?? ''} ${request.path ?? ''}`;
-    const csrfCookieName = path.includes('portal-proprietario')
-      ? PORTAL_COOKIE.csrf
-      : COOKIE.csrf;
+    const csrfCookieName = path.includes('portal-parceiros')
+      ? PARCEIRO_COOKIE.csrf
+      : path.includes('portal-proprietario')
+        ? PORTAL_COOKIE.csrf
+        : COOKIE.csrf;
     const cookieToken = request.cookies?.[csrfCookieName] as string | undefined;
     const headerToken = request.get(CSRF_HEADER) ?? undefined;
 

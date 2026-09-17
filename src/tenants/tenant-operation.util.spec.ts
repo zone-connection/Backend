@@ -17,6 +17,7 @@ describe('operações do tenant', () => {
     assert.equal(isTenantOperationEnabled({}, 'captacao'), false);
     assert.equal(isTenantOperationEnabled({}, 'imoveisUsados'), false);
     assert.equal(isTenantOperationEnabled({}, 'locacao'), false);
+    assert.equal(isTenantOperationEnabled({}, 'parcerias'), false);
   });
 
   it('respeita true/false gravados no JSON', () => {
@@ -45,14 +46,16 @@ describe('operações do tenant', () => {
       'imoveisUsados',
     );
     assert.equal(operationModuleForApiPath('/locacao'), 'locacao');
+    assert.equal(operationModuleForApiPath('/parcerias'), 'parcerias');
     assert.equal(operationModuleForApiPath('/funis'), null);
   });
 
-  it('pick devolve as quatro operações', () => {
+  it('pick devolve as operações', () => {
     const ops = pickOperationModules({ captacao: true });
     assert.equal(ops.comercial, true);
     assert.equal(ops.captacao, true);
     assert.equal(ops.imoveisUsados, false);
     assert.equal(ops.locacao, false);
+    assert.equal(ops.parcerias, false);
   });
 });

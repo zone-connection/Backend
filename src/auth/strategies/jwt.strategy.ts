@@ -57,7 +57,10 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (!payload?.sub) {
       throw new UnauthorizedException('Token inválido.');
     }
-    if ((payload as { kind?: string }).kind === 'portal_proprietario') {
+    if (
+      (payload as { kind?: string }).kind === 'portal_proprietario' ||
+      (payload as { kind?: string }).kind === 'portal_parceiro'
+    ) {
       throw new UnauthorizedException('Sessão inválida.');
     }
 

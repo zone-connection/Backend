@@ -53,6 +53,7 @@ const OPERACOES = [
   'captacao',
   'imoveisUsados',
   'locacao',
+  'parcerias',
 ] as const;
 
 const ALL = [
@@ -92,6 +93,7 @@ const OPERACAO_DEFAULT: Record<(typeof OPERACOES)[number], boolean> = {
   captacao: false,
   imoveisUsados: false,
   locacao: false,
+  parcerias: false,
 };
 
 function applyOperationDefaults(next: Record<string, boolean>) {

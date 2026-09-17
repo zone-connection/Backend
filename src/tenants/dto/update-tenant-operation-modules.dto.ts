@@ -14,6 +14,10 @@ export class UpdateTenantOperationModulesDto {
   @IsBoolean()
   locacao?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  parcerias?: boolean;
+
   /** Oculta Clientes e Funil de Clientes do menu (telas continuam acessíveis). */
   @IsOptional()
   @IsBoolean()

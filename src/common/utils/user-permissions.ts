@@ -54,6 +54,12 @@ export const PERMISSION_MODULES = [
     group: 'operacao',
   },
   {
+    key: 'parcerias',
+    label: 'Corretores parceiros',
+    routes: ['/parcerias'],
+    group: 'operacao',
+  },
+  {
     key: 'documentacao',
     label: 'Documentação',
     routes: ['/documentacao'],
@@ -213,6 +219,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/propostas',
     '/contratos',
     '/financeiro',
+    '/parcerias',
     '/configuracoes',
     '/perfil',
   ],
@@ -237,6 +244,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/construtoras',
     '/propostas',
     '/contratos',
+    '/parcerias',
     '/financeiro/comissao',
     '/configuracoes',
     '/perfil',
@@ -256,6 +264,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/triagem',
     '/documentacao',
     '/contratos',
+    '/parcerias',
     '/construtoras',
     '/financeiro/comissao',
     '/perfil',
@@ -299,6 +308,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/triagem',
     '/documentacao',
     '/contratos',
+    '/parcerias',
     '/financeiro/comissao',
     '/construtoras',
     '/configuracoes',
@@ -476,6 +486,8 @@ export function modulesForApiPath(rawPath: string): string[] {
   if (path.startsWith('catalog')) return ['configuracoes'];
   if (path.startsWith('construtoras')) return ['construtoras'];
   if (path.startsWith('portal-proprietario')) return [];
+  if (path.startsWith('portal-parceiros')) return [];
+  if (path.startsWith('parcerias')) return ['parcerias'];
   if (path.startsWith('imoveis-usados')) return ['imoveisUsados'];
   if (
     path.startsWith('empreendimentos') ||

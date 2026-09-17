@@ -35,4 +35,16 @@ describe('applyLastWinsCookies', () => {
     );
     assert.equal(cookies.crm_portal_access, 'novo');
   });
+
+  it('aplica last-wins nos cookies do portal de parceiros', () => {
+    const cookies: Record<string, unknown> = {
+      crm_parceiro_csrf: 'antigo',
+    };
+    applyLastWinsCookies(
+      cookies,
+      'crm_parceiro_csrf=antigo; crm_parceiro_csrf=novo',
+      ['crm_parceiro_csrf'],
+    );
+    assert.equal(cookies.crm_parceiro_csrf, 'novo');
+  });
 });

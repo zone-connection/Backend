@@ -20,6 +20,7 @@ describe('permissões por usuário', () => {
     assert.equal(defaultsFromRole(Role.admin).modules.captacao, false);
     assert.equal(defaultsFromRole(Role.admin).modules.imoveisUsados, false);
     assert.equal(defaultsFromRole(Role.admin).modules.locacao, false);
+    assert.equal(defaultsFromRole(Role.admin).modules.parcerias, true);
     assert.equal(hasUserModule(Role.corretor, null, 'imoveisUsados'), false);
     assert.equal(
       hasUserModule(
@@ -70,6 +71,8 @@ describe('permissões por usuário', () => {
       'imoveisUsados',
     ]);
     assert.deepEqual(modulesForApiPath('/portal-proprietario/imoveis'), []);
+    assert.deepEqual(modulesForApiPath('/portal-parceiros/imoveis'), []);
+    assert.deepEqual(modulesForApiPath('/parcerias'), ['parcerias']);
   });
 
   it('não libera escrita sensível só com módulo', () => {

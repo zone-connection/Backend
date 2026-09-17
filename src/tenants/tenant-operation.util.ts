@@ -3,6 +3,7 @@ export const TENANT_OPERATION_KEYS = [
   'captacao',
   'imoveisUsados',
   'locacao',
+  'parcerias',
 ] as const;
 
 export type TenantOperationKey = (typeof TENANT_OPERATION_KEYS)[number];
@@ -13,6 +14,7 @@ export const TENANT_OPERATION_DEFAULTS: Record<TenantOperationKey, boolean> = {
   captacao: false,
   imoveisUsados: false,
   locacao: false,
+  parcerias: false,
 };
 
 export function isTenantOperationKey(key: string): key is TenantOperationKey {
@@ -35,6 +37,7 @@ export function pickOperationModules(
     captacao: isTenantOperationEnabled(modules, 'captacao'),
     imoveisUsados: isTenantOperationEnabled(modules, 'imoveisUsados'),
     locacao: isTenantOperationEnabled(modules, 'locacao'),
+    parcerias: isTenantOperationEnabled(modules, 'parcerias'),
   };
 }
 
@@ -59,5 +62,6 @@ export function operationModuleForApiPath(
     return 'imoveisUsados';
   }
   if (path.startsWith('locacao')) return 'locacao';
+  if (path.startsWith('parcerias')) return 'parcerias';
   return null;
 }
