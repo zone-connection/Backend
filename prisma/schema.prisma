@@ -2751,6 +2751,7 @@ model FinanceiroComissao {
   valorPremiacaoGerente           Decimal @default(0) @db.Decimal(18, 2)
   valorPremiacaoRestante          Decimal @default(0) @db.Decimal(18, 2)
   status          FinanceiroComissaoStatus @default(pendente)
+  observacao      String                   @default("")
   titulos         FinanceiroTitulo[]
 
   createdAt DateTime @default(now())

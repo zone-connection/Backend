@@ -1,6 +1,15 @@
 import { FinanceiroComissaoStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { IsDateString, IsEnum, IsNumber, IsOptional, Max, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { PremiacaoComissaoDto } from './premiacao-comissao.dto';
 
 export class UpdateComissaoDto extends PremiacaoComissaoDto {
@@ -53,4 +62,9 @@ export class UpdateComissaoDto extends PremiacaoComissaoDto {
   @IsOptional()
   @IsEnum(FinanceiroComissaoStatus)
   status?: FinanceiroComissaoStatus;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  observacao?: string;
 }

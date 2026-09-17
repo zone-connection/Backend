@@ -92,4 +92,9 @@ export class CreateComissaoVendaAvulsaDto extends PremiacaoComissaoDto {
   @IsOptional()
   @IsEnum(FinanceiroComissaoStatus)
   status?: FinanceiroComissaoStatus;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  observacao?: string;
 }

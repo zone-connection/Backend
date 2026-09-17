@@ -1747,6 +1747,7 @@ export class FinanceiroService {
         dataVenda: doc.dataVenda ?? doc.createdAt,
         dataPrevistaRecebimento: parseDayStart(dto.dataPrevistaRecebimento),
         status: dto.status ?? FinanceiroComissaoStatus.pendente,
+        observacao: (dto.observacao ?? '').trim(),
         ...values,
         ...premiacao,
       },
@@ -1817,6 +1818,7 @@ export class FinanceiroService {
         percentualPremiacaoImposto: dto.percentualPremiacaoImposto,
         percentualPremiacaoImobiliaria: dto.percentualPremiacaoImobiliaria,
         percentualPremiacaoGerente: dto.percentualPremiacaoGerente,
+        observacao: dto.observacao,
       },
       requester,
     );
@@ -1882,6 +1884,9 @@ export class FinanceiroService {
             }
           : {}),
         ...(dto.status ? { status: dto.status } : {}),
+        ...(dto.observacao !== undefined
+          ? { observacao: dto.observacao.trim() }
+          : {}),
       },
     });
     if (
