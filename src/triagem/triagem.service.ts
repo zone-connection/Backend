@@ -4,16 +4,20 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ContatoTipo, FunilEtapaPapel, Role, TriagemOrigem } from '@prisma/client';
+import { ContatoTipo, FunilEtapaPapel, TriagemOrigem } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CatalogService } from '../catalog/catalog.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { AnaliseService } from '../analise/analise.service';
 import { FunisService } from '../funis/funis.service';
+import { LeadMonitoramentoService } from '../leads/monitoramento/lead-monitoramento.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import { isCorretorLike, canWriteTriagem } from '../common/utils/roles';
 import { CreateTriagemDto } from './dto/create-triagem.dto';
+import { UpdateTriagemDto } from './dto/update-triagem.dto';
 import { QueryTriagemLeadsDto } from './dto/query-triagem-leads.dto';
+import { QueryTriagemKpisDto } from './dto/query-triagem-kpis.dto';
 
 const leadListSelect = {
   id: true,
@@ -28,6 +32,8 @@ const leadListSelect = {
   bairro: true,
   corretorId: true,
   corretor: { select: { id: true, name: true } },
+  origemAtrasoLiberacao: true,
+  triagemOrigemHerdada: true,
   updatedAt: true,
 } as const;
 
@@ -35,10 +41,12 @@ const eventSelect = {
   id: true,
   leadId: true,
   texto: true,
+  textoAnterior: true,
   stageAnterior: true,
   stageNovo: true,
   origem: true,
   createdAt: true,
+  editedAt: true,
   autor: { select: { id: true, name: true } },
 } as const;
 
@@ -50,6 +58,7 @@ export class TriagemService {
     private readonly teamScope: TeamScopeService,
     private readonly analiseService: AnaliseService,
     private readonly funis: FunisService,
+    private readonly monitoramento: LeadMonitoramentoService,
   ) {}
 
   /**
@@ -60,7 +69,7 @@ export class TriagemService {
   async listLeads(query: QueryTriagemLeadsDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
 
-    if (requester.role === Role.corretor) {
+    if (isCorretorLike(requester.role)) {
       const contacts = await this.prisma.lead.findMany({
         where: {
           tenantId,
@@ -123,18 +132,23 @@ export class TriagemService {
         stage: lead.stage,
         corretorId: lead.corretorId,
         corretor: lead.corretor,
+        origemAtrasoLiberacao: lead.origemAtrasoLiberacao,
+        triagemOrigemHerdada: lead.triagemOrigemHerdada,
       },
       events,
     };
   }
 
-  /** Só corretor cria relatos; opcionalmente avança a etapa do lead. */
+  /**
+   * Treinee, corretor, gerente e admin criam relatos; opcionalmente avançam a etapa.
+   * Corretor/treinee: só da própria carteira. Gerente/admin: leads e clientes no escopo.
+   */
   async create(dto: CreateTriagemDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
 
-    if (requester.role !== Role.corretor) {
+    if (!canWriteTriagem(requester.role)) {
       throw new ForbiddenException(
-        'Apenas corretores podem registrar relatos na triagem.',
+        'Apenas treinee, corretor, gerente e administrador podem registrar relatos na triagem.',
       );
     }
 
@@ -143,6 +157,8 @@ export class TriagemService {
       select: {
         id: true,
         corretorId: true,
+        equipeId: true,
+        origemAtrasoLiberacao: true,
         perdidoAt: true,
         stage: true,
       },
@@ -151,8 +167,21 @@ export class TriagemService {
     if (!lead || lead.perdidoAt) {
       throw new NotFoundException('Lead não encontrado.');
     }
-    if (lead.corretorId !== requester.id) {
-      throw new NotFoundException('Lead não encontrado.');
+
+    if (isCorretorLike(requester.role)) {
+      if (lead.corretorId !== requester.id) {
+        throw new NotFoundException('Lead não encontrado.');
+      }
+    } else {
+      const allowed = await this.teamScope.canAccessCorretor(
+        requester,
+        lead.corretorId,
+        lead.equipeId,
+        lead.origemAtrasoLiberacao,
+      );
+      if (!allowed) {
+        throw new NotFoundException('Lead não encontrado.');
+      }
     }
 
     const texto = dto.texto.trim();
@@ -174,18 +203,36 @@ export class TriagemService {
         stageNovo = targetStage;
         shouldUpdateStage = true;
       } else if (origem === TriagemOrigem.funil) {
-        // Funil já avançou a etapa; registra só a etapa atual no histórico.
+        // Funil já avançou a etapa; o relato consolida o único acontecimento.
+        stageNovo = targetStage;
+        const from = dto.stageAnterior?.trim();
+        if (from && from !== targetStage) {
+          stageAnterior = from;
+        }
+      } else {
+        // Mesma etapa (manual): registra que a etapa foi mantida.
         stageNovo = targetStage;
       }
+    } else {
+      // Sem mudança de etapa: grava a etapa atual no histórico.
+      stageNovo = lead.stage;
     }
 
+    const now = new Date();
+    const timing =
+      shouldUpdateStage && targetStage
+        ? await this.monitoramento.stageChangeData(tenantId, targetStage, now)
+        : await this.monitoramento.followUpData(tenantId, lead.stage, now);
+
     const event = await this.prisma.$transaction(async (tx) => {
-      if (shouldUpdateStage && targetStage) {
-        await tx.lead.update({
-          where: { id: lead.id },
-          data: { stage: targetStage },
-        });
-      }
+      await tx.lead.update({
+        where: { id: lead.id },
+        data: {
+          ...(shouldUpdateStage && targetStage ? { stage: targetStage } : {}),
+          ...timing,
+          lastTriagemAt: now,
+        },
+      });
 
       return tx.triagemEvent.create({
         data: {
@@ -214,6 +261,205 @@ export class TriagemService {
     return event;
   }
 
+  /**
+   * O autor edita o texto do próprio relato (treinee, corretor, gerente ou admin).
+   * Guarda o texto anterior para consulta.
+   */
+  async update(
+    id: string,
+    dto: UpdateTriagemDto,
+    requester: AuthenticatedUser,
+  ) {
+    requireTenantId(requester);
+
+    if (!canWriteTriagem(requester.role)) {
+      throw new ForbiddenException(
+        'Apenas o autor pode editar o próprio relato.',
+      );
+    }
+
+    const texto = dto.texto.trim();
+    if (!texto) {
+      throw new BadRequestException('Informe o relato.');
+    }
+
+    const existing = await this.prisma.triagemEvent.findFirst({
+      where: { id, autorId: requester.id },
+      select: {
+        id: true,
+        texto: true,
+        lead: {
+          select: { id: true, tenantId: true, perdidoAt: true, stage: true },
+        },
+      },
+    });
+
+    if (!existing || existing.lead.perdidoAt) {
+      throw new NotFoundException('Relato não encontrado.');
+    }
+
+    if (existing.lead.tenantId !== requester.tenantId) {
+      throw new NotFoundException('Relato não encontrado.');
+    }
+
+    if (texto === existing.texto) {
+      return this.prisma.triagemEvent.findFirstOrThrow({
+        where: { id },
+        select: eventSelect,
+      });
+    }
+
+    const now = new Date();
+    const followUp = await this.monitoramento.followUpData(
+      existing.lead.tenantId,
+      existing.lead.stage,
+      now,
+    );
+
+    const [, event] = await this.prisma.$transaction([
+      this.prisma.lead.update({
+        where: { id: existing.lead.id },
+        data: followUp,
+      }),
+      this.prisma.triagemEvent.update({
+        where: { id },
+        data: {
+          textoAnterior: existing.texto,
+          texto,
+          editedAt: now,
+        },
+        select: eventSelect,
+      }),
+    ]);
+
+    return event;
+  }
+
+  /**
+   * KPIs da tela: tempo médio até o próximo relato, atualizações no dia
+   * e corretor com menor tempo médio no escopo.
+   */
+  async kpis(query: QueryTriagemKpisDto, requester: AuthenticatedUser) {
+    const scope = await this.teamScope.leadScope(requester);
+    const equipeWhere = query.semEquipe
+      ? { equipeId: null }
+      : query.equipeId
+        ? { equipeId: query.equipeId }
+        : {};
+
+    const events = await this.prisma.triagemEvent.findMany({
+      where: {
+        lead: {
+          AND: [
+            scope,
+            { tipo: ContatoTipo.lead, perdidoAt: null },
+            equipeWhere,
+          ],
+        },
+      },
+      select: {
+        leadId: true,
+        createdAt: true,
+        lead: {
+          select: {
+            createdAt: true,
+            corretorId: true,
+            corretor: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: [{ leadId: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    const { start: todayStart, end: todayEnd } = saoPauloDayBounds();
+    const yesterdayStart = new Date(todayStart.getTime() - 86_400_000);
+
+    const durations: { ms: number; corretorId: string | null; nome: string }[] =
+      [];
+    let prevLeadId: string | null = null;
+    let prevAt: Date | null = null;
+
+    for (const event of events) {
+      const baseline =
+        event.leadId === prevLeadId && prevAt
+          ? prevAt
+          : event.lead.createdAt;
+      const ms = event.createdAt.getTime() - baseline.getTime();
+      if (ms > 0) {
+        durations.push({
+          ms,
+          corretorId: event.lead.corretorId,
+          nome: event.lead.corretor?.name?.trim() || 'Sem corretor',
+        });
+      }
+      prevLeadId = event.leadId;
+      prevAt = event.createdAt;
+    }
+
+    const avgMs = durations.length
+      ? Math.round(
+          durations.reduce((sum, item) => sum + item.ms, 0) / durations.length,
+        )
+      : 0;
+
+    const byCorretor = new Map<
+      string,
+      { nome: string; total: number; count: number }
+    >();
+    for (const item of durations) {
+      const key = item.corretorId ?? '__none__';
+      const current = byCorretor.get(key) ?? {
+        nome: item.nome,
+        total: 0,
+        count: 0,
+      };
+      current.total += item.ms;
+      current.count += 1;
+      byCorretor.set(key, current);
+    }
+
+    let maisRapida: {
+      corretorId: string | null;
+      nome: string;
+      tempoMedioMs: number;
+    } | null = null;
+    for (const [key, stats] of byCorretor) {
+      const tempoMedioMs = Math.round(stats.total / stats.count);
+      if (!maisRapida || tempoMedioMs < maisRapida.tempoMedioMs) {
+        maisRapida = {
+          corretorId: key === '__none__' ? null : key,
+          nome: stats.nome,
+          tempoMedioMs,
+        };
+      }
+    }
+
+    const atualizadosHoje = new Set(
+      events
+        .filter(
+          (event) =>
+            event.createdAt >= todayStart && event.createdAt < todayEnd,
+        )
+        .map((event) => event.leadId),
+    ).size;
+    const atualizadosOntem = new Set(
+      events
+        .filter(
+          (event) =>
+            event.createdAt >= yesterdayStart && event.createdAt < todayStart,
+        )
+        .map((event) => event.leadId),
+    ).size;
+
+    return {
+      tempoMedioMs: avgMs,
+      amostra: durations.length,
+      atualizadosHoje,
+      atualizadosOntem,
+      maisRapida,
+    };
+  }
+
   private async ensureLeadAccessible(
     leadId: string,
     requester: AuthenticatedUser,
@@ -227,6 +473,9 @@ export class TriagemService {
         nome: true,
         stage: true,
         corretorId: true,
+        equipeId: true,
+        origemAtrasoLiberacao: true,
+        triagemOrigemHerdada: true,
         perdidoAt: true,
         corretor: { select: { id: true, name: true } },
       },
@@ -236,17 +485,11 @@ export class TriagemService {
       throw new NotFoundException('Lead não encontrado.');
     }
 
-    // Gerente/admin não consultam clientes na triagem.
-    if (
-      requester.role !== Role.corretor &&
-      lead.tipo === ContatoTipo.cliente
-    ) {
-      throw new NotFoundException('Lead não encontrado.');
-    }
-
     const allowed = await this.teamScope.canAccessCorretor(
       requester,
       lead.corretorId,
+      lead.equipeId,
+      lead.origemAtrasoLiberacao,
     );
     if (!allowed) {
       throw new NotFoundException('Lead não encontrado.');
@@ -269,4 +512,20 @@ export class TriagemService {
       throw new BadRequestException('Etapa do funil inválida.');
     }
   }
+}
+
+/** Meia-noite em America/Sao_Paulo (UTC-3 o ano inteiro). */
+function saoPauloDayBounds(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const year = Number(parts.find((p) => p.type === 'year')?.value);
+  const month = Number(parts.find((p) => p.type === 'month')?.value);
+  const day = Number(parts.find((p) => p.type === 'day')?.value);
+  const start = new Date(Date.UTC(year, month - 1, day, 3, 0, 0, 0));
+  const end = new Date(start.getTime() + 86_400_000);
+  return { start, end };
 }

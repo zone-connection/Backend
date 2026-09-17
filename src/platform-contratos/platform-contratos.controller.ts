@@ -15,6 +15,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { BaixarParcelaDto } from './dto/baixar-parcela.dto';
+import { CreatePlatformContratoComTitulosDto } from './dto/create-platform-contrato-com-titulos.dto';
 import { CreatePlatformContratoDto } from './dto/create-platform-contrato.dto';
 import { UpdatePlatformContratoDto } from './dto/update-platform-contrato.dto';
 import { PlatformContratosService } from './platform-contratos.service';
@@ -28,6 +29,14 @@ export class PlatformContratosController {
   @Get()
   list(@CurrentUser() requester: AuthenticatedUser) {
     return this.service.list(requester);
+  }
+
+  @Post('com-titulos')
+  createComTitulos(
+    @Body() dto: CreatePlatformContratoComTitulosDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.service.createComTitulos(dto, requester);
   }
 
   @Get(':id')

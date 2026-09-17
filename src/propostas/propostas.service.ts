@@ -1,16 +1,19 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
-} from '@nestjs/common';
-import { Prisma, PropostaStatus, Role } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { TeamScopeService } from '../equipes/team-scope.service';
-import { AuthenticatedUser } from '../common/types/authenticated-user';
-import { requireTenantId } from '../common/utils/tenant';
-import { CreatePropostaDto } from './dto/create-proposta.dto';
-import { UpdatePropostaDto } from './dto/update-proposta.dto';
-import { QueryPropostaDto } from './dto/query-proposta.dto';
+  ServiceUnavailableException,
+} from "@nestjs/common";
+import { Prisma, PropostaStatus, Role } from "@prisma/client";
+import { PrismaService } from "../prisma/prisma.service";
+import { TeamScopeService } from "../equipes/team-scope.service";
+import { AuthenticatedUser } from "../common/types/authenticated-user";
+import { requireTenantId } from "../common/utils/tenant";
+import { prismaTableOrderBy } from "../common/utils/table-sort";
+import { CreatePropostaDto } from "./dto/create-proposta.dto";
+import { UpdatePropostaDto } from "./dto/update-proposta.dto";
+import { QueryPropostaDto } from "./dto/query-proposta.dto";
 
 const userMini = { select: { id: true, name: true } } as const;
 
@@ -20,6 +23,36 @@ const propostaSelect = {
   leadId: true,
   clienteNome: true,
   clienteTelefone: true,
+  clienteCpf: true,
+  clienteRg: true,
+  clienteRgOrgaoEmissor: true,
+  clienteDataNascimento: true,
+  clienteNacionalidade: true,
+  clienteEstadoCivil: true,
+  clienteRegimeBens: true,
+  clienteDataCasamento: true,
+  clienteNomePai: true,
+  clienteNomeMae: true,
+  clienteRenda: true,
+  clienteTelefoneFixo: true,
+  clienteEmail: true,
+  clienteEnderecoResidencial: true,
+  clienteBairroResidencial: true,
+  clienteCidadeResidencial: true,
+  clienteUfResidencial: true,
+  clienteCepResidencial: true,
+  clienteCobrancaResidencial: true,
+  clienteEmpregador: true,
+  clienteProfissao: true,
+  clienteEnderecoComercial: true,
+  clienteBairroComercial: true,
+  clienteCidadeComercial: true,
+  clienteUfComercial: true,
+  clienteCepComercial: true,
+  clienteCobrancaComercial: true,
+  clienteSite: true,
+  clienteTelefoneComercial1: true,
+  clienteTelefoneComercial2: true,
   construtoraId: true,
   empreendimentoId: true,
   unidade: true,
@@ -27,7 +60,16 @@ const propostaSelect = {
   autorId: true,
   valor: true,
   entrada: true,
+  apartado: true,
+  preChaves: true,
+  posChaves: true,
+  intercaladas: true,
+  fgts: true,
+  moraBem: true,
+  mcmv: true,
+  parcelaCaixa: true,
   financiamento: true,
+  desconto: true,
   status: true,
   validade: true,
   enviadaEm: true,
@@ -52,8 +94,69 @@ const propostaSelect = {
 
 function parseOptionalDate(value?: string | null): Date | null | undefined {
   if (value === undefined) return undefined;
-  if (value === null || value === '') return null;
+  if (value === null || value === "") return null;
   return new Date(value);
+}
+
+const clienteTextFields = [
+  "clienteCpf",
+  "clienteRg",
+  "clienteRgOrgaoEmissor",
+  "clienteNacionalidade",
+  "clienteEstadoCivil",
+  "clienteRegimeBens",
+  "clienteNomePai",
+  "clienteNomeMae",
+  "clienteTelefoneFixo",
+  "clienteEmail",
+  "clienteEnderecoResidencial",
+  "clienteBairroResidencial",
+  "clienteCidadeResidencial",
+  "clienteUfResidencial",
+  "clienteCepResidencial",
+  "clienteEmpregador",
+  "clienteProfissao",
+  "clienteEnderecoComercial",
+  "clienteBairroComercial",
+  "clienteCidadeComercial",
+  "clienteUfComercial",
+  "clienteCepComercial",
+  "clienteSite",
+  "clienteTelefoneComercial1",
+  "clienteTelefoneComercial2",
+] as const;
+
+function clienteDados(
+  dto: CreatePropostaDto | UpdatePropostaDto,
+  includeEmpty: boolean,
+): Partial<Prisma.PropostaUncheckedCreateInput> {
+  const data: Record<string, unknown> = {};
+  const input = dto as Record<string, unknown>;
+
+  for (const field of clienteTextFields) {
+    if (includeEmpty || input[field] !== undefined) {
+      data[field] =
+        typeof input[field] === "string" && input[field].trim()
+          ? input[field].trim()
+          : null;
+    }
+  }
+
+  for (const field of ["clienteDataNascimento", "clienteDataCasamento"]) {
+    if (includeEmpty || input[field] !== undefined) {
+      data[field] = parseOptionalDate(input[field] as string | null);
+    }
+  }
+
+  for (const field of [
+    "clienteRenda",
+    "clienteCobrancaResidencial",
+    "clienteCobrancaComercial",
+  ]) {
+    if (includeEmpty || input[field] !== undefined) data[field] = input[field];
+  }
+
+  return data as Partial<Prisma.PropostaUncheckedCreateInput>;
 }
 
 @Injectable()
@@ -67,16 +170,7 @@ export class PropostasService {
     const tenantId = requireTenantId(requester);
     const where: Prisma.PropostaWhereInput = { tenantId };
 
-    if (requester.role === Role.corretor) {
-      where.OR = [
-        { corretorId: requester.id },
-        { autorId: requester.id },
-        { lead: { corretorId: requester.id } },
-      ];
-    } else if (
-      requester.role !== Role.admin &&
-      requester.role !== Role.analista
-    ) {
+    if (requester.role !== Role.admin) {
       const leadScope = await this.teamScope.leadScope(requester);
       const corretorIds = await this.allowedCorretorIds(requester);
       where.OR = [
@@ -86,7 +180,7 @@ export class PropostasService {
       ];
     }
 
-    if (query.corretorId && requester.role !== Role.corretor) {
+    if (query.corretorId) {
       const allowed = await this.teamScope.canAccessCorretor(
         requester,
         query.corretorId,
@@ -100,8 +194,58 @@ export class PropostasService {
     return this.prisma.proposta.findMany({
       where,
       select: propostaSelect,
-      orderBy: { createdAt: 'desc' },
+      orderBy: prismaTableOrderBy(query.sort, "clienteNome"),
     });
+  }
+
+  async buscarCep(cep: string, requester: AuthenticatedUser) {
+    requireTenantId(requester);
+    const digits = cep.replace(/\D/g, "");
+    if (digits.length !== 8) {
+      throw new BadRequestException("Informe um CEP com 8 dígitos.");
+    }
+
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${digits}/json/`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        throw new ServiceUnavailableException(
+          "Não foi possível consultar o CEP agora.",
+        );
+      }
+      const result = (await response.json()) as {
+        erro?: boolean;
+        cep?: string;
+        logradouro?: string;
+        complemento?: string;
+        bairro?: string;
+        localidade?: string;
+        uf?: string;
+      };
+      if (result.erro) {
+        throw new NotFoundException("CEP não encontrado.");
+      }
+      return {
+        cep: result.cep ?? digits,
+        endereco: result.logradouro ?? "",
+        complemento: result.complemento ?? "",
+        bairro: result.bairro ?? "",
+        cidade: result.localidade ?? "",
+        uf: result.uf ?? "",
+      };
+    } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException ||
+        error instanceof ServiceUnavailableException
+      ) {
+        throw error;
+      }
+      throw new ServiceUnavailableException(
+        "Não foi possível consultar o CEP agora.",
+      );
+    }
   }
 
   async findOne(id: string, requester: AuthenticatedUser) {
@@ -110,7 +254,7 @@ export class PropostasService {
       where: { id, tenantId },
       select: propostaSelect,
     });
-    if (!item) throw new NotFoundException('Proposta não encontrada.');
+    if (!item) throw new NotFoundException("Proposta não encontrada.");
     await this.ensureAccessible(item, requester);
     return item;
   }
@@ -131,8 +275,6 @@ export class PropostasService {
       corretorId = corretorId || lead.corretorId;
       construtoraId = construtoraId || lead.construtoraId;
       empreendimentoId = empreendimentoId || lead.empreendimentoId;
-    } else if (requester.role === Role.corretor) {
-      corretorId = requester.id;
     }
 
     if (corretorId) {
@@ -141,7 +283,7 @@ export class PropostasService {
         corretorId,
       );
       if (!allowed) {
-        throw new ForbiddenException('Corretor fora do seu escopo.');
+        throw new ForbiddenException("Corretor fora do seu escopo.");
       }
     }
 
@@ -155,6 +297,7 @@ export class PropostasService {
         leadId: dto.leadId || null,
         clienteNome,
         clienteTelefone,
+        ...clienteDados(dto, true),
         construtoraId,
         empreendimentoId,
         unidade: dto.unidade?.trim() || null,
@@ -162,7 +305,16 @@ export class PropostasService {
         autorId: requester.id,
         valor: dto.valor,
         entrada: dto.entrada ?? null,
+        apartado: dto.apartado ?? null,
+        preChaves: dto.preChaves ?? [],
+        posChaves: dto.posChaves ?? [],
+        intercaladas: dto.intercaladas ?? [],
+        fgts: dto.fgts ?? null,
+        moraBem: dto.moraBem ?? null,
+        mcmv: dto.mcmv ?? null,
+        parcelaCaixa: dto.parcelaCaixa ?? null,
         financiamento: dto.financiamento ?? null,
+        desconto: dto.desconto ?? null,
         status,
         validade: parseOptionalDate(dto.validade) ?? null,
         enviadaEm:
@@ -194,18 +346,29 @@ export class PropostasService {
         enviadaEm: true,
       },
     });
-    if (!existing) throw new NotFoundException('Proposta não encontrada.');
+    if (!existing) throw new NotFoundException("Proposta não encontrada.");
     await this.ensureAccessible(existing, requester);
 
     const data: Prisma.PropostaUpdateInput = {};
-    if (dto.clienteNome !== undefined) data.clienteNome = dto.clienteNome.trim();
+    if (dto.clienteNome !== undefined)
+      data.clienteNome = dto.clienteNome.trim();
     if (dto.clienteTelefone !== undefined) {
       data.clienteTelefone = dto.clienteTelefone?.trim() || null;
     }
+    Object.assign(data, clienteDados(dto, false));
     if (dto.unidade !== undefined) data.unidade = dto.unidade?.trim() || null;
     if (dto.valor !== undefined) data.valor = dto.valor;
     if (dto.entrada !== undefined) data.entrada = dto.entrada;
+    if (dto.apartado !== undefined) data.apartado = dto.apartado;
+    if (dto.preChaves !== undefined) data.preChaves = dto.preChaves;
+    if (dto.posChaves !== undefined) data.posChaves = dto.posChaves;
+    if (dto.intercaladas !== undefined) data.intercaladas = dto.intercaladas;
+    if (dto.fgts !== undefined) data.fgts = dto.fgts;
+    if (dto.moraBem !== undefined) data.moraBem = dto.moraBem;
+    if (dto.mcmv !== undefined) data.mcmv = dto.mcmv;
+    if (dto.parcelaCaixa !== undefined) data.parcelaCaixa = dto.parcelaCaixa;
     if (dto.financiamento !== undefined) data.financiamento = dto.financiamento;
+    if (dto.desconto !== undefined) data.desconto = dto.desconto;
     if (dto.observacao !== undefined) {
       data.observacao = dto.observacao?.trim() || null;
     }
@@ -229,7 +392,7 @@ export class PropostasService {
           dto.corretorId,
         );
         if (!allowed) {
-          throw new ForbiddenException('Corretor fora do seu escopo.');
+          throw new ForbiddenException("Corretor fora do seu escopo.");
         }
         data.corretor = { connect: { id: dto.corretorId } };
       } else {
@@ -273,17 +436,8 @@ export class PropostasService {
       where: { id, tenantId },
       select: { id: true, autorId: true, corretorId: true, leadId: true },
     });
-    if (!existing) throw new NotFoundException('Proposta não encontrada.');
+    if (!existing) throw new NotFoundException("Proposta não encontrada.");
     await this.ensureAccessible(existing, requester);
-
-    if (
-      requester.role === Role.corretor &&
-      existing.autorId !== requester.id
-    ) {
-      throw new ForbiddenException(
-        'Você só pode excluir propostas que criou.',
-      );
-    }
 
     await this.prisma.proposta.delete({ where: { id } });
     return { ok: true };
@@ -294,11 +448,11 @@ export class PropostasService {
     const prefix = `PROP-${year}-`;
     const last = await this.prisma.proposta.findFirst({
       where: { tenantId, codigo: { startsWith: prefix } },
-      orderBy: { codigo: 'desc' },
+      orderBy: { codigo: "desc" },
       select: { codigo: true },
     });
     const seq = last ? Number(last.codigo.slice(prefix.length)) + 1 : 1;
-    return `${prefix}${String(Number.isFinite(seq) ? seq : 1).padStart(4, '0')}`;
+    return `${prefix}${String(Number.isFinite(seq) ? seq : 1).padStart(4, "0")}`;
   }
 
   private async allowedCorretorIds(requester: AuthenticatedUser) {
@@ -310,34 +464,26 @@ export class PropostasService {
     item: { autorId: string; corretorId: string | null; leadId: string | null },
     requester: AuthenticatedUser,
   ) {
-    if (requester.role === Role.admin || requester.role === Role.analista) return;
-    if (requester.role === Role.corretor) {
-      if (
-        item.autorId === requester.id ||
-        item.corretorId === requester.id
-      ) {
-        return;
-      }
-      if (item.leadId) {
-        await this.ensureLeadAccessible(item.leadId, requester);
-        return;
-      }
-      throw new NotFoundException('Proposta não encontrada.');
+    if (requester.role === Role.admin) return;
+    if (requester.role !== Role.gerente) {
+      throw new ForbiddenException(
+        "Apenas administradores e gerentes podem acessar propostas.",
+      );
     }
     if (item.corretorId) {
       const allowed = await this.teamScope.canAccessCorretor(
         requester,
         item.corretorId,
       );
-      if (!allowed) throw new NotFoundException('Proposta não encontrada.');
+      if (!allowed) throw new NotFoundException("Proposta não encontrada.");
       return;
     }
     if (item.leadId) {
       await this.ensureLeadAccessible(item.leadId, requester);
       return;
     }
-    if (item.autorId !== requester.id && requester.role !== Role.gerente) {
-      throw new NotFoundException('Proposta não encontrada.');
+    if (item.autorId !== requester.id) {
+      throw new NotFoundException("Proposta não encontrada.");
     }
   }
 
@@ -357,12 +503,12 @@ export class PropostasService {
         empreendimentoId: true,
       },
     });
-    if (!lead) throw new NotFoundException('Lead/cliente não encontrado.');
+    if (!lead) throw new NotFoundException("Lead/cliente não encontrado.");
     const allowed = await this.teamScope.canAccessCorretor(
       requester,
       lead.corretorId,
     );
-    if (!allowed) throw new NotFoundException('Lead/cliente não encontrado.');
+    if (!allowed) throw new NotFoundException("Lead/cliente não encontrado.");
     return lead;
   }
 }
