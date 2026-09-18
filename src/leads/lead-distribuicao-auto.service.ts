@@ -13,7 +13,6 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
-import { whereNotRetrabalho } from '../equipes/lead-retrabalho.where';
 
 const INTERVAL_MS = 60 * 1000;
 const MAX_PER_TENANT = 40;
@@ -118,7 +117,6 @@ export class LeadDistribuicaoAutoService
         perdidoAt: null,
         corretorId: null,
         equipeId: null,
-        ...whereNotRetrabalho,
       },
       select: {
         id: true,

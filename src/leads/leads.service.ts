@@ -2070,7 +2070,6 @@ export class LeadsService {
       perdidoAt: null,
       corretorId: null,
       equipeId: null,
-      ...whereNotRetrabalho,
     };
   }
 
