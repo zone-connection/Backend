@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -110,6 +111,8 @@ function maskMetaConnection(connection: MetaConnection) {
 
 @Injectable()
 export class TenantsService {
+  private readonly logger = new Logger(TenantsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantLogoColor: TenantLogoColorService,
@@ -491,9 +494,8 @@ export class TenantsService {
   }
 
   /**
-   * Remove o tenant e os dados vinculados.
-   * Alguns FKs são Restrict (comissões → usuário/documentação, captação →
-   * funil, equipes → gerente). O cascade do tenant sozinho estoura P2003.
+   * Remove o tenant e todos os dados vinculados (leads, usuários, financeiro…).
+   * FKs Restrict impedem o cascade puro; apagamos o grafo na ordem certa.
    */
   async remove(id: string) {
     if (id === PLATFORM_TENANT_ID) {
@@ -512,19 +514,21 @@ export class TenantsService {
     try {
       await this.prisma.$transaction(
         async (tx) => {
-          await this.deleteTenantRestrictedRows(tx, id);
-          await tx.equipe.deleteMany({ where: { tenantId: id } });
+          await this.wipeTenantOwnedRows(tx, id);
           await tx.tenant.delete({ where: { id } });
         },
-        { maxWait: 15_000, timeout: 120_000 },
+        { maxWait: 15_000, timeout: 180_000 },
       );
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2003'
       ) {
+        this.logger.error(
+          `Falha ao excluir tenant ${id}: ${JSON.stringify(error.meta)}`,
+        );
         throw new ConflictException(
-          'Não foi possível excluir o tenant: ainda há dados vinculados. Tente novamente ou contate o suporte.',
+          'Não foi possível excluir o tenant por um vínculo interno. Tente novamente.',
         );
       }
       throw error;
@@ -533,16 +537,39 @@ export class TenantsService {
     return { id: tenant.id, name: tenant.name, slug: tenant.slug };
   }
 
-  /** Apaga tabelas com Restrict antes do cascade do tenant/usuário. */
-  private async deleteTenantRestrictedRows(
+  /** Apaga o conteúdo do tenant antes do DELETE em `tenants`. */
+  private async wipeTenantOwnedRows(
     tx: Prisma.TransactionClient,
     tenantId: string,
   ) {
+    await tx.financeiroDespesa.updateMany({
+      where: { tenantId },
+      data: { origemId: null },
+    });
+    await tx.financeiroRecebimento.updateMany({
+      where: { tenantId },
+      data: { origemId: null },
+    });
+    await tx.treinamentoLink.deleteMany({ where: { tenantId } });
+    await tx.treinamentoSecao.updateMany({
+      where: { tenantId },
+      data: { parentId: null },
+    });
+    await tx.treinamentoSecao.deleteMany({ where: { tenantId } });
+
     await tx.financeiroMovimento.deleteMany({ where: { tenantId } });
     await tx.financeiroTitulo.deleteMany({ where: { tenantId } });
     await tx.financeiroComissao.deleteMany({ where: { tenantId } });
     await tx.financeiroDespesa.deleteMany({ where: { tenantId } });
     await tx.financeiroRecebimento.deleteMany({ where: { tenantId } });
+    await tx.platformContrato.deleteMany({ where: { tenantId } });
+    await tx.platformFornecedorContrato.deleteMany({
+      where: { parceiro: { tenantId } },
+    });
+    await tx.financeiroDespesaTipo.deleteMany({ where: { tenantId } });
+    await tx.financeiroRecebimentoTipo.deleteMany({ where: { tenantId } });
+    await tx.financeiroCategoria.deleteMany({ where: { tenantId } });
+    await tx.financeiroParceiro.deleteMany({ where: { tenantId } });
 
     await tx.vendaUsadoPosVendaPendencia.deleteMany({ where: { tenantId } });
     await tx.vendaUsadoPosVenda.deleteMany({ where: { tenantId } });
@@ -562,12 +589,43 @@ export class TenantsService {
 
     await tx.captacaoHistorico.deleteMany({ where: { tenantId } });
     await tx.captacao.deleteMany({ where: { tenantId } });
+    await tx.parceria.deleteMany({ where: { tenantId } });
     await tx.imovelFoto.deleteMany({ where: { tenantId } });
     await tx.imovel.deleteMany({ where: { tenantId } });
     await tx.proprietarioPortalAcesso.deleteMany({ where: { tenantId } });
     await tx.proprietario.deleteMany({ where: { tenantId } });
 
     await tx.documentacao.deleteMany({ where: { tenantId } });
+    await tx.proposta.deleteMany({ where: { tenantId } });
+    await tx.analise.deleteMany({ where: { tenantId } });
+    await tx.leadPrazoAdiamento.deleteMany({ where: { tenantId } });
+    await tx.leadReatribuicao.deleteMany({ where: { tenantId } });
+    await tx.lead.deleteMany({ where: { tenantId } });
+
+    await tx.agendamento.deleteMany({ where: { tenantId } });
+    await tx.notificacao.deleteMany({ where: { tenantId } });
+    await tx.meta.deleteMany({ where: { tenantId } });
+    await tx.catalogItem.deleteMany({ where: { tenantId } });
+    await tx.construtora.deleteMany({ where: { tenantId } });
+    await tx.empreendimento.deleteMany({ where: { tenantId } });
+    await tx.localidade.deleteMany({ where: { tenantId } });
+
+    await tx.contracheque.deleteMany({ where: { tenantId } });
+    await tx.funcionario.deleteMany({ where: { tenantId } });
+    await tx.equipeFunil.deleteMany({ where: { tenantId } });
+    await tx.funil.deleteMany({ where: { tenantId } });
+
+    await tx.tenantMetaConnection.deleteMany({ where: { tenantId } });
+    await tx.tenantOzapConnection.deleteMany({ where: { tenantId } });
+    await tx.tenantOruloConnection.deleteMany({ where: { tenantId } });
+    await tx.userSessionSegment.deleteMany({ where: { tenantId } });
+
+    await tx.user.updateMany({
+      where: { tenantId },
+      data: { equipeId: null },
+    });
+    await tx.equipe.deleteMany({ where: { tenantId } });
+    await tx.user.deleteMany({ where: { tenantId } });
   }
 
   /**
