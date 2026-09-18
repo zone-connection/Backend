@@ -77,6 +77,7 @@ export const PERMISSION_MODULES = [
   { key: 'imoveis', label: 'Imóveis', routes: ['/imoveis'], group: 'catalogo' },
   { key: 'corretores', label: 'Ranking', routes: ['/corretores'], group: 'gestao' },
   { key: 'atrasos', label: 'Atrasos', routes: ['/atrasos'], group: 'gestao' },
+  { key: 'presenca', label: 'Presença', routes: ['/presenca'], group: 'gestao' },
   { key: 'metas', label: 'Metas', routes: ['/metas'], group: 'gestao' },
   { key: 'analise', label: 'Análise', routes: ['/resultado'], group: 'gestao' },
   {
@@ -192,6 +193,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/vendas',
     '/configuracoes',
     '/financeiro',
+    '/presenca',
   ],
   admin: [
     '/dashboard',
@@ -206,6 +208,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/clientes',
     '/corretores',
     '/atrasos',
+    '/presenca',
     '/metas',
     '/triagem',
     '/documentacao',
@@ -236,6 +239,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/clientes',
     '/corretores',
     '/atrasos',
+    '/presenca',
     '/metas',
     '/triagem',
     '/documentacao',
@@ -260,6 +264,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/treinamento',
     '/clientes',
     '/clientes-perdidos',
+    '/presenca',
     '/metas',
     '/triagem',
     '/documentacao',
@@ -272,6 +277,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
   analista: [
     '/caca-lead',
     '/resultado',
+    '/presenca',
     '/documentacao',
     '/contratos',
     '/imoveis',
@@ -291,9 +297,10 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/financeiro/contas-a-pagar',
     '/financeiro/despesas',
     '/financeiro/comissao',
+    '/presenca',
     '/perfil',
   ],
-    treinee: [
+  treinee: [
     '/dashboard',
     '/leads',
     '/caca-lead',
@@ -304,6 +311,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/treinamento',
     '/clientes',
     '/clientes-perdidos',
+    '/presenca',
     '/metas',
     '/triagem',
     '/documentacao',
@@ -315,7 +323,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/perfil',
   ],
   /** Solo: acesso só via permissions liberadas pelo admin. */
-  assistente: ['/perfil', '/caca-lead'],
+  assistente: ['/perfil', '/caca-lead', '/presenca'],
 };
 
 function roleHasRoute(role: Role, route: string): boolean {
@@ -448,7 +456,7 @@ export function hasAnyUserModule(
 }
 
 /** Prefixos de escrita que continuam restritos ao cargo (não bastam módulos). */
-const SENSITIVE_WRITE_PREFIXES = ['users', 'tenants', 'equipes'] as const;
+const SENSITIVE_WRITE_PREFIXES = ['users', 'tenants', 'equipes', 'presenca'] as const;
 
 /**
  * Módulos de permissão que liberam um path da API além do @Roles.
@@ -473,6 +481,7 @@ export function modulesForApiPath(rawPath: string): string[] {
     return ['comissao', 'financeiro'];
   }
   if (path.includes('financeiro')) return ['financeiro'];
+  if (path.startsWith('presenca')) return ['presenca'];
   if (path.startsWith('documentacao')) return ['documentacao', 'vendas'];
   if (path.startsWith('propostas')) return ['propostas'];
   if (path.startsWith('contratos')) return ['contratos'];

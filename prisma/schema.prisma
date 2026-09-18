@@ -204,6 +204,8 @@ model Tenant {
   funcionarios                   Funcionario[]
   contracheques                  Contracheque[]
   leadReatribuicoes              LeadReatribuicao[]
+  presencaTipos                  PresencaTipo[]
+  presencaLancamentos            PresencaLancamento[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -431,6 +433,7 @@ model User {
   vendasUsadoPosVendaPendencia    VendaUsadoPosVendaPendencia[] @relation("VendaUsadoPosVendaPendenciaResponsavel")
   parceriasConvidadas             Parceria[] @relation("ParceriaConvidadoPor")
   parceriasParticipacaoCasa       ParceriaParticipacao[] @relation("ParceriaParticipacaoResponsavel")
+  presencaLancamentos             PresencaLancamento[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3014,4 +3017,54 @@ model Contracheque {
   @@unique([funcionarioId, competenciaMes, competenciaAno])
   @@index([tenantId, competenciaAno, competenciaMes])
   @@map("contracheques")
+}
+
+enum PresencaNatureza {
+  presente
+  meio_periodo
+  falta
+  falta_justificada
+}
+
+model PresencaTipo {
+  id        String           @id @default(cuid())
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nome      String
+  sigla     String
+  natureza  PresencaNatureza
+  cor       String           @default("#64748b")
+  sortOrder Int              @default(0)
+  ativo     Boolean          @default(true)
+  padrao    Boolean          @default(false)
+  /// Vazio = vale para todas as funções do tenant.
+  roles     String[]         @default([])
+
+  lancamentos PresencaLancamento[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, ativo])
+  @@map("presenca_tipos")
+}
+
+model PresencaLancamento {
+  id        String       @id @default(cuid())
+  tenantId  String
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  data      DateTime     @db.Date
+  tipoId    String
+  tipo      PresencaTipo @relation(fields: [tipoId], references: [id], onDelete: Restrict)
+  observacao String      @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, userId, data])
+  @@index([tenantId, data])
+  @@index([userId, data])
+  @@map("presenca_lancamentos")
 }

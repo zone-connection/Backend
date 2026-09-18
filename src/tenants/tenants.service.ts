@@ -542,6 +542,8 @@ export class TenantsService {
     tx: Prisma.TransactionClient,
     tenantId: string,
   ) {
+    await tx.presencaLancamento.deleteMany({ where: { tenantId } });
+    await tx.presencaTipo.deleteMany({ where: { tenantId } });
     await tx.financeiroDespesa.updateMany({
       where: { tenantId },
       data: { origemId: null },
