@@ -173,6 +173,18 @@ export class EmpreendimentoVitrineDto {
   lazer?: string[];
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(80, { each: true })
+  infraestrutura?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(80, { each: true })
+  detalhesUnidade?: string[];
+
+  @IsOptional()
   @IsString()
   @MaxLength(20)
   numero?: string | null;
@@ -191,4 +203,134 @@ export class EmpreendimentoVitrineDto {
   @IsString()
   @MaxLength(12)
   cep?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  website?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  tourVirtual?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  lancamento?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  unidades?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  andares?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  nomeCondominio?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  suites?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  areaMax?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  valorMax?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  valorM2?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  latitude?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  longitude?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  atualizadoEm?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  plantas?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EmpreendimentoTipologiaDto)
+  tipologias?: EmpreendimentoTipologiaDto[];
+}
+
+export class EmpreendimentoTipologiaDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  nome?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  areaM2?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  quartos?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  suites?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  banheiros?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  vagas?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  valor?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  pavimento?: string | null;
 }

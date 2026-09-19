@@ -109,7 +109,9 @@ export class EmpreendimentosService {
       select: empreendimentoSelect,
       orderBy: prismaTableOrderBy(query.sort, "nome"),
     });
-    return this.attachMatchResumo(items.map((item) => this.present(item)));
+    return this.attachMatchResumo(
+      items.map((item) => this.present(item, { capaOnly: true })),
+    );
   }
 
   async findOne(id: string, requester: AuthenticatedUser) {
@@ -201,7 +203,7 @@ export class EmpreendimentosService {
       vagas: item.vagas,
       valorReferencia: item.valorReferencia,
       areaM2: item.areaM2,
-      imagens: stored.map((image) => image.url),
+      imagens: stored.slice(0, 8).map((image) => image.largeUrl || image.url),
       localidade: item.localidade?.nome ?? null,
       construtora: item.construtora?.nome ?? null,
       vitrine: normalizeEmpreendimentoVitrine(item.vitrine),
@@ -466,9 +468,14 @@ export class EmpreendimentosService {
     }
   }
 
-  private present(item: EmpreendimentoRow) {
+  private present(
+    item: EmpreendimentoRow,
+    opts: { capaOnly?: boolean } = {},
+  ) {
     const stored = resolveEmpreendimentoImages(item);
     const { tenantId: _tenantId, previsaoEntrega, vitrine, ...rest } = item;
+    const capa = stored[0]?.url ?? null;
+    const imagens = stored.map((image) => image.largeUrl || image.url);
     return {
       ...rest,
       vitrine: normalizeEmpreendimentoVitrine(vitrine),
@@ -479,8 +486,8 @@ export class EmpreendimentosService {
       matchMuitoCompativeis: 0,
       matchInteressePrevio: 0,
       matchComputedAt: null as string | null,
-      imagens: stored.map((image) => image.url),
-      imagemUrl: stored[0]?.url ?? null,
+      imagens: opts.capaOnly ? (capa ? [capa] : []) : imagens,
+      imagemUrl: capa,
     };
   }
 

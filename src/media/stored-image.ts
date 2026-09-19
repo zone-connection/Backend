@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-export type StoredImage = { url: string; publicId: string };
+export type StoredImage = { url: string; publicId: string; largeUrl?: string };
 
 export const EMPREENDIMENTO_MAX_IMAGES = 15;
 export const CONSTRUTORA_MAX_IMAGES = 1;
@@ -15,9 +15,12 @@ export function parseStoredImages(
     const rec = item as Record<string, unknown>;
     const url = typeof rec.url === 'string' ? rec.url.trim() : '';
     if (!url) continue;
+    const largeUrl =
+      typeof rec.largeUrl === 'string' ? rec.largeUrl.trim() : '';
     out.push({
       url,
       publicId: typeof rec.publicId === 'string' ? rec.publicId.trim() : '',
+      ...(largeUrl ? { largeUrl } : {}),
     });
   }
   return out;
@@ -26,7 +29,11 @@ export function parseStoredImages(
 export function serializeStoredImages(
   images: StoredImage[],
 ): Prisma.InputJsonValue {
-  return images.map(({ url, publicId }) => ({ url, publicId }));
+  return images.map(({ url, publicId, largeUrl }) => ({
+    url,
+    publicId,
+    ...(largeUrl ? { largeUrl } : {}),
+  }));
 }
 
 export function resolveEmpreendimentoImages(

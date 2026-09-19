@@ -8,11 +8,14 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { serializeStoredImages, type StoredImage } from '../media/stored-image';
+import { normalizeEmpreendimentoVitrine } from '../empreendimentos/empreendimento-vitrine';
 import { OruloApiClient, OruloApiError } from './orulo-api.client';
 import {
   extractMediaUrls,
+  extractTypologies,
   idsChanged,
   mapBuildingToEmpreendimento,
+  mapBuildingVitrine,
 } from './orulo-mapper';
 import {
   decryptOruloSecret,
@@ -204,32 +207,59 @@ export class OruloSyncService implements OnModuleInit {
     let images: StoredImage[] = [
       ...extractMediaUrls(building.default_image),
       ...extractMediaUrls(building.images),
-      ...extractMediaUrls(building.floor_plans),
     ].slice(0, ORULO_MAX_IMAGES);
-    if (needMedia) {
-      const extra: StoredImage[] = [];
-      for (const load of [
-        () => this.api.getImages(token, buildingId),
-        () => this.api.getFloorPlans(token, buildingId),
-      ]) {
-        try {
-          extra.push(...extractMediaUrls(await load()));
-        } catch (error) {
-          this.logger.warn(
-            `Mídia Órulo #${buildingId}: ${
-              error instanceof Error ? error.message : error
-            }`,
-          );
-        }
+    let plantas: StoredImage[] = extractMediaUrls(building.floor_plans).slice(
+      0,
+      ORULO_MAX_IMAGES,
+    );
+    let typologies = extractTypologies(building);
+    try {
+      typologies = extractTypologies(await this.api.getTypologies(token, buildingId));
+      if (typologies.length === 0) typologies = extractTypologies(building);
+    } catch (error) {
+      if (!(error instanceof OruloApiError && error.status === 404)) {
+        this.logger.warn(
+          `Tipologias Órulo #${buildingId}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
       }
-      if (extra.length > 0) {
-        images = extra.slice(0, ORULO_MAX_IMAGES);
+    }
+    if (needMedia) {
+      try {
+        const extra = extractMediaUrls(await this.api.getImages(token, buildingId));
+        if (extra.length > 0) images = extra.slice(0, ORULO_MAX_IMAGES);
+      } catch (error) {
+        this.logger.warn(
+          `Fotos Órulo #${buildingId}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
+      try {
+        const extra = extractMediaUrls(
+          await this.api.getFloorPlans(token, buildingId),
+        );
+        if (extra.length > 0) plantas = extra.slice(0, ORULO_MAX_IMAGES);
+      } catch (error) {
+        this.logger.warn(
+          `Plantas Órulo #${buildingId}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
       }
     } else if (existing) {
       const prev = Array.isArray(existing.imagens) ? existing.imagens : [];
       images = (prev as { url?: string }[])
         .filter((item) => typeof item?.url === 'string')
         .map((item) => ({ url: item.url as string, publicId: '' }));
+      const prevVitrine = normalizeEmpreendimentoVitrine(existing.vitrine);
+      if (prevVitrine?.plantas.length && plantas.length === 0) {
+        plantas = prevVitrine.plantas.map((url) => ({ url, publicId: '' }));
+      }
+    }
+    if (images.length === 0 && plantas.length > 0) {
+      images = plantas.slice(0, 1);
     }
 
     const construtoraId = await this.resolveConstrutora(
@@ -239,6 +269,29 @@ export class OruloSyncService implements OnModuleInit {
     const localidadeId = await this.resolveLocalidade(tenantId, mapped.cidade);
     const tags = this.mergeTags(existing?.tags ?? [], [ORULO_TAG]);
     const stored = serializeStoredImages(images);
+    const prevVitrine = normalizeEmpreendimentoVitrine(existing?.vitrine);
+    const mappedVitrine = mapBuildingVitrine(building, {
+      plantas: plantas.map((item) => item.largeUrl ?? item.url),
+      tipologias: typologies,
+    });
+    const vitrine = normalizeEmpreendimentoVitrine({
+      ...prevVitrine,
+      ...mappedVitrine,
+      headline: prevVitrine?.headline ?? null,
+      lazer:
+        mappedVitrine.lazer.length > 0
+          ? mappedVitrine.lazer
+          : (prevVitrine?.lazer ?? []),
+      infraestrutura: prevVitrine?.infraestrutura ?? [],
+      detalhesUnidade:
+        mappedVitrine.detalhesUnidade.length > 0
+          ? mappedVitrine.detalhesUnidade
+          : (prevVitrine?.detalhesUnidade ?? []),
+      diferenciais:
+        mappedVitrine.detalhesUnidade.length > 0
+          ? mappedVitrine.detalhesUnidade
+          : (prevVitrine?.diferenciais ?? []),
+    });
 
     const data = {
       nome: mapped.nome,
@@ -253,6 +306,7 @@ export class OruloSyncService implements OnModuleInit {
       valorReferencia: mapped.valorReferencia,
       areaM2: mapped.areaM2,
       observacao: mapped.observacao,
+      vitrine: vitrine === null ? Prisma.JsonNull : (vitrine as Prisma.InputJsonValue),
       externalUrl: mapped.externalUrl,
       construtoraId,
       localidadeId,

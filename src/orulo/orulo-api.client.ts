@@ -90,7 +90,15 @@ export class OruloApiClient {
     );
   }
 
+  async getTypologies(token: string, buildingId: number) {
+    return this.getJson<unknown>(
+      `/api/v2/buildings/${buildingId}/typologies`,
+      token,
+    );
+  }
+
   async getFloorPlans(token: string, buildingId: number) {
+
     return this.getJson<unknown>(
       `/api/v2/buildings/${buildingId}/floor_plans?dimensions[]=1024x1024&dimensions[]=520x280&dimensions[]=200x140`,
       token,

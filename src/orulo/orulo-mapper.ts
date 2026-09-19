@@ -44,43 +44,59 @@ export function collectMediaIds(payload: unknown, key: string): string[] {
   return ids;
 }
 
-function collectUrls(value: unknown, out: string[]) {
+function httpsUrl(value: unknown): string | null {
+  return typeof value === 'string' && /^https?:\/\//i.test(value)
+    ? value
+    : null;
+}
+
+function pickSizedUrl(
+  rec: Record<string, unknown>,
+  keys: string[],
+): string | null {
+  for (const key of keys) {
+    const url = httpsUrl(rec[key]);
+    if (url) return url;
+  }
+  return httpsUrl(rec.url) ?? httpsUrl(rec.src);
+}
+
+function collectImages(value: unknown, out: StoredImage[]) {
   if (typeof value === 'string' && /^https?:\/\//i.test(value)) {
-    out.push(value);
+    out.push({ url: value, publicId: '' });
     return;
   }
   if (Array.isArray(value)) {
-    for (const item of value) collectUrls(item, out);
+    for (const item of value) collectImages(item, out);
     return;
   }
   const rec = asRecord(value);
   if (!rec) return;
-  const preferred = [
-    rec['2280x1800'],
-    rec['1024x1024'],
-    rec['520x280'],
-    rec['200x140'],
-    rec.url,
-    rec.src,
-  ];
-  for (const candidate of preferred) {
-    if (typeof candidate === 'string' && /^https?:\/\//i.test(candidate)) {
-      out.push(candidate);
-      return;
-    }
+  const thumb = pickSizedUrl(rec, ['520x280', '200x140']);
+  const large = pickSizedUrl(rec, ['1024x1024', '2280x1800']);
+  const url = thumb ?? large;
+  if (url) {
+    out.push({
+      url,
+      publicId: '',
+      ...(large && large !== url ? { largeUrl: large } : {}),
+    });
+    return;
   }
-  for (const nested of Object.values(rec)) collectUrls(nested, out);
+  for (const nested of Object.values(rec)) {
+    if (nested && typeof nested === 'object') collectImages(nested, out);
+  }
 }
 
 export function extractMediaUrls(payload: unknown): StoredImage[] {
-  const urls: string[] = [];
-  collectUrls(payload, urls);
+  const collected: StoredImage[] = [];
+  collectImages(payload, collected);
   const seen = new Set<string>();
   const images: StoredImage[] = [];
-  for (const url of urls) {
-    if (seen.has(url)) continue;
-    seen.add(url);
-    images.push({ url, publicId: '' });
+  for (const image of collected) {
+    if (seen.has(image.url)) continue;
+    seen.add(image.url);
+    images.push(image);
   }
   return images;
 }
@@ -89,6 +105,131 @@ export function idsChanged(prev: string[], next: string[]) {
   if (prev.length !== next.length) return true;
   const set = new Set(prev);
   return next.some((id) => !set.has(id));
+}
+
+function featureNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const label =
+      typeof item === 'string'
+        ? item.trim()
+        : asString(asRecord(item)?.name) ??
+          asString(asRecord(item)?.title) ??
+          asString(asRecord(item)?.description);
+    if (!label) continue;
+    const key = label.toLocaleLowerCase('pt-BR');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(label);
+  }
+  return names;
+}
+
+export function extractTypologies(value: unknown) {
+  const rec = asRecord(value);
+  const list = Array.isArray(value)
+    ? value
+    : Array.isArray(rec?.typologies)
+      ? rec.typologies
+      : Array.isArray(rec?.building_typologies)
+        ? rec.building_typologies
+        : [];
+  const rows: {
+    nome: string;
+    areaM2: number | null;
+    quartos: number | null;
+    suites: number | null;
+    banheiros: number | null;
+    vagas: number | null;
+    valor: number | null;
+    pavimento: string | null;
+  }[] = [];
+  for (const item of list) {
+    const row = asRecord(item);
+    if (!row) continue;
+    const nome =
+      asString(row.name) ??
+      asString(row.type) ??
+      asString(row.typology) ??
+      'Unidade';
+    rows.push({
+      nome,
+      areaM2:
+        asNumber(row.private_area) ??
+        asNumber(row.area) ??
+        asNumber(row.min_area),
+      quartos: asInt(row.bedrooms) ?? asInt(row.bedroom),
+      suites: asInt(row.suites) ?? asInt(row.suite),
+      banheiros: asInt(row.bathrooms) ?? asInt(row.bathroom),
+      vagas: asInt(row.parking) ?? asInt(row.parking_spaces),
+      valor: asInt(row.price) ?? asInt(row.min_price),
+      pavimento: asString(row.floor) ?? asString(row.pavement),
+    });
+  }
+  return rows;
+}
+
+export function mapBuildingVitrine(
+  building: Record<string, unknown>,
+  extras: { plantas: string[]; tipologias: ReturnType<typeof extractTypologies> },
+) {
+  const address = asRecord(building.address) ?? {};
+  const condoFeatures = featureNames(
+    building.features ?? building.amenities ?? building.condominium_features,
+  );
+  const unitFeatures = featureNames(
+    building.apartment_features ?? building.unit_features,
+  );
+  const minPrice =
+    asInt(building.min_price) ?? asInt(building.min_price_brl);
+  const maxPrice =
+    asInt(building.max_price) ?? asInt(building.max_price_brl);
+  const minArea = asNumber(building.min_area);
+  const maxArea = asNumber(building.max_area);
+  const valorM2 =
+    minPrice != null && minArea
+      ? Math.round(minPrice / minArea)
+      : asNumber(building.price_per_m2);
+  const launch =
+    asString(building.launch_date) ?? asString(building.opening_date);
+  const updated =
+    asString(building.updated_at) ?? asString(building.updated_at_iso);
+
+  return {
+    descricao: asString(building.description),
+    diferenciais: unitFeatures,
+    lazer: condoFeatures,
+    infraestrutura: [] as string[],
+    detalhesUnidade: unitFeatures,
+    numero: asString(address.number),
+    bairro: asString(address.neighborhood),
+    estado: asString(address.state),
+    cep: asString(address.zip_code) ?? asString(address.zipcode),
+    website: asString(building.website),
+    tourVirtual:
+      asString(building.virtual_tour) ??
+      asString(asRecord(building.virtual_tour)?.url),
+    lancamento: launch?.slice(0, 10) ?? null,
+    unidades:
+      asInt(building.number_of_units) ??
+      asInt(building.stock) ??
+      asInt(building.total_units),
+    andares: asInt(building.number_of_floors) ?? asInt(building.floors),
+    nomeCondominio:
+      asString(building.condominium) ??
+      asString(asRecord(building.condominium)?.name),
+    suites: asInt(building.min_suites) ?? asInt(building.min_suite),
+    areaMax: maxArea,
+    valorMax: maxPrice,
+    valorM2,
+    latitude: asNumber(address.latitude) ?? asNumber(building.latitude),
+    longitude: asNumber(address.longitude) ?? asNumber(building.longitude),
+    atualizadoEm: updated?.slice(0, 10) ?? null,
+    plantas: extras.plantas,
+    tipologias: extras.tipologias,
+  };
 }
 
 export function mapBuildingToEmpreendimento(building: Record<string, unknown>) {
