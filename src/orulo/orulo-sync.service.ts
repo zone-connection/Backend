@@ -24,6 +24,7 @@ import {
   ORULO_TAG,
   oruloExternalKey,
 } from './orulo.constants';
+import { oruloPublicOrigin } from './orulo-frontend-origin';
 import type { OruloWebhookPayload } from './orulo-api.types';
 
 @Injectable()
@@ -306,7 +307,7 @@ export class OruloSyncService implements OnModuleInit {
     empreendimentoId: string,
     active: boolean,
   ) {
-    const frontend = this.config.get<string>('FRONTEND_URL')?.replace(/\/$/, '');
+    const frontend = oruloPublicOrigin(this.config.get<string>('FRONTEND_URL'));
     if (!frontend) return;
     await this.api.putPublicationLinks(token, buildingId, [
       { url: `${frontend}/imoveis/${empreendimentoId}`, active },
