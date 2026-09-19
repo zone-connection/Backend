@@ -53,6 +53,13 @@ export class OruloApiClient {
     );
   }
 
+  async listBuildings(token: string, page: number) {
+    return this.getJson<OruloIdsPage>(
+      `/api/v2/buildings?page=${page}&results_per_page=${ORULO_RESULTS_PER_PAGE}`,
+      token,
+    );
+  }
+
   async listRemovedIds(token: string, updatedAfter: string, page: number) {
     const after = encodeURIComponent(updatedAfter);
     const withPage = `/api/v2/buildings/ids/removed?updated_after=${after}&page=${page}&results_per_page=${ORULO_RESULTS_PER_PAGE}`;

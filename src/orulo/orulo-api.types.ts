@@ -1,14 +1,4 @@
-export type OruloBuildingIdRow = {
-  id: number;
-  updated_at?: string;
-};
-
-export type OruloIdsPage = {
-  building_ids: OruloBuildingIdRow[];
-  total?: number;
-  page?: number;
-  total_pages?: number;
-};
+export type OruloIdsPage = Record<string, unknown>;
 
 export type OruloWebhookPayload = {
   date?: string;

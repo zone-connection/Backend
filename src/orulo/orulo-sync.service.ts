@@ -25,6 +25,7 @@ import {
   oruloExternalKey,
 } from './orulo.constants';
 import { oruloPublicOrigin } from './orulo-frontend-origin';
+import { extractOruloBuildingIds, oruloTotalPages } from './orulo-ids';
 import type { OruloWebhookPayload } from './orulo-api.types';
 
 @Injectable()
@@ -82,15 +83,28 @@ export class OruloSyncService implements OnModuleInit {
     return { ok: true, started: true };
   }
 
-  private async runSync(connectionId: string, full: boolean) {
+  private async runSync(connectionId: string, _full: boolean) {
     try {
       const connection = await this.requireConnection(connectionId);
       const token = await this.ensureClientToken(connection);
       await this.api.getConfig(token);
 
-      const activeIds = await this.collectActiveIds(token);
+      const activeIds = await this.collectCatalogIds(token);
+      this.logger.log(
+        `Órulo sync ${connection.id}: ${activeIds.length} empreendimento(s) na API.`,
+      );
+      let imported = 0;
+      const failures: string[] = [];
       for (const buildingId of activeIds) {
-        await this.upsertBuilding(connection.tenantId, token, buildingId, true);
+        try {
+          await this.upsertBuilding(connection.tenantId, token, buildingId, true);
+          imported += 1;
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          failures.push(`#${buildingId}: ${message}`);
+          this.logger.warn(`Órulo #${buildingId}: ${message}`);
+        }
       }
 
       if (connection.lastReconcileAt) {
@@ -115,7 +129,14 @@ export class OruloSyncService implements OnModuleInit {
           syncing: false,
           lastFullSyncAt: new Date(),
           lastReconcileAt: new Date(),
-          lastError: null,
+          lastError:
+            imported === 0
+              ? activeIds.length === 0
+                ? 'A Órulo autenticou, mas /buildings/ids/active e /buildings não retornaram IDs. Peça ao suporte para confirmar a distribuição deste Client ID.'
+                : `A API listou ${activeIds.length} ID(s), mas nenhum foi gravado. ${failures[0] ?? ''}`
+              : failures.length
+                ? `${imported} importado(s); ${failures.length} falha(s). ${failures[0]}`
+                : null,
         },
       });
     } catch (error) {
@@ -245,7 +266,15 @@ export class OruloSyncService implements OnModuleInit {
           },
         });
 
-    await this.pushPublicationLinks(token, buildingId, saved.id, true);
+    try {
+      await this.pushPublicationLinks(token, buildingId, saved.id, true);
+    } catch (error) {
+      this.logger.warn(
+        `Publication links #${buildingId}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
     return saved;
   }
 
@@ -314,34 +343,33 @@ export class OruloSyncService implements OnModuleInit {
     ]);
   }
 
-  private async collectActiveIds(token: string) {
-    const ids: number[] = [];
-    let page = 1;
-    let totalPages = 1;
-    do {
-      const res = await this.api.listActiveIds(token, page);
-      for (const row of res.building_ids ?? []) {
-        if (Number.isFinite(row.id)) ids.push(row.id);
-      }
-      totalPages = res.total_pages ?? page;
-      page += 1;
-    } while (page <= totalPages);
-    return ids;
+  private async collectCatalogIds(token: string) {
+    const fromActive = await this.paginateIds((page) =>
+      this.api.listActiveIds(token, page),
+    );
+    if (fromActive.length > 0) return fromActive;
+    return this.paginateIds((page) => this.api.listBuildings(token, page));
   }
 
   private async collectRemovedIds(token: string, updatedAfter: string) {
+    return this.paginateIds((page) =>
+      this.api.listRemovedIds(token, updatedAfter, page),
+    );
+  }
+
+  private async paginateIds(
+    fetchPage: (page: number) => Promise<unknown>,
+  ) {
     const ids: number[] = [];
     let page = 1;
     let totalPages = 1;
     do {
-      const res = await this.api.listRemovedIds(token, updatedAfter, page);
-      for (const row of res.building_ids ?? []) {
-        if (Number.isFinite(row.id)) ids.push(row.id);
-      }
-      totalPages = res.total_pages ?? page;
+      const res = await fetchPage(page);
+      ids.push(...extractOruloBuildingIds(res));
+      totalPages = oruloTotalPages(res, page);
       page += 1;
     } while (page <= totalPages);
-    return ids;
+    return [...new Set(ids)];
   }
 
   private updatedAfter(last: Date | null) {
