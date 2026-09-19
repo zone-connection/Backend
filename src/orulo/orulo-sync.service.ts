@@ -201,16 +201,30 @@ export class OruloSyncService implements OnModuleInit {
       idsChanged(existing.oruloImageIds, mapped.imageIds) ||
       idsChanged(existing.oruloFloorPlanIds, mapped.floorPlanIds);
 
-    let images: StoredImage[] = [];
+    let images: StoredImage[] = [
+      ...extractMediaUrls(building.default_image),
+      ...extractMediaUrls(building.images),
+      ...extractMediaUrls(building.floor_plans),
+    ].slice(0, ORULO_MAX_IMAGES);
     if (needMedia) {
-      const [rawImages, rawPlans] = await Promise.all([
-        this.api.getImages(token, buildingId),
-        this.api.getFloorPlans(token, buildingId),
-      ]);
-      images = [
-        ...extractMediaUrls(rawImages),
-        ...extractMediaUrls(rawPlans),
-      ].slice(0, ORULO_MAX_IMAGES);
+      const extra: StoredImage[] = [];
+      for (const load of [
+        () => this.api.getImages(token, buildingId),
+        () => this.api.getFloorPlans(token, buildingId),
+      ]) {
+        try {
+          extra.push(...extractMediaUrls(await load()));
+        } catch (error) {
+          this.logger.warn(
+            `Mídia Órulo #${buildingId}: ${
+              error instanceof Error ? error.message : error
+            }`,
+          );
+        }
+      }
+      if (extra.length > 0) {
+        images = extra.slice(0, ORULO_MAX_IMAGES);
+      }
     } else if (existing) {
       const prev = Array.isArray(existing.imagens) ? existing.imagens : [];
       images = (prev as { url?: string }[])

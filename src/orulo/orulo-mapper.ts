@@ -56,9 +56,10 @@ function collectUrls(value: unknown, out: string[]) {
   const rec = asRecord(value);
   if (!rec) return;
   const preferred = [
-    rec['1200x800'],
-    rec['1024x768'],
-    rec['800x600'],
+    rec['2280x1800'],
+    rec['1024x1024'],
+    rec['520x280'],
+    rec['200x140'],
     rec.url,
     rec.src,
   ];

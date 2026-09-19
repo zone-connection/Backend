@@ -85,14 +85,14 @@ export class OruloApiClient {
 
   async getImages(token: string, buildingId: number) {
     return this.getJson<unknown>(
-      `/api/v2/buildings/${buildingId}/images?width=1200&height=800`,
+      `/api/v2/buildings/${buildingId}/images?dimensions[]=1024x1024&dimensions[]=520x280&dimensions[]=200x140`,
       token,
     );
   }
 
   async getFloorPlans(token: string, buildingId: number) {
     return this.getJson<unknown>(
-      `/api/v2/buildings/${buildingId}/floor_plans?width=1200&height=800`,
+      `/api/v2/buildings/${buildingId}/floor_plans?dimensions[]=1024x1024&dimensions[]=520x280&dimensions[]=200x140`,
       token,
     );
   }
