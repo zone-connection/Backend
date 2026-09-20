@@ -17,7 +17,9 @@ describe('empreendimento tipologias', () => {
           banheiros: 2,
           vagas: 1,
           valor: 420000,
+          valorM2: 6176,
           pavimento: '12',
+          plantaUrl: 'https://cdn.example.com/planta-varanda.png',
         },
         {
           nome: 'Garden',
@@ -25,6 +27,9 @@ describe('empreendimento tipologias', () => {
           quartos: 3,
           vagas: 2,
           valor: 610000,
+          valorM2: null,
+          pavimento: null,
+          plantaUrl: null,
         },
       ],
     });
@@ -34,6 +39,8 @@ describe('empreendimento tipologias', () => {
     assert.equal(vitrine?.areaMax, 90);
     assert.equal(vitrine?.valorMax, 610000);
     assert.equal(vitrine?.suites, 1);
+    assert.equal(vitrine?.valorM2, 6176);
+    assert.equal(vitrine?.tipologias[0].plantaUrl, 'https://cdn.example.com/planta-varanda.png');
   });
 
   it('deriva o catálogo pelos extremos das tipologias', () => {
@@ -46,7 +53,9 @@ describe('empreendimento tipologias', () => {
         banheiros: 1,
         vagas: 0,
         valor: 280000,
+        valorM2: null,
         pavimento: null,
+        plantaUrl: null,
       },
       {
         nome: 'Cobertura',
@@ -56,7 +65,9 @@ describe('empreendimento tipologias', () => {
         banheiros: 3,
         vagas: 2,
         valor: 980000,
+        valorM2: 7000,
         pavimento: '20',
+        plantaUrl: null,
       },
     ]);
 

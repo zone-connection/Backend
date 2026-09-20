@@ -6,7 +6,9 @@ export type EmpreendimentoTipologia = {
   banheiros: number | null;
   vagas: number | null;
   valor: number | null;
+  valorM2: number | null;
   pavimento: string | null;
+  plantaUrl: string | null;
 };
 
 export type EmpreendimentoVitrine = {
@@ -82,15 +84,22 @@ function cleanNum(value: unknown) {
   return null;
 }
 
+function cleanUrl(value: unknown) {
+  if (typeof value !== 'string' || !/^https?:\/\//i.test(value.trim())) {
+    return null;
+  }
+  return value.trim().slice(0, 2048);
+}
+
 function cleanPlantas(value: unknown) {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   const next: string[] = [];
   for (const item of value) {
-    if (typeof item !== 'string' || !/^https?:\/\//i.test(item)) continue;
-    if (seen.has(item)) continue;
-    seen.add(item);
-    next.push(item);
+    const url = cleanUrl(item);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    next.push(url);
     if (next.length >= 40) break;
   }
   return next;
@@ -111,7 +120,9 @@ function cleanTipologias(value: unknown): EmpreendimentoTipologia[] {
       banheiros: cleanNum(row.banheiros) != null ? Math.round(cleanNum(row.banheiros)!) : null,
       vagas: cleanNum(row.vagas) != null ? Math.round(cleanNum(row.vagas)!) : null,
       valor: cleanNum(row.valor) != null ? Math.round(cleanNum(row.valor)!) : null,
+      valorM2: cleanNum(row.valorM2) != null ? Math.round(cleanNum(row.valorM2)!) : null,
       pavimento: cleanText(row.pavimento, 40),
+      plantaUrl: cleanUrl(row.plantaUrl),
     };
     if (
       !nome &&
@@ -121,7 +132,9 @@ function cleanTipologias(value: unknown): EmpreendimentoTipologia[] {
       tipologia.banheiros == null &&
       tipologia.vagas == null &&
       tipologia.valor == null &&
-      !tipologia.pavimento
+      tipologia.valorM2 == null &&
+      !tipologia.pavimento &&
+      !tipologia.plantaUrl
     ) {
       continue;
     }
@@ -272,6 +285,18 @@ function applyTipologiasToVitrine(vitrine: EmpreendimentoVitrine) {
   if (catalogo.suites != null) vitrine.suites = catalogo.suites;
   if (catalogo.areaMax != null) vitrine.areaMax = catalogo.areaMax;
   if (catalogo.valorMax != null) vitrine.valorMax = catalogo.valorMax;
+  const valoresM2 = numbersOf(vitrine.tipologias, (row) => row.valorM2);
+  if (valoresM2.length) vitrine.valorM2 = Math.min(...valoresM2);
+  const plantasTipologia = vitrine.tipologias
+    .map((row) => row.plantaUrl)
+    .filter((url): url is string => Boolean(url));
+  if (plantasTipologia.length) {
+    const seen = new Set(plantasTipologia);
+    vitrine.plantas = [
+      ...plantasTipologia,
+      ...vitrine.plantas.filter((url) => !seen.has(url)),
+    ].slice(0, 40);
+  }
 }
 
 export function emptyEmpreendimentoVitrine(): EmpreendimentoVitrine {

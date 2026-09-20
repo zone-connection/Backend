@@ -88,6 +88,17 @@ export class EmpreendimentosController {
     return this.empreendimentosService.uploadImagem(id, file, requester);
   }
 
+  @Post(":id/planta")
+  @Roles(...IMAGE_ROLES)
+  @UseInterceptors(imageUploadInterceptor())
+  uploadPlanta(
+    @Param("id", ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.empreendimentosService.uploadPlanta(id, file, requester);
+  }
+
   @Patch(":id")
   @Roles(...IMAGE_ROLES, Role.corretor)
   update(

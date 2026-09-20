@@ -144,7 +144,9 @@ export function extractTypologies(value: unknown) {
     banheiros: number | null;
     vagas: number | null;
     valor: number | null;
+    valorM2: number | null;
     pavimento: string | null;
+    plantaUrl: string | null;
   }[] = [];
   for (const item of list) {
     const row = asRecord(item);
@@ -165,7 +167,12 @@ export function extractTypologies(value: unknown) {
       banheiros: asInt(row.bathrooms) ?? asInt(row.bathroom),
       vagas: asInt(row.parking) ?? asInt(row.parking_spaces),
       valor: asInt(row.price) ?? asInt(row.min_price),
+      valorM2: asInt(row.price_per_m2) ?? asInt(row.price_m2),
       pavimento: asString(row.floor) ?? asString(row.pavement),
+      plantaUrl:
+        httpsUrl(row.floor_plan) ??
+        httpsUrl(row.floorplan) ??
+        httpsUrl(row.plan),
     });
   }
   return rows;

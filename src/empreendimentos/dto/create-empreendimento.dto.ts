@@ -341,4 +341,15 @@ export class EmpreendimentoTipologiaDto {
   @IsString()
   @MaxLength(40)
   pavimento?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  valorM2?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  plantaUrl?: string | null;
 }

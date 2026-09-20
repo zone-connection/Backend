@@ -416,6 +416,24 @@ export class EmpreendimentosService {
     return this.persistImagens(row.id, next);
   }
 
+  async uploadPlanta(
+    id: string,
+    rawFile: Express.Multer.File | undefined,
+    requester: AuthenticatedUser,
+  ) {
+    this.assertCanManage(requester);
+    const row = await this.findRow(id, requester);
+    const file = this.media.requireFile(rawFile);
+    const uploaded = await this.media.uploadImage({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      folder: this.media.folder(row.tenantId, 'empreendimentos', row.id),
+      maxWidth: 1920,
+      maxHeight: 1920,
+    });
+    return { url: uploaded.largeUrl || uploaded.url };
+  }
+
   async removeImagem(
     id: string,
     index: number,
