@@ -229,6 +229,9 @@ export function mapBuildingVitrine(
     atualizadoEm: updated?.slice(0, 10) ?? null,
     plantas: extras.plantas,
     tipologias: extras.tipologias,
+    tiposUnidade: extras.tipologias
+      .map((row) => row.nome)
+      .filter((nome, index, list) => nome && list.indexOf(nome) === index),
   };
 }
 

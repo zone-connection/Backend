@@ -8,7 +8,10 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { serializeStoredImages, type StoredImage } from '../media/stored-image';
-import { normalizeEmpreendimentoVitrine } from '../empreendimentos/empreendimento-vitrine';
+import {
+  catalogoFromTipologias,
+  normalizeEmpreendimentoVitrine,
+} from '../empreendimentos/empreendimento-vitrine';
 import { OruloApiClient, OruloApiError } from './orulo-api.client';
 import {
   extractMediaUrls,
@@ -291,8 +294,15 @@ export class OruloSyncService implements OnModuleInit {
         mappedVitrine.detalhesUnidade.length > 0
           ? mappedVitrine.detalhesUnidade
           : (prevVitrine?.diferenciais ?? []),
+      tipologias: mappedVitrine.tipologias.length
+        ? mappedVitrine.tipologias
+        : (prevVitrine?.tipologias ?? []),
+      tiposUnidade: mappedVitrine.tiposUnidade.length
+        ? mappedVitrine.tiposUnidade
+        : (prevVitrine?.tiposUnidade ?? []),
     });
 
+    const catalogo = catalogoFromTipologias(vitrine?.tipologias ?? []);
     const data = {
       nome: mapped.nome,
       cidade: mapped.cidade,
@@ -300,11 +310,11 @@ export class OruloSyncService implements OnModuleInit {
       tipo: mapped.tipo,
       status: mapped.status,
       previsaoEntrega: this.toDate(mapped.previsaoEntrega),
-      quartos: mapped.quartos,
-      banheiros: mapped.banheiros,
-      vagas: mapped.vagas,
-      valorReferencia: mapped.valorReferencia,
-      areaM2: mapped.areaM2,
+      quartos: catalogo.quartos ?? mapped.quartos,
+      banheiros: catalogo.banheiros ?? mapped.banheiros,
+      vagas: catalogo.vagas ?? mapped.vagas,
+      valorReferencia: catalogo.valorReferencia ?? mapped.valorReferencia,
+      areaM2: catalogo.areaM2 ?? mapped.areaM2,
       observacao: mapped.observacao,
       vitrine: vitrine === null ? Prisma.JsonNull : (vitrine as Prisma.InputJsonValue),
       externalUrl: mapped.externalUrl,

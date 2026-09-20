@@ -21,7 +21,10 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma, Role } from "@prisma/client";
-import { normalizeEmpreendimentoVitrine } from "./empreendimento-vitrine";
+import {
+  catalogoFromTipologias,
+  normalizeEmpreendimentoVitrine,
+} from "./empreendimento-vitrine";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -46,6 +49,7 @@ const MATCHING_FIELDS = [
   "valorReferencia",
   "tags",
   "ativo",
+  "vitrine",
 ] as const;
 const empreendimentoSelect = {
   id: true,
@@ -247,6 +251,8 @@ export class EmpreendimentosService {
       dto.localidadeId,
     );
     const key = this.slugify(dto.nome);
+    const vitrine = normalizeEmpreendimentoVitrine(dto.vitrine);
+    const catalogo = catalogoFromTipologias(vitrine?.tipologias ?? []);
     const created = await this.prisma.empreendimento.create({
       data: {
         tenantId,
@@ -261,13 +267,13 @@ export class EmpreendimentosService {
         previsaoEntrega: this.toDate(dto.previsaoEntrega),
         tags: this.normalizeTags(dto.tags),
         observacao: dto.observacao?.trim() || null,
-        vitrine: this.toVitrineJson(dto.vitrine),
-        quartos: dto.quartos ?? null,
-        banheiros: dto.banheiros ?? null,
-        vagas: dto.vagas ?? null,
-        valorReferencia: dto.valorReferencia ?? null,
+        vitrine: vitrine === null ? Prisma.JsonNull : (vitrine as Prisma.InputJsonValue),
+        quartos: dto.quartos ?? catalogo.quartos,
+        banheiros: dto.banheiros ?? catalogo.banheiros,
+        vagas: dto.vagas ?? catalogo.vagas,
+        valorReferencia: dto.valorReferencia ?? catalogo.valorReferencia,
         rendaAPartirDe: dto.rendaAPartirDe ?? null,
-        areaM2: dto.areaM2 ?? null,
+        areaM2: dto.areaM2 ?? catalogo.areaM2,
         externalUrl: dto.externalUrl?.trim() || null,
         imagemUrl: null,
         imagens: [],
@@ -296,6 +302,12 @@ export class EmpreendimentosService {
     const shouldRematch = MATCHING_FIELDS.some(
       (field) => dto[field] !== undefined,
     );
+    const vitrine =
+      dto.vitrine !== undefined
+        ? normalizeEmpreendimentoVitrine(dto.vitrine)
+        : undefined;
+    const catalogo = catalogoFromTipologias(vitrine?.tipologias ?? []);
+    const aplicarCatalogo = (vitrine?.tipologias.length ?? 0) > 0;
     const updated = await this.prisma.empreendimento.update({
       where: { id },
       data: {
@@ -328,22 +340,45 @@ export class EmpreendimentosService {
         ...(dto.observacao !== undefined
           ? { observacao: dto.observacao?.trim() || null }
           : {}),
-        ...(dto.quartos !== undefined ? { quartos: dto.quartos } : {}),
-        ...(dto.banheiros !== undefined ? { banheiros: dto.banheiros } : {}),
-        ...(dto.vagas !== undefined ? { vagas: dto.vagas } : {}),
+        ...(dto.quartos !== undefined
+          ? { quartos: dto.quartos }
+          : aplicarCatalogo
+            ? { quartos: catalogo.quartos }
+            : {}),
+        ...(dto.banheiros !== undefined
+          ? { banheiros: dto.banheiros }
+          : aplicarCatalogo
+            ? { banheiros: catalogo.banheiros }
+            : {}),
+        ...(dto.vagas !== undefined
+          ? { vagas: dto.vagas }
+          : aplicarCatalogo
+            ? { vagas: catalogo.vagas }
+            : {}),
         ...(dto.valorReferencia !== undefined
           ? { valorReferencia: dto.valorReferencia }
-          : {}),
+          : aplicarCatalogo
+            ? { valorReferencia: catalogo.valorReferencia }
+            : {}),
         ...(dto.rendaAPartirDe !== undefined
           ? { rendaAPartirDe: dto.rendaAPartirDe }
           : {}),
-        ...(dto.areaM2 !== undefined ? { areaM2: dto.areaM2 } : {}),
+        ...(dto.areaM2 !== undefined
+          ? { areaM2: dto.areaM2 }
+          : aplicarCatalogo
+            ? { areaM2: catalogo.areaM2 }
+            : {}),
         ...(dto.externalUrl !== undefined
           ? { externalUrl: dto.externalUrl?.trim() || null }
           : {}),
         ...(dto.ativo !== undefined ? { ativo: dto.ativo } : {}),
-        ...(dto.vitrine !== undefined
-          ? { vitrine: this.toVitrineJson(dto.vitrine) }
+        ...(vitrine !== undefined
+          ? {
+              vitrine:
+                vitrine === null
+                  ? Prisma.JsonNull
+                  : (vitrine as Prisma.InputJsonValue),
+            }
           : {}),
       },
       select: empreendimentoSelect,

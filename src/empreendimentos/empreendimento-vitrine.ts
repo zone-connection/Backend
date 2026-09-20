@@ -35,6 +35,7 @@ export type EmpreendimentoVitrine = {
   atualizadoEm: string | null;
   plantas: string[];
   tipologias: EmpreendimentoTipologia[];
+  tiposUnidade: string[];
 };
 
 const EMPTY: EmpreendimentoVitrine = {
@@ -63,6 +64,7 @@ const EMPTY: EmpreendimentoVitrine = {
   atualizadoEm: null,
   plantas: [],
   tipologias: [],
+  tiposUnidade: [],
 };
 
 function cleanText(value: unknown, max: number) {
@@ -115,7 +117,11 @@ function cleanTipologias(value: unknown): EmpreendimentoTipologia[] {
       !nome &&
       tipologia.areaM2 == null &&
       tipologia.quartos == null &&
-      tipologia.valor == null
+      tipologia.suites == null &&
+      tipologia.banheiros == null &&
+      tipologia.vagas == null &&
+      tipologia.valor == null &&
+      !tipologia.pavimento
     ) {
       continue;
     }
@@ -172,7 +178,9 @@ export function normalizeEmpreendimentoVitrine(
     atualizadoEm: cleanText(data.atualizadoEm, 40),
     plantas: cleanPlantas(data.plantas),
     tipologias: cleanTipologias(data.tipologias),
+    tiposUnidade: cleanList(data.tiposUnidade, 24, 80),
   };
+  applyTipologiasToVitrine(next);
   const empty =
     !next.headline &&
     !next.descricao &&
@@ -198,8 +206,72 @@ export function normalizeEmpreendimentoVitrine(
     next.longitude == null &&
     !next.atualizadoEm &&
     next.plantas.length === 0 &&
-    next.tipologias.length === 0;
+    next.tipologias.length === 0 &&
+    next.tiposUnidade.length === 0;
   return empty ? null : next;
+}
+
+export type CatalogoTipologias = {
+  areaM2: number | null;
+  areaMax: number | null;
+  quartos: number | null;
+  suites: number | null;
+  banheiros: number | null;
+  vagas: number | null;
+  valorReferencia: number | null;
+  valorMax: number | null;
+  tiposUnidade: string[];
+};
+
+function numbersOf(
+  rows: EmpreendimentoTipologia[],
+  pick: (row: EmpreendimentoTipologia) => number | null,
+) {
+  return rows
+    .map(pick)
+    .filter((value): value is number => value != null && Number.isFinite(value));
+}
+
+export function catalogoFromTipologias(
+  tipologias: EmpreendimentoTipologia[],
+): CatalogoTipologias {
+  const areas = numbersOf(tipologias, (row) => row.areaM2);
+  const valores = numbersOf(tipologias, (row) => row.valor);
+  const quartos = numbersOf(tipologias, (row) => row.quartos);
+  const suites = numbersOf(tipologias, (row) => row.suites);
+  const banheiros = numbersOf(tipologias, (row) => row.banheiros);
+  const vagas = numbersOf(tipologias, (row) => row.vagas);
+  const tiposUnidade: string[] = [];
+  const seen = new Set<string>();
+  for (const row of tipologias) {
+    const nome = row.nome.trim();
+    if (!nome) continue;
+    const key = nome.toLocaleLowerCase('pt-BR');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tiposUnidade.push(nome);
+  }
+  return {
+    areaM2: areas.length ? Math.min(...areas) : null,
+    areaMax: areas.length ? Math.max(...areas) : null,
+    quartos: quartos.length ? Math.min(...quartos) : null,
+    suites: suites.length ? Math.min(...suites) : null,
+    banheiros: banheiros.length ? Math.min(...banheiros) : null,
+    vagas: vagas.length ? Math.min(...vagas) : null,
+    valorReferencia: valores.length ? Math.min(...valores) : null,
+    valorMax: valores.length ? Math.max(...valores) : null,
+    tiposUnidade,
+  };
+}
+
+function applyTipologiasToVitrine(vitrine: EmpreendimentoVitrine) {
+  const catalogo = catalogoFromTipologias(vitrine.tipologias);
+  if (catalogo.tiposUnidade.length) {
+    vitrine.tiposUnidade = catalogo.tiposUnidade;
+  }
+  if (catalogo.suites != null) vitrine.suites = catalogo.suites;
+  if (catalogo.areaMax != null) vitrine.areaMax = catalogo.areaMax;
+  if (catalogo.valorMax != null) vitrine.valorMax = catalogo.valorMax;
 }
 
 export function emptyEmpreendimentoVitrine(): EmpreendimentoVitrine {
@@ -211,5 +283,6 @@ export function emptyEmpreendimentoVitrine(): EmpreendimentoVitrine {
     detalhesUnidade: [],
     plantas: [],
     tipologias: [],
+    tiposUnidade: [],
   };
 }

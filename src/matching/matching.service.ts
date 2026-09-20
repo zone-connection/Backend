@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { NotificacoesService } from '../notificacoes/notificacoes.service';
+import { normalizeEmpreendimentoVitrine } from '../empreendimentos/empreendimento-vitrine';
 
 export type MatchNivel = 'muito_compativel' | 'compativel';
 
@@ -45,6 +46,11 @@ type EmpForMatch = {
   valorReferencia: number | null;
   tags: string[];
   localidade: { id: string; nome: string } | null;
+  tipologias: Array<{
+    quartos: number | null;
+    vagas: number | null;
+    valor: number | null;
+  }>;
 };
 
 const WEIGHT = {
@@ -203,13 +209,26 @@ export class MatchingService {
         vagas: true,
         valorReferencia: true,
         tags: true,
+        vitrine: true,
         localidade: { select: { id: true, nome: true } },
       },
     });
     if (!emp) {
       throw new NotFoundException('Empreendimento não encontrado.');
     }
-    return emp;
+    const vitrine = normalizeEmpreendimentoVitrine(emp.vitrine);
+    return {
+      id: emp.id,
+      nome: emp.nome,
+      cidade: emp.cidade,
+      construtoraId: emp.construtoraId,
+      quartos: emp.quartos,
+      vagas: emp.vagas,
+      valorReferencia: emp.valorReferencia,
+      tags: emp.tags,
+      localidade: emp.localidade,
+      tipologias: vitrine?.tipologias ?? [],
+    };
   }
 
   private async computeMatches(
@@ -292,30 +311,36 @@ export class MatchingService {
       strongHits += 1;
     }
 
-    if (
-      emp.valorReferencia != null &&
-      lead.orcamentoMax != null &&
-      emp.valorReferencia <= lead.orcamentoMax
-    ) {
+    const valores = [
+      ...emp.tipologias.map((row) => row.valor),
+      emp.valorReferencia,
+    ].filter((value): value is number => value != null);
+    const orcamentoMax = lead.orcamentoMax;
+    const valorOk =
+      orcamentoMax != null && valores.some((valor) => valor <= orcamentoMax);
+    if (valorOk) {
       score += WEIGHT.valor;
       motivos.push('valor');
       strongHits += 1;
     }
 
+    const quartos = [
+      ...emp.tipologias.map((row) => row.quartos),
+      emp.quartos,
+    ].filter((value): value is number => value != null);
     if (
       lead.quartosMin != null &&
-      emp.quartos != null &&
-      emp.quartos >= lead.quartosMin
+      quartos.some((qtd) => qtd >= lead.quartosMin!)
     ) {
       score += WEIGHT.quartos;
       motivos.push('quartos');
     }
 
-    if (
-      lead.vagasMin != null &&
-      emp.vagas != null &&
-      emp.vagas >= lead.vagasMin
-    ) {
+    const vagas = [
+      ...emp.tipologias.map((row) => row.vagas),
+      emp.vagas,
+    ].filter((value): value is number => value != null);
+    if (lead.vagasMin != null && vagas.some((qtd) => qtd >= lead.vagasMin!)) {
       score += WEIGHT.vagas;
       motivos.push('vagas');
     }

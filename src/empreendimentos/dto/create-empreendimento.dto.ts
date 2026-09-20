@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -282,9 +283,16 @@ export class EmpreendimentoVitrineDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(40)
   @ValidateNested({ each: true })
   @Type(() => EmpreendimentoTipologiaDto)
   tipologias?: EmpreendimentoTipologiaDto[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(80, { each: true })
+  tiposUnidade?: string[];
 }
 
 export class EmpreendimentoTipologiaDto {
