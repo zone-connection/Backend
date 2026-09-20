@@ -431,7 +431,7 @@ export class EmpreendimentosService {
       maxWidth: 1920,
       maxHeight: 1920,
     });
-    return { url: uploaded.largeUrl || uploaded.url };
+    return { url: uploaded.url };
   }
 
   async removeImagem(
