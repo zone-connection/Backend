@@ -1,4 +1,5 @@
 import {
+  Allow,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -12,7 +13,6 @@ import {
   Min,
   MinLength,
   ValidateIf,
-  ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { HEX_COR_REGEX } from '../../common/utils/cor';
@@ -137,7 +137,6 @@ export class UpdateEmpreendimentoDto {
   ativo?: boolean;
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => EmpreendimentoVitrineDto)
+  @Allow()
   vitrine?: EmpreendimentoVitrineDto | null;
 }

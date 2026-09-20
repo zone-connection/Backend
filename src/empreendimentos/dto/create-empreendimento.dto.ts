@@ -1,4 +1,5 @@
 import {
+  Allow,
   ArrayMaxSize,
   IsArray,
   IsBoolean,
@@ -145,8 +146,7 @@ export class CreateEmpreendimentoDto {
   ativo?: boolean;
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => EmpreendimentoVitrineDto)
+  @Allow()
   vitrine?: EmpreendimentoVitrineDto | null;
 }
 

@@ -860,7 +860,7 @@ model Empreendimento {
   externalUrl String?
   /// Capa (primeira da galeria). Mantida para listagens.
   imagemUrl   String?
-  /// Galeria (máx. 2): [{ "url": string, "publicId": string }]
+  /// Galeria: [{ "url": string, "publicId": string }] (máx. 15).
   imagens     Json    @default("[]")
   /// Chave estável interna (ex.: manual-slug-timestamp).
   externalKey String

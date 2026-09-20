@@ -44,10 +44,8 @@ export function resolveEmpreendimentoImages(
   },
   maxImages = EMPREENDIMENTO_MAX_IMAGES,
 ): StoredImage[] {
-  const cap =
-    row.oruloBuildingId != null ? Math.max(maxImages, 40) : maxImages;
   const stored = parseStoredImages(row.imagens);
-  if (stored.length > 0) return stored.slice(0, cap);
+  if (stored.length > 0) return stored.slice(0, maxImages);
   const fallback = row.imagemUrl?.trim();
   return fallback ? [{ url: fallback, publicId: '' }] : [];
 }
