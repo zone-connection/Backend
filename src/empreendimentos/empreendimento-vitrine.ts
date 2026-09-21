@@ -24,6 +24,8 @@ export type EmpreendimentoVitrine = {
   cep: string | null;
   website: string | null;
   tourVirtual: string | null;
+  bookUrl: string | null;
+  tabelaValoresUrl: string | null;
   lancamento: string | null;
   unidades: number | null;
   andares: number | null;
@@ -53,6 +55,8 @@ const EMPTY: EmpreendimentoVitrine = {
   cep: null,
   website: null,
   tourVirtual: null,
+  bookUrl: null,
+  tabelaValoresUrl: null,
   lancamento: null,
   unidades: null,
   andares: null,
@@ -178,6 +182,9 @@ export function normalizeEmpreendimentoVitrine(
     cep: cleanText(data.cep, 12),
     website: cleanText(data.website, 500),
     tourVirtual: cleanText(data.tourVirtual, 500),
+    bookUrl: cleanUrl(data.bookUrl) ?? cleanText(data.bookUrl, 2048),
+    tabelaValoresUrl:
+      cleanUrl(data.tabelaValoresUrl) ?? cleanText(data.tabelaValoresUrl, 2048),
     lancamento: cleanText(data.lancamento, 10),
     unidades: cleanNum(data.unidades) != null ? Math.round(cleanNum(data.unidades)!) : null,
     andares: cleanNum(data.andares) != null ? Math.round(cleanNum(data.andares)!) : null,
@@ -207,6 +214,8 @@ export function normalizeEmpreendimentoVitrine(
     !next.cep &&
     !next.website &&
     !next.tourVirtual &&
+    !next.bookUrl &&
+    !next.tabelaValoresUrl &&
     !next.lancamento &&
     next.unidades == null &&
     next.andares == null &&

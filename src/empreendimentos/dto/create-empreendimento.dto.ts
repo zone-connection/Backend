@@ -217,6 +217,16 @@ export class EmpreendimentoVitrineDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2048)
+  bookUrl?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  tabelaValoresUrl?: string | null;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(10)
   lancamento?: string | null;
 
