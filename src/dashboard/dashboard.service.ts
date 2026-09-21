@@ -668,22 +668,49 @@ export class DashboardService {
     );
     const vendasDocsMes = countStatusVendido(vgvMes);
     const vendasDocsMesAnt = countStatusVendido(vgvMesAnt);
-    const taxaMes = taxaConversao(vendasDocsMes, docsMes);
-    const taxaMesAnt = taxaConversao(vendasDocsMesAnt, docsMesAnt);
+    const [cadastroMes, cadastroMesAnt] = await Promise.all([
+      this.prisma.cadastroVenda.aggregate({
+        where: {
+          tenantId,
+          dataVenda: { gte: mesAtual.inicio, lt: mesAtual.fim },
+          ...(corretorIds ? { corretorId: { in: corretorIds } } : {}),
+        },
+        _count: { _all: true },
+        _sum: { vgv: true },
+      }),
+      this.prisma.cadastroVenda.aggregate({
+        where: {
+          tenantId,
+          dataVenda: { gte: mesAnterior.inicio, lt: mesAnterior.fim },
+          ...(corretorIds ? { corretorId: { in: corretorIds } } : {}),
+        },
+        _count: { _all: true },
+        _sum: { vgv: true },
+      }),
+    ]);
+    const vendasMesTotal =
+      vendasDocsMes + (cadastroMes._count._all ?? 0);
+    const vendasMesAntTotal =
+      vendasDocsMesAnt + (cadastroMesAnt._count._all ?? 0);
+    const taxaMes = taxaConversao(vendasMesTotal, docsMes);
+    const taxaMesAnt = taxaConversao(vendasMesAntTotal, docsMesAnt);
 
     const brasilAgora = new Date(windows.agora.getTime() - BRASIL_UTC_OFFSET_MS);
     const ehMesCorrente =
       windows.ano === brasilAgora.getUTCFullYear() &&
       windows.mes === brasilAgora.getUTCMonth();
     /** Entradas/vendas/perdidos/VGV no mês filtrado. */
-    const vgvMesTotal = sumVgvVendido(vgvMes);
-    const vgvMesAntTotal = sumVgvVendido(vgvMesAnt);
+    const vgvMesTotal =
+      sumVgvVendido(vgvMes) + (cadastroMes._sum.vgv ?? 0);
+    const vgvMesAntTotal =
+      sumVgvVendido(vgvMesAnt) + (cadastroMesAnt._sum.vgv ?? 0);
 
     const temRegistroNoPeriodo =
       entradasMes > 0 ||
       vendasDaEntradaMes > 0 ||
       perdidosMes > 0 ||
-      vgvMesTotal > 0;
+      vgvMesTotal > 0 ||
+      vendasMesTotal > 0;
     /**
      * Indicadores de estoque/"hoje" só fazem sentido no mês corrente com dados.
      * Em período histórico/vazio, zera para não misturar com o recorte filtrado.
@@ -738,7 +765,7 @@ export class DashboardService {
       conversao: {
         entradas: metric(entradasMes, entradasMesAnt),
         documentacoes: metric(docsMes, docsMesAnt),
-        vendas: metric(vendasDocsMes, vendasDocsMesAnt),
+        vendas: metric(vendasMesTotal, vendasMesAntTotal),
         taxa: metric(taxaMes, taxaMesAnt),
         vgv: metric(vgvMesTotal, vgvMesAntTotal),
       },
@@ -969,6 +996,22 @@ export class DashboardService {
       if (!credited) continue;
       markSale(doc.leadId, credited);
       addVgv(credited, doc.vgv);
+    }
+
+    if (!origem) {
+      const avulsas = await this.prisma.cadastroVenda.findMany({
+        where: {
+          tenantId,
+          corretorId: { in: corretorIds },
+          dataVenda: { gte: periodo.inicio, lt: periodo.fim },
+        },
+        select: { id: true, corretorId: true, vgv: true },
+      });
+      for (const row of avulsas) {
+        if (!row.corretorId || !corretorIdSet.has(row.corretorId)) continue;
+        markSale(`cadastro:${row.id}`, row.corretorId);
+        addVgv(row.corretorId, row.vgv);
+      }
     }
 
     return { vendas, vgv };

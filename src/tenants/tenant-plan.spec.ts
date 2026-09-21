@@ -10,7 +10,8 @@ describe('módulos de operação no plano', () => {
   it('preset bronze liga comercial e deixa captação/usados/locação off', () => {
     const preset = modulesPresetForPlano(TenantPlano.bronze);
     assert.equal(preset.comercial, true);
-    assert.equal(preset.funil, true);
+    assert.equal(preset.documentacao, false);
+    assert.equal(preset.vendas, true);
     assert.equal(preset.captacao, false);
     assert.equal(preset.imoveisUsados, false);
     assert.equal(preset.locacao, false);

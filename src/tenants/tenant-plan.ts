@@ -19,6 +19,7 @@ const OPERACIONAL = [
   'clientesPerdidos',
   'construtoras',
   'leadsPerdidos',
+  'vendas',
 ] as const;
 
 const ADMINISTRATIVO = [
@@ -119,6 +120,7 @@ const SOLO_ENABLED = new Set<string>([
   'documentacao',
   'propostas',
   'contratos',
+  'vendas',
   'metas',
   'financeiro',
   'comercial',
@@ -244,6 +246,8 @@ export function normalizeModulesForPlano(
       next.financeiro = false;
     }
   }
+
+  next.vendas = plano === TenantPlano.bronze || next.documentacao !== false;
 
   applyOperationDefaults(next);
 

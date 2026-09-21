@@ -269,6 +269,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/triagem',
     '/documentacao',
     '/contratos',
+    '/vendas',
     '/parcerias',
     '/construtoras',
     '/financeiro/comissao',
@@ -316,6 +317,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/triagem',
     '/documentacao',
     '/contratos',
+    '/vendas',
     '/parcerias',
     '/financeiro/comissao',
     '/construtoras',
@@ -482,6 +484,7 @@ export function modulesForApiPath(rawPath: string): string[] {
   }
   if (path.includes('financeiro')) return ['financeiro'];
   if (path.startsWith('presenca')) return ['presenca'];
+  if (path.startsWith('cadastro-vendas')) return ['vendas'];
   if (path.startsWith('documentacao')) return ['documentacao', 'vendas'];
   if (path.startsWith('propostas')) return ['propostas'];
   if (path.startsWith('contratos')) return ['contratos'];

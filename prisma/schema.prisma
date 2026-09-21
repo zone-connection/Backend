@@ -204,6 +204,7 @@ model Tenant {
   funcionarios                   Funcionario[]
   contracheques                  Contracheque[]
   leadReatribuicoes              LeadReatribuicao[]
+  cadastroVendas                 CadastroVenda[]
   presencaTipos                  PresencaTipo[]
   presencaLancamentos            PresencaLancamento[]
 
@@ -360,6 +361,9 @@ model User {
 
   // Documentações em que este usuário é o gerente responsável.
   documentacoesComoGerente Documentacao[] @relation("DocumentacaoGerente")
+
+  cadastroVendasAutor    CadastroVenda[] @relation("CadastroVendaAutor")
+  cadastroVendasCorretor CadastroVenda[] @relation("CadastroVendaCorretor")
 
   // Propostas comerciais criadas por este usuário.
   propostasAutor Proposta[] @relation("PropostaAutor")
@@ -794,6 +798,7 @@ model Construtora {
 
   empreendimentos Empreendimento[]
   documentacoes   Documentacao[]
+  cadastroVendas  CadastroVenda[]
   propostas       Proposta[]
   leads           Lead[]
   localidades     Localidade[] @relation("ConstrutoraLocalidades")
@@ -880,6 +885,7 @@ model Empreendimento {
   matchComputedAt         DateTime?
 
   documentacoes Documentacao[]
+  cadastroVendas CadastroVenda[]
   propostas     Proposta[]
   leads         Lead[]
   notificacoes  Notificacao[]
@@ -959,6 +965,40 @@ model Documentacao {
   @@index([gerenteId])
   @@index([createdAt])
   @@map("documentacoes")
+}
+
+/// Venda avulsa do plano Bronze (sem ficha de documentação).
+model CadastroVenda {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  autorId  String
+  autor    User   @relation("CadastroVendaAutor", fields: [autorId], references: [id], onDelete: Cascade)
+
+  clienteNome String
+  telefone    String?
+
+  construtoraId String?
+  construtora   Construtora? @relation(fields: [construtoraId], references: [id], onDelete: SetNull)
+
+  empreendimentoId String?
+  empreendimento   Empreendimento? @relation(fields: [empreendimentoId], references: [id], onDelete: SetNull)
+
+  corretorId String?
+  corretor   User?   @relation("CadastroVendaCorretor", fields: [corretorId], references: [id], onDelete: SetNull)
+
+  dataVenda DateTime
+  /// VGV em reais (inteiro).
+  vgv       Int
+  obs       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([corretorId])
+  @@index([dataVenda])
+  @@map("cadastro_vendas")
 }
 
 /// Status comercial da proposta.
