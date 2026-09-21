@@ -207,7 +207,7 @@ export class EmpreendimentosService {
       vagas: item.vagas,
       valorReferencia: item.valorReferencia,
       areaM2: item.areaM2,
-      imagens: stored.slice(0, 8).map((image) => image.largeUrl || image.url),
+      imagens: stored.slice(0, 15).map((image) => image.largeUrl || image.url),
       localidade: item.localidade?.nome ?? null,
       construtora: item.construtora?.nome ?? null,
       vitrine: normalizeEmpreendimentoVitrine(item.vitrine),
