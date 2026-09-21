@@ -46,6 +46,10 @@ import {
 } from './dto/distribuir-leads.dto';
 import { sanitizeProspeccao } from './lead-prospeccao';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
+import {
+  dadosAposRedistribuir,
+  isOrigemRetrabalho,
+} from './retrabalho-tag';
 import type { LeadNotifySnapshot } from '../lead-notify/lead-notify.messages';
 import { PresenceService } from '../presence/presence.service';
 
@@ -458,7 +462,7 @@ export class LeadsService {
 
     const leads = await this.prisma.lead.findMany({
       where: this.poolAdminWhere(tenantId),
-      select: { id: true },
+      select: { id: true, origemAtrasoLiberacao: true },
       orderBy: { createdAt: 'asc' },
       take: totalPedido,
     });
@@ -483,15 +487,30 @@ export class LeadsService {
         if (aloc.quantidade <= 0) continue;
         const slice = leads.slice(offset, offset + aloc.quantidade);
         offset += aloc.quantidade;
-        await tx.lead.updateMany({
-          where: { id: { in: slice.map((l) => l.id) } },
-          data: {
-            equipeId: aloc.equipeId,
-            origemAtrasoLiberacao: null,
-            atrasoLiberadoAt: null,
-            lastMovementAt: new Date(),
-          },
-        });
+        const retrabalhoIds = slice
+          .filter((l) => isOrigemRetrabalho(l.origemAtrasoLiberacao))
+          .map((l) => l.id);
+        const outrosIds = slice
+          .filter((l) => !isOrigemRetrabalho(l.origemAtrasoLiberacao))
+          .map((l) => l.id);
+        if (retrabalhoIds.length > 0) {
+          await tx.lead.updateMany({
+            where: { id: { in: retrabalhoIds } },
+            data: {
+              equipeId: aloc.equipeId,
+              ...dadosAposRedistribuir({ retrabalho: true }),
+            },
+          });
+        }
+        if (outrosIds.length > 0) {
+          await tx.lead.updateMany({
+            where: { id: { in: outrosIds } },
+            data: {
+              equipeId: aloc.equipeId,
+              ...dadosAposRedistribuir({ retrabalho: false }),
+            },
+          });
+        }
         const eq = equipes.find((e) => e.id === aloc.equipeId)!;
         resultado.push({
           equipeId: eq.id,
@@ -569,7 +588,7 @@ export class LeadsService {
 
       const leads = await this.prisma.lead.findMany({
         where: leadWhere,
-        select: { id: true },
+        select: { id: true, origemAtrasoLiberacao: true },
         orderBy: { createdAt: 'asc' },
         take: totalPedido,
       });
@@ -594,18 +613,37 @@ export class LeadsService {
           const slice = leads.slice(offset, offset + aloc.quantidade);
           offset += aloc.quantidade;
           const corretor = byId.get(aloc.corretorId)!;
-          await tx.lead.updateMany({
-            where: { id: { in: slice.map((l) => l.id) } },
-            data: {
-              corretorId: corretor.id,
-              equipeId: corretor.equipeId,
-              origemAtrasoLiberacao: null,
-              atrasoLiberadoAt: null,
-              lastMovementAt: new Date(),
-              prazoDueAt: null,
-              alertaProximoAt: null,
-            },
-          });
+          const retrabalhoIds = slice
+            .filter((l) => isOrigemRetrabalho(l.origemAtrasoLiberacao))
+            .map((l) => l.id);
+          const outrosIds = slice
+            .filter((l) => !isOrigemRetrabalho(l.origemAtrasoLiberacao))
+            .map((l) => l.id);
+          const owner = {
+            corretorId: corretor.id,
+            equipeId: corretor.equipeId,
+          };
+          if (retrabalhoIds.length > 0) {
+            await tx.lead.updateMany({
+              where: { id: { in: retrabalhoIds } },
+              data: {
+                ...owner,
+                ...dadosAposRedistribuir({ retrabalho: true, resetPrazo: true }),
+              },
+            });
+          }
+          if (outrosIds.length > 0) {
+            await tx.lead.updateMany({
+              where: { id: { in: outrosIds } },
+              data: {
+                ...owner,
+                ...dadosAposRedistribuir({
+                  retrabalho: false,
+                  resetPrazo: true,
+                }),
+              },
+            });
+          }
           resultado.push({
             corretorId: corretor.id,
             nome: corretor.name,
@@ -644,7 +682,7 @@ export class LeadsService {
 
     const leads = await this.prisma.lead.findMany({
       where: leadWhere,
-      select: { id: true },
+      select: { id: true, origemAtrasoLiberacao: true },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -660,6 +698,7 @@ export class LeadsService {
       leadId: string;
       corretorId: string;
       equipeId: string | null;
+      retrabalho: boolean;
     }> = [];
 
     let leadIdx = 0;
@@ -673,6 +712,7 @@ export class LeadsService {
           leadId: lead.id,
           corretorId: corretor.id,
           equipeId: corretor.equipeId,
+          retrabalho: isOrigemRetrabalho(lead.origemAtrasoLiberacao),
         });
         counts.set(corretor.id, (counts.get(corretor.id) ?? 0) + 1);
         if (!firstLead.has(corretor.id)) firstLead.set(corretor.id, lead.id);
@@ -687,11 +727,10 @@ export class LeadsService {
           data: {
             corretorId: a.corretorId,
             equipeId: a.equipeId,
-            origemAtrasoLiberacao: null,
-            atrasoLiberadoAt: null,
-            lastMovementAt: new Date(),
-            prazoDueAt: null,
-            alertaProximoAt: null,
+            ...dadosAposRedistribuir({
+              retrabalho: a.retrabalho,
+              resetPrazo: true,
+            }),
           },
         }),
       ),
@@ -1262,14 +1301,19 @@ export class LeadsService {
               origemAtrasoLiberacao: null,
               atrasoLiberadoAt: null,
               lastMovementAt: new Date(),
+              ...(previousOrigemAtraso === AtrasoLiberacaoDestino.retrabalho
+                ? {
+                    triagemOrigemHerdada: AtrasoLiberacaoDestino.retrabalho,
+                    lastTriagemAt: new Date(),
+                  }
+                : assignment.corretorId
+                  ? {
+                      triagemOrigemHerdada: AtrasoLiberacaoDestino.caca_lead,
+                      lastTriagemAt: new Date(),
+                    }
+                  : {}),
               ...(assignment.corretorId
                 ? {
-                    triagemOrigemHerdada:
-                      previousOrigemAtraso ===
-                      AtrasoLiberacaoDestino.retrabalho
-                        ? AtrasoLiberacaoDestino.retrabalho
-                        : AtrasoLiberacaoDestino.caca_lead,
-                    lastTriagemAt: new Date(),
                     prazoDueAt: null,
                     alertaProximoAt: null,
                   }
@@ -1906,13 +1950,17 @@ export class LeadsService {
       data: {
         corretorId: self.id,
         equipeId: self.equipeId,
-        origemAtrasoLiberacao: null,
-        atrasoLiberadoAt: null,
-        lastMovementAt: now,
-        prazoDueAt: null,
-        alertaProximoAt: null,
-        triagemOrigemHerdada: AtrasoLiberacaoDestino.caca_lead,
-        lastTriagemAt: now,
+        ...dadosAposRedistribuir({
+          retrabalho: isOrigemRetrabalho(current.origemAtrasoLiberacao),
+          now,
+          resetPrazo: true,
+        }),
+        ...(isOrigemRetrabalho(current.origemAtrasoLiberacao)
+          ? {}
+          : {
+              triagemOrigemHerdada: AtrasoLiberacaoDestino.caca_lead,
+              lastTriagemAt: now,
+            }),
       },
     });
     await this.recordReatribuicaoHistorico({

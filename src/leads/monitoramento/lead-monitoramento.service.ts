@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AtrasoLiberacaoDestino,
   FunilEtapaPapel,
   NotificacaoTipo,
   Prisma,
@@ -634,6 +635,7 @@ export class LeadMonitoramentoService {
     }
 
     const tenantId = requireTenantId(requester);
+    await this.backfillRetrabalhoReatribuicoes(tenantId);
     const ctx = await this.loadFunilContext(tenantId);
     const leadScope = await this.teamScope.leadScope(requester, {
       includeAdminPool: false,
@@ -712,7 +714,7 @@ export class LeadMonitoramentoService {
 
     const visibleIds = await this.teamScope.getVisibleCorretorIds(requester);
     const reatribuicoes = await this.prisma.leadReatribuicao.findMany({
-      where: { tenantId },
+      where: { tenantId, origem: TriagemOrigem.retrabalho },
       select: {
         leadId: true,
         fromCorretorId: true,
@@ -809,6 +811,125 @@ export class LeadMonitoramentoService {
       ),
       equipes,
     };
+  }
+
+  /**
+   * Leads já enviados ao retrabalho não geravam LeadReatribuicao — reconstroi
+   * o corretor/equipe anteriores pela última triagem ou notificação de prazo.
+   */
+  private async backfillRetrabalhoReatribuicoes(tenantId: string) {
+    const leads = await this.prisma.lead.findMany({
+      where: {
+        tenantId,
+        origemAtrasoLiberacao: AtrasoLiberacaoDestino.retrabalho,
+      },
+      select: { id: true },
+    });
+    if (leads.length === 0) return;
+
+    const ids = leads.map((lead) => lead.id);
+    const existing = await this.prisma.leadReatribuicao.findMany({
+      where: {
+        tenantId,
+        origem: TriagemOrigem.retrabalho,
+        leadId: { in: ids },
+      },
+      select: { leadId: true },
+    });
+    const have = new Set(existing.map((row) => row.leadId));
+    const missing = ids.filter((id) => !have.has(id));
+    if (missing.length === 0) return;
+
+    const lastByLead = new Map<
+      string,
+      { fromCorretorId: string; fromEquipeId: string | null }
+    >();
+
+    const events = await this.prisma.triagemEvent.findMany({
+      where: {
+        leadId: { in: missing },
+        autor: {
+          tenantId,
+          role: { in: [Role.corretor, Role.treinee] },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        leadId: true,
+        autorId: true,
+        autor: { select: { equipeId: true } },
+      },
+    });
+    for (const event of events) {
+      if (!lastByLead.has(event.leadId)) {
+        lastByLead.set(event.leadId, {
+          fromCorretorId: event.autorId,
+          fromEquipeId: event.autor.equipeId,
+        });
+      }
+    }
+
+    const stillMissing = missing.filter((id) => !lastByLead.has(id));
+    if (stillMissing.length > 0) {
+      const notifs = await this.prisma.notificacao.findMany({
+        where: {
+          tenantId,
+          leadId: { in: stillMissing },
+          tipo: {
+            in: [
+              NotificacaoTipo.lead_prazo_ultrapassado,
+              NotificacaoTipo.lead_sem_atendimento,
+            ],
+          },
+          user: { role: { in: [Role.corretor, Role.treinee] } },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          leadId: true,
+          userId: true,
+          user: { select: { equipeId: true } },
+        },
+      });
+      for (const notif of notifs) {
+        if (notif.leadId && !lastByLead.has(notif.leadId)) {
+          lastByLead.set(notif.leadId, {
+            fromCorretorId: notif.userId,
+            fromEquipeId: notif.user.equipeId,
+          });
+        }
+      }
+    }
+
+    const data = [...lastByLead.entries()].map(([leadId, from]) => ({
+      tenantId,
+      leadId,
+      fromCorretorId: from.fromCorretorId,
+      fromEquipeId: from.fromEquipeId,
+      toCorretorId: null,
+      toEquipeId: null,
+      origem: TriagemOrigem.retrabalho,
+    }));
+    if (data.length > 0) {
+      await this.prisma.leadReatribuicao.createMany({ data });
+    }
+
+    const tagged = await this.prisma.leadReatribuicao.findMany({
+      where: { tenantId, origem: TriagemOrigem.retrabalho },
+      select: { leadId: true },
+    });
+    const taggedIds = [...new Set(tagged.map((row) => row.leadId))];
+    if (taggedIds.length > 0) {
+      await this.prisma.lead.updateMany({
+        where: {
+          tenantId,
+          id: { in: taggedIds },
+          origemAtrasoLiberacao: null,
+          triagemOrigemHerdada: null,
+          OR: [{ corretorId: { not: null } }, { equipeId: { not: null } }],
+        },
+        data: { triagemOrigemHerdada: AtrasoLiberacaoDestino.retrabalho },
+      });
+    }
   }
 
   /**

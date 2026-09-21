@@ -13,6 +13,10 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
+import {
+  dadosAposRedistribuir,
+  isOrigemRetrabalho,
+} from './retrabalho-tag';
 
 const INTERVAL_MS = 60 * 1000;
 const MAX_PER_TENANT = 40;
@@ -124,6 +128,7 @@ export class LeadDistribuicaoAutoService
         telefone: true,
         origem: true,
         cidade: true,
+        origemAtrasoLiberacao: true,
       },
       orderBy: { createdAt: 'asc' },
       take: MAX_PER_TENANT,
@@ -163,11 +168,11 @@ export class LeadDistribuicaoAutoService
         data: {
           corretorId: corretor.id,
           equipeId: corretor.equipeId,
-          origemAtrasoLiberacao: null,
-          atrasoLiberadoAt: null,
-          lastMovementAt: now,
-          prazoDueAt: null,
-          alertaProximoAt: null,
+          ...dadosAposRedistribuir({
+            retrabalho: isOrigemRetrabalho(lead.origemAtrasoLiberacao),
+            now,
+            resetPrazo: true,
+          }),
         },
       });
 

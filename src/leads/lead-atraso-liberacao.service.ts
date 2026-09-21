@@ -11,6 +11,7 @@ import {
   NotificacaoTipo,
   Prisma,
   Role,
+  TriagemOrigem,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.service';
@@ -222,6 +223,8 @@ export class LeadAtrasoLiberacaoService implements OnModuleInit, OnModuleDestroy
           stage: true,
           lastMovementAt: true,
           prazoDueAt: true,
+          corretorId: true,
+          equipeId: true,
         },
         orderBy: { id: 'asc' },
         take: BATCH,
@@ -250,22 +253,41 @@ export class LeadAtrasoLiberacaoService implements OnModuleInit, OnModuleDestroy
 
       if (ids.length === 0) continue;
 
+      const eligible = leads.filter((lead) => ids.includes(lead.id));
       const data: Prisma.LeadUncheckedUpdateManyInput = {
         corretorId: null,
         equipeId: null,
         origemAtrasoLiberacao: AtrasoLiberacaoDestino.retrabalho,
         atrasoLiberadoAt: now,
       };
-      const result = await this.prisma.lead.updateMany({
-        where: {
-          id: { in: ids },
-          corretorId: { not: null },
-          origemAtrasoLiberacao: null,
-          perdidoAt: null,
-        },
-        data,
+      const result = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.lead.updateMany({
+          where: {
+            id: { in: ids },
+            corretorId: { not: null },
+            origemAtrasoLiberacao: null,
+            perdidoAt: null,
+          },
+          data,
+        });
+        if (updated.count > 0) {
+          await tx.leadReatribuicao.createMany({
+            data: eligible
+              .filter((lead) => lead.corretorId)
+              .map((lead) => ({
+                tenantId: funil.tenantId,
+                leadId: lead.id,
+                fromCorretorId: lead.corretorId,
+                fromEquipeId: lead.equipeId,
+                toCorretorId: null,
+                toEquipeId: null,
+                origem: TriagemOrigem.retrabalho,
+              })),
+          });
+        }
+        return updated.count;
       });
-      released += result.count;
+      released += result;
     }
 
     return released;
