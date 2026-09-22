@@ -13,6 +13,7 @@ import {
 } from './meta-webhook.parser';
 import { decryptPageAccessToken, metaTokenKey } from './meta-token.crypto';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
+import { FunisService } from '../funis/funis.service';
 
 type TenantMetaConn = {
   tenantId: string;
@@ -31,6 +32,7 @@ export class MetaService {
     private readonly config: ConfigService,
     private readonly graphApi: MetaGraphApiService,
     private readonly leadNotify: LeadNotifyService,
+    private readonly funis: FunisService,
   ) {}
 
   verifyChallenge(mode?: string, token?: string, challenge?: string) {
@@ -423,6 +425,7 @@ export class MetaService {
         : []),
     ];
 
+    const placement = await this.funis.comercialPlacement(tenantId);
     const lead = await this.prisma.lead.create({
       data: {
         tenantId,
@@ -433,7 +436,8 @@ export class MetaService {
         interesse: 'Comprar',
         cidade: mapped.cidade ?? 'A definir',
         bairro: mapped.bairro ?? 'A definir',
-        stage: 'novo',
+        stage: placement.stage,
+        funilId: placement.funilId,
         prioridade: 'Média',
         tags,
       },

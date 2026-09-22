@@ -556,6 +556,10 @@ model Lead {
   equipeId String?
   equipe   Equipe? @relation(fields: [equipeId], references: [id], onDelete: SetNull)
 
+  /// Funil comercial deste contato. Trocar o funil em uso não move estes leads.
+  funilId String
+  funil   Funil @relation(fields: [funilId], references: [id], onDelete: Restrict)
+
   /// Imóvel de interesse (preenchido ao enviar para análise).
   construtoraId String?
   construtora   Construtora? @relation(fields: [construtoraId], references: [id], onDelete: SetNull)
@@ -616,6 +620,8 @@ model Lead {
   @@index([stage])
   @@index([corretorId])
   @@index([equipeId])
+  @@index([funilId])
+  @@index([tenantId, funilId])
   @@index([construtoraId])
   @@index([empreendimentoId])
   @@index([createdAt])
@@ -1429,6 +1435,7 @@ model Funil {
   distribuicaoAutoAtiva   Boolean                 @default(false)
 
   etapas FunilEtapa[]
+  leads Lead[]
   captacoes Captacao[]
   vendasUsado VendaUsado[]
   equipeFunis EquipeFunil[]

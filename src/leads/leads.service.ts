@@ -148,8 +148,9 @@ export class LeadsService {
       tenantId,
     );
 
-    const stage = dto.stage ?? (await this.catalog.getDefaultStageSlug(tenantId));
-    await this.ensureStageIsValid(tenantId, stage);
+    const placement = await this.funis.comercialPlacement(tenantId);
+    const stage = dto.stage ?? placement.stage;
+    await this.ensureStageIsValid(tenantId, stage, placement.funilId);
 
     const telefone = dto.telefone.trim();
     const phoneDigits = telefone.replace(/\D/g, "");
@@ -163,6 +164,7 @@ export class LeadsService {
       tenantId,
       stage,
       createdAt ?? new Date(),
+      placement.funilId,
     );
     const prospeccao = sanitizeProspeccao(dto.prospeccao);
 
@@ -178,6 +180,7 @@ export class LeadsService {
         cidade: dto.cidade.trim(),
         bairro: dto.bairro.trim(),
         stage,
+        funilId: placement.funilId,
         prioridade: dto.prioridade ?? 'Média',
         renda: dto.renda ?? null,
         tipoRenda: dto.tipoRenda?.trim() || null,
@@ -215,13 +218,16 @@ export class LeadsService {
     }
 
     const tenantId = requireTenantId(requester);
-    const defaultStage = await this.catalog.getDefaultStageSlug(tenantId);
-    await this.ensureStageIsValid(tenantId, defaultStage);
+    const placement = await this.funis.comercialPlacement(tenantId);
+    const defaultStage = placement.stage;
+    await this.ensureStageIsValid(tenantId, defaultStage, placement.funilId);
     const tipo =
       dto.tipo === 'cliente' ? ContatoTipo.cliente : ContatoTipo.lead;
     const importTiming = await this.monitoramento.stageChangeData(
       tenantId,
       defaultStage,
+      new Date(),
+      placement.funilId,
     );
     const origemByLabel = await this.catalog.ensureOrigensForImport(
       tenantId,
@@ -320,6 +326,7 @@ export class LeadsService {
             cidade: (item.cidade?.trim() || 'Não informado').slice(0, 80),
             bairro: (item.bairro?.trim() || 'Não informado').slice(0, 80),
             stage: defaultStage,
+            funilId: placement.funilId,
             prioridade: item.prioridade ?? 'Média',
             renda: item.renda ?? null,
             tipoRenda: item.tipoRenda?.trim() || null,
@@ -1218,21 +1225,29 @@ export class LeadsService {
       );
     }
 
-    if (dto.stage !== undefined) {
-      await this.ensureStageIsValid(tenantId, dto.stage);
-    }
-
     const currentStage =
       dto.stage !== undefined
         ? await this.prisma.lead.findFirst({
             where: { id, tenantId },
-            select: { stage: true },
+            select: { stage: true, funilId: true },
           })
         : null;
+    if (dto.stage !== undefined) {
+      await this.ensureStageIsValid(
+        tenantId,
+        dto.stage,
+        currentStage?.funilId,
+      );
+    }
     const stageChanged =
       dto.stage !== undefined && currentStage && currentStage.stage !== dto.stage;
     const timing = stageChanged
-      ? await this.monitoramento.stageChangeData(tenantId, dto.stage!)
+      ? await this.monitoramento.stageChangeData(
+          tenantId,
+          dto.stage!,
+          new Date(),
+          currentStage?.funilId,
+        )
       : null;
 
     const updated = await this.prisma.lead.update({
@@ -1383,16 +1398,17 @@ export class LeadsService {
     const tenantId = requireTenantId(requester);
     await this.ensureExistsAndAccessible(id, requester);
     const stage = dto.stage;
-    await this.ensureStageIsValid(tenantId, stage);
 
     const previous = await this.prisma.lead.findFirst({
       where: { id, tenantId },
       select: {
         stage: true,
+        funilId: true,
         construtoraId: true,
         empreendimentoId: true,
       },
     });
+    await this.ensureStageIsValid(tenantId, stage, previous?.funilId);
     const stageAnterior = previous?.stage ?? null;
 
     if (requester.role === Role.analista) {
@@ -1415,7 +1431,12 @@ export class LeadsService {
 
     const stageChanged = Boolean(stageAnterior && stageAnterior !== stage);
     const timing = stageChanged
-      ? await this.monitoramento.stageChangeData(tenantId, stage)
+      ? await this.monitoramento.stageChangeData(
+          tenantId,
+          stage,
+          new Date(),
+          previous?.funilId,
+        )
       : null;
 
     const lead = await this.prisma.lead.update({
@@ -1546,7 +1567,12 @@ export class LeadsService {
       undefined;
 
     const timing = perdidoStage
-      ? await this.monitoramento.stageChangeData(tenantId, perdidoStage)
+      ? await this.monitoramento.stageChangeData(
+          tenantId,
+          perdidoStage,
+          new Date(),
+          existing.funilId,
+        )
       : null;
 
     const updated = await this.prisma.lead.update({
@@ -2388,7 +2414,23 @@ export class LeadsService {
   private async ensureStageIsValid(
     tenantId: string,
     stage: string,
+    funilId?: string | null,
   ): Promise<void> {
+    if (funilId) {
+      const etapas = await this.prisma.funilEtapa.findMany({
+        where: { funilId, active: true },
+        select: { slug: true },
+      });
+      if (etapas.length === 0) {
+        throw new BadRequestException(
+          'Nenhuma etapa do funil cadastrada. Configure as etapas em Configurações antes de criar ou mover leads.',
+        );
+      }
+      if (!etapas.some((e) => e.slug === stage)) {
+        throw new BadRequestException('Etapa do funil inválida.');
+      }
+      return;
+    }
     const validStages = await this.catalog.getActiveStageSlugs(tenantId);
     if (validStages.length === 0) {
       throw new BadRequestException(

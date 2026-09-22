@@ -169,6 +169,7 @@ export class DashboardService {
       ),
     );
     const inicioAmanha = new Date(inicioHoje.getTime() + 24 * 60 * 60 * 1000);
+    const funilComercial = await this.funis.ensureTenantHasFunil(tenantId);
     const leadWhere = { tenantId, corretorId: requester.id, perdidoAt: null };
     const docWhereCorretor = {
       tenantId,
@@ -199,7 +200,11 @@ export class DashboardService {
       }),
       this.prisma.lead.groupBy({
         by: ['stage'],
-        where: { ...leadWhere, tipo: ContatoTipo.lead },
+        where: {
+          ...leadWhere,
+          tipo: ContatoTipo.lead,
+          funilId: funilComercial.id,
+        },
         _count: { _all: true },
       }),
       this.prisma.analise.groupBy({
@@ -343,6 +348,7 @@ export class DashboardService {
       : requester.role === Role.gerente
         ? 'gerente'
         : 'admin';
+    const funilComercial = await this.funis.ensureTenantHasFunil(tenantId);
     const leadAtivoWhere: Prisma.LeadWhereInput = {
       ...leadScope,
       perdidoAt: null,
@@ -429,7 +435,11 @@ export class DashboardService {
     ] = await Promise.all([
       this.prisma.lead.groupBy({
         by: ['stage'],
-        where: { ...leadAtivoWhere, tipo: ContatoTipo.lead },
+        where: {
+          ...leadAtivoWhere,
+          tipo: ContatoTipo.lead,
+          funilId: funilComercial.id,
+        },
         _count: { _all: true },
       }),
       this.prisma.lead.count({

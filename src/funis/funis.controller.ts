@@ -21,6 +21,7 @@ import {
   CreateFunilEtapaDto,
   QueryFunisDto,
   ReorderFunilEtapasDto,
+  MigrarLeadsFunilDto,
   UpdateFunilDto,
   UpdateFunilEtapaDto,
 } from './dto/funil.dto';
@@ -77,6 +78,16 @@ export class FunisController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.funisService.update(id, dto, requester);
+  }
+
+  @Post(':id/migrar-leads')
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
+  migrarLeads(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: MigrarLeadsFunilDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.funisService.migrarLeads(id, dto.destinoFunilId, requester);
   }
 
   @Post(':id/ativar')

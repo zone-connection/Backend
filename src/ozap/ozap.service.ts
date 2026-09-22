@@ -3,6 +3,7 @@ import { Prisma, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OzapWebhookDto } from './dto/ozap-webhook.dto';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
+import { FunisService } from '../funis/funis.service';
 import { nationalPhoneDigits, phonesMatch } from '../common/utils/phone';
 
 type OzapTransaction = Prisma.TransactionClient;
@@ -73,6 +74,7 @@ export class OzapService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly leadNotify: LeadNotifyService,
+    private readonly funis: FunisService,
   ) {}
 
   async handleWebhook(payload: OzapWebhookDto): Promise<OzapWebhookResult> {
@@ -252,6 +254,7 @@ export class OzapService {
 
     if (!lead) {
       const digits = phone.replace(/\D/g, '');
+      const placement = await this.funis.comercialPlacement(tenantId);
       lead = await tx.lead.create({
         data: {
           tenantId,
@@ -262,7 +265,8 @@ export class OzapService {
           interesse: 'Comprar',
           cidade: 'A definir',
           bairro: 'A definir',
-          stage: 'novo',
+          stage: placement.stage,
+          funilId: placement.funilId,
           prioridade: 'Média',
           tags: ['WhatsApp', 'OZap'],
         },

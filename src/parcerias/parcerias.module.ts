@@ -8,9 +8,10 @@ import {
   PortalParceiroController,
 } from './portal-parceiro.controller';
 import { PortalParceiroAuthGuard } from './guards/portal-parceiro-auth.guard';
+import { FunisModule } from '../funis/funis.module';
 
 @Module({
-  imports: [JwtModule.register({})],
+  imports: [JwtModule.register({}), FunisModule],
   controllers: [
     ParceriasController,
     PortalParceiroAuthController,

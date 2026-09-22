@@ -190,6 +190,11 @@ export class UpdateFunilEtapaDto {
   alertaAntecedenciaPercent?: number;
 }
 
+export class MigrarLeadsFunilDto {
+  @IsUUID()
+  destinoFunilId!: string;
+}
+
 export class ReorderFunilEtapasDto {
   @IsArray()
   @ArrayMinSize(1)

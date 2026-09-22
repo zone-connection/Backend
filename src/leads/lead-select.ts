@@ -41,6 +41,7 @@ export const leadSelect = {
   },
   equipeId: true,
   equipe: { select: { id: true, name: true } },
+  funilId: true,
   construtoraId: true,
   construtora: { select: { id: true, nome: true, cor: true } },
   empreendimentoId: true,

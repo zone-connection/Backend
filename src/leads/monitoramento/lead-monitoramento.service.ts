@@ -149,7 +149,10 @@ export class LeadMonitoramentoService {
     private readonly notificacoes: NotificacoesService,
   ) {}
 
-  async loadFunilContext(tenantId: string): Promise<FunilCtx> {
+  async loadFunilContext(
+    tenantId: string,
+    funilId?: string | null,
+  ): Promise<FunilCtx> {
     const funilSelect = {
       inatividadeValor: true,
       inatividadeUnidade: true,
@@ -166,7 +169,15 @@ export class LeadMonitoramentoService {
       },
     } as const;
 
+    const especifico = funilId
+      ? await this.prisma.funil.findFirst({
+          where: { id: funilId, tenantId },
+          select: funilSelect,
+        })
+      : null;
+
     const funil =
+      especifico ??
       (await this.prisma.funil.findFirst({
         where: { tenantId, tipo: 'comercial', ativo: true },
         orderBy: { updatedAt: 'desc' },
@@ -204,8 +215,9 @@ export class LeadMonitoramentoService {
     tenantId: string,
     stage: string,
     now = new Date(),
+    funilId?: string,
   ): Promise<LeadTimingFields> {
-    const ctx = await this.loadFunilContext(tenantId);
+    const ctx = await this.loadFunilContext(tenantId, funilId);
     const etapa = ctx.etapasBySlug.get(stage) ?? null;
     const prazo = this.prazoFieldsForEtapa(now, etapa);
     return {
@@ -241,11 +253,11 @@ export class LeadMonitoramentoService {
   ) {
     const lead = await this.prisma.lead.findUnique({
       where: { id: leadId },
-      select: { tenantId: true, stage: true },
+      select: { tenantId: true, stage: true, funilId: true },
     });
     if (!lead) return;
 
-    const ctx = await this.loadFunilContext(lead.tenantId);
+    const ctx = await this.loadFunilContext(lead.tenantId, lead.funilId);
     const etapa = ctx.etapasBySlug.get(lead.stage) ?? null;
     const prazo = this.prazoFieldsForEtapa(now, etapa);
 
@@ -298,8 +310,12 @@ export class LeadMonitoramentoService {
     });
   }
 
-  async recalculateStagePrazos(tenantId: string, stageSlug: string) {
-    const ctx = await this.loadFunilContext(tenantId);
+  async recalculateStagePrazos(
+    tenantId: string,
+    stageSlug: string,
+    funilId?: string,
+  ) {
+    const ctx = await this.loadFunilContext(tenantId, funilId);
     const etapa = ctx.etapasBySlug.get(stageSlug) ?? null;
     const leads = await this.prisma.lead.findMany({
       where: {
@@ -307,6 +323,7 @@ export class LeadMonitoramentoService {
         stage: stageSlug,
         perdidoAt: null,
         prazoAdiado: false,
+        ...(funilId ? { funilId } : {}),
       },
       select: {
         id: true,

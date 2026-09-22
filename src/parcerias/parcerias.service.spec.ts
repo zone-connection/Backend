@@ -46,7 +46,11 @@ describe('parcerias — vitrine e PII', () => {
         ],
       },
     };
-    const service = new ParceriasService(prisma as never, {} as never);
+    const service = new ParceriasService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
     const rows = await service.vitrine(session);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].endereco, 'Rua A, 10');
@@ -81,7 +85,11 @@ describe('parcerias — vitrine e PII', () => {
         ],
       },
     };
-    const service = new ParceriasService(prisma as never, {} as never);
+    const service = new ParceriasService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
     const rows = await service.oportunidades(session);
     assert.equal(rows[0].lead.telefone, null);
     assert.equal(rows[0].lead.email, null);

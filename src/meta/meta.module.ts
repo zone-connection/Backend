@@ -8,9 +8,10 @@ import { MetaOAuthController } from './meta-oauth.controller';
 import { MetaOAuthService } from './meta-oauth.service';
 import { MetaService } from './meta.service';
 import { LeadNotifyModule } from '../lead-notify/lead-notify.module';
+import { FunisModule } from '../funis/funis.module';
 
 @Module({
-  imports: [JwtModule.register({}), LeadNotifyModule],
+  imports: [JwtModule.register({}), LeadNotifyModule, FunisModule],
   controllers: [MetaController, MetaOAuthController],
   providers: [
     MetaService,

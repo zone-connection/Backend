@@ -14,6 +14,7 @@ import { requireTenantId } from '../common/utils/tenant';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import type { PortalParceiroSession } from './parceiro.types';
 import { ParceiroAuthService } from './parceiro-auth.service';
+import { FunisService } from '../funis/funis.service';
 import type {
   ConvidarParceiroDto,
   CreateRepasseDto,
@@ -43,6 +44,7 @@ export class ParceriasService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auth: ParceiroAuthService,
+    private readonly funis: FunisService,
   ) {}
 
   list(user: AuthenticatedUser) {
@@ -486,6 +488,7 @@ export class ParceriasService {
     if (!parceria?.podeIndicar) {
       throw new ForbiddenException('Sem permissão para indicar cliente.');
     }
+    const placement = await this.funis.comercialPlacement(parceria.tenantId);
     const lead = await this.prisma.lead.create({
       data: {
         tenantId: parceria.tenantId,
@@ -496,7 +499,8 @@ export class ParceriasService {
         interesse: 'Comprar',
         cidade: '',
         bairro: '',
-        stage: 'novo',
+        stage: placement.stage,
+        funilId: placement.funilId,
         corretorId: parceria.convidadoPorId,
       },
     });

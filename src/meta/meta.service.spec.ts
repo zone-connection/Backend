@@ -134,6 +134,9 @@ function createService(opts: {
     { get: () => undefined } as never,
     graphApi as unknown as MetaGraphApiService,
     { notifyNewLead: async () => undefined } as never,
+    {
+      comercialPlacement: async () => ({ funilId: 'funil-1', stage: 'novo' }),
+    } as never,
   );
 
   return { service, createdLeads, deletedKeys, upserts };
@@ -163,9 +166,16 @@ describe('MetaService.handleWebhook', () => {
     });
     const result = await service.handleWebhook(payload());
     assert.deepEqual(result, { ok: true, leadIds: ['crm-lead-1'] });
-    const created = createdLeads[0] as { tenantId: string; nome: string };
+    const created = createdLeads[0] as {
+      tenantId: string;
+      nome: string;
+      funilId: string;
+      stage: string;
+    };
     assert.equal(created.tenantId, TENANT_ID);
     assert.equal(created.nome, 'Ana Silva');
+    assert.equal(created.funilId, 'funil-1');
+    assert.equal(created.stage, 'novo');
     assert.equal(upserts.length, 1);
   });
 

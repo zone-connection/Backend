@@ -269,6 +269,67 @@ export class FunisService {
     return this.findOne(id, requester);
   }
 
+  /**
+   * Funil comercial em uso e a etapa em que um lead novo deve entrar.
+   * Garante que o tenant tenha um funil comercial.
+   */
+  async comercialPlacement(tenantId: string) {
+    const funil = await this.ensureTenantHasFunil(tenantId, FunilTipo.comercial);
+    return { funilId: funil.id, stage: this.firstStageSlug(funil) };
+  }
+
+  /**
+   * Leva todos os contatos de um funil comercial para outro.
+   * Na chegada, entram na primeira etapa do destino.
+   */
+  async migrarLeads(
+    id: string,
+    destinoFunilId: string,
+    requester: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(requester);
+    const origem = await this.ensureOwned(id, tenantId);
+    if (origem.tipo !== FunilTipo.comercial) {
+      throw new BadRequestException(
+        'Só é possível migrar leads de um funil comercial.',
+      );
+    }
+    if (id === destinoFunilId) {
+      throw new BadRequestException('Escolha um funil de destino diferente.');
+    }
+
+    const destino = await this.prisma.funil.findFirst({
+      where: { id: destinoFunilId, tenantId, tipo: FunilTipo.comercial },
+      select: funilSelect,
+    });
+    if (!destino) {
+      throw new NotFoundException('Funil de destino não encontrado.');
+    }
+
+    const stage = this.firstStageSlug(destino);
+    const timing = await this.monitoramento.stageChangeData(
+      tenantId,
+      stage,
+      new Date(),
+      destino.id,
+    );
+    const result = await this.prisma.lead.updateMany({
+      where: { tenantId, funilId: origem.id },
+      data: {
+        funilId: destino.id,
+        stage,
+        ...timing,
+      },
+    });
+
+    return {
+      ok: true as const,
+      migrados: result.count,
+      destinoFunilId: destino.id,
+      stage,
+    };
+  }
+
   async remove(id: string, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
     const funil = await this.ensureOwned(id, tenantId);
@@ -285,6 +346,16 @@ export class FunisService {
       throw new BadRequestException(
         'Ative outro funil deste tipo antes de excluir o funil em uso.',
       );
+    }
+    if (funil.tipo === FunilTipo.comercial) {
+      const vinculados = await this.prisma.lead.count({
+        where: { funilId: id },
+      });
+      if (vinculados > 0) {
+        throw new BadRequestException(
+          'Este funil ainda tem leads. Migre os leads para outro funil antes de excluir.',
+        );
+      }
     }
 
     const ativo = await this.prisma.funil.findFirst({
@@ -451,7 +522,11 @@ export class FunisService {
         dto.prazoUnidade !== undefined ||
         dto.alertaAntecedenciaPercent !== undefined)
     ) {
-      await this.monitoramento.recalculateStagePrazos(tenantId, etapa.slug);
+      await this.monitoramento.recalculateStagePrazos(
+        tenantId,
+        etapa.slug,
+        funilId,
+      );
     }
 
     return this.findOne(funilId, requester);
@@ -913,6 +988,7 @@ export class FunisService {
     }
     const ativo = await this.prisma.funil.findFirst({
       where: { tenantId, tipo, ativo: true },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'asc' }],
       select: funilSelect,
     });
     if (ativo) return this.maybeAttachOrphans(tenantId, ativo);
@@ -1050,9 +1126,27 @@ export class FunisService {
     return this.attachOrphanStages(tenantId, funil);
   }
 
+  /** Primeira etapa ativa: papel inicial, ou a primeira da ordem. */
+  private firstStageSlug(
+    funil: Prisma.FunilGetPayload<{ select: typeof funilSelect }>,
+  ): string {
+    const active = funil.etapas.filter((e) => e.active);
+    const inicial = active.find(
+      (e) =>
+        this.resolveEtapaPapel(e, funil.etapas) === FunilEtapaPapel.inicial,
+    );
+    const chosen = inicial ?? active[0];
+    if (!chosen) {
+      throw new BadRequestException(
+        'O funil não tem etapa ativa. Cadastre uma etapa antes de continuar.',
+      );
+    }
+    return chosen.slug;
+  }
+
   /**
-   * Recria/reativa no funil as etapas que os leads ainda usam (Lead.stage)
-   * depois que um funil antigo foi excluído.
+   * Recria/reativa neste funil as etapas que os leads DELE ainda usam.
+   * Leads de outros funis não entram aqui.
    */
   private async attachOrphanStages(
     tenantId: string,
@@ -1060,7 +1154,7 @@ export class FunisService {
   ) {
     const grouped = await this.prisma.lead.groupBy({
       by: ['stage'],
-      where: { tenantId, perdidoAt: null },
+      where: { tenantId, funilId: funil.id, perdidoAt: null },
     });
     if (grouped.length === 0) return funil;
 
@@ -1097,7 +1191,7 @@ export class FunisService {
         }
         if (found.slug !== raw) {
           await this.prisma.lead.updateMany({
-            where: { tenantId, perdidoAt: null, stage: raw },
+            where: { tenantId, funilId: funil.id, perdidoAt: null, stage: raw },
             data: { stage: found.slug },
           });
           changed = true;
@@ -1174,7 +1268,12 @@ export class FunisService {
             }
             if (clash.slug !== raw) {
               await this.prisma.lead.updateMany({
-                where: { tenantId, perdidoAt: null, stage: raw },
+                where: {
+                  tenantId,
+                  funilId: funil.id,
+                  perdidoAt: null,
+                  stage: raw,
+                },
                 data: { stage: clash.slug },
               });
             }
