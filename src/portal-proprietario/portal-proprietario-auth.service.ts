@@ -148,12 +148,16 @@ export class PortalProprietarioAuthService {
 
     const acesso = await this.prisma.proprietarioPortalAcesso.findFirst({
       where: { id: payload.sub, tenantId: payload.tenantId },
-      include: { proprietario: { select: { nome: true, email: true } } },
+      include: {
+        proprietario: { select: { nome: true, email: true } },
+        tenant: { select: { status: true } },
+      },
     });
     const hashed = createHash('sha256').update(refreshToken).digest('hex');
     if (
       !acesso ||
       acesso.status !== ProprietarioPortalStatus.ativo ||
+      acesso.tenant.status !== UserStatus.ativo ||
       !this.tokensMatch(acesso.hashedRefreshToken, hashed)
     ) {
       throw new UnauthorizedException('Sessão inválida.');

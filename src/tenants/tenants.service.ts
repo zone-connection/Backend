@@ -755,7 +755,7 @@ export class TenantsService {
     }
 
     try {
-      return await this.prisma.tenant.update({
+      const updated = await this.prisma.tenant.update({
         where: { id },
         data: {
           ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
@@ -782,6 +782,12 @@ export class TenantsService {
         },
         select: tenantSelect,
       });
+
+      if (dto.status === UserStatus.inativo) {
+        await this.revokeTenantAccess(id);
+      }
+
+      return updated;
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -793,6 +799,18 @@ export class TenantsService {
       }
       throw error;
     }
+  }
+
+  /** Derruba sessões abertas quando a imobiliária é inativada. */
+  private async revokeTenantAccess(tenantId: string) {
+    await this.prisma.user.updateMany({
+      where: { tenantId },
+      data: { hashedRefreshToken: null },
+    });
+    await this.prisma.proprietarioPortalAcesso.updateMany({
+      where: { tenantId },
+      data: { hashedRefreshToken: null },
+    });
   }
 
   // ---------------------------------------------------------------------

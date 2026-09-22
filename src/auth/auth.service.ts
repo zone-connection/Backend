@@ -66,6 +66,14 @@ export interface RequestContext {
 /** Mensagem única para qualquer falha de credencial — não revela se o e-mail existe. */
 const GENERIC_CREDENTIALS_ERROR = 'Credenciais inválidas.';
 
+function stripTenantStatus<T extends { status: UserStatus }>(
+  tenant: T,
+): Omit<T, 'status'> {
+  const { status, ...branding } = tenant;
+  void status;
+  return branding;
+}
+
 /**
  * Hash descartável usado quando o e-mail não existe. Comparar contra ele faz
  * a resposta levar o mesmo tempo de um usuário real, impedindo descobrir
@@ -132,6 +140,10 @@ export class AuthService {
       );
     }
 
+    await this.assertTenantAllowsAccess(user.tenantId, async () => {
+      await this.recordAttempt(normalizedEmail, false, context, 'usuario_inativo');
+    });
+
     const tokens = await this.issueTokens(user);
     await this.prisma.user.update({
       where: { id: user.id },
@@ -146,6 +158,29 @@ export class AuthService {
     await this.presence.heartbeat(user.id, user.tenantId);
 
     return { ...tokens, user: await this.toPublicUser(user) };
+  }
+
+  /**
+   * Impede login e renovação de sessão quando a imobiliária foi inativada.
+   * Super admin da plataforma (sem tenant) continua podendo entrar.
+   */
+  private async assertTenantAllowsAccess(
+    tenantId: string | null,
+    onDenied?: () => Promise<void>,
+  ): Promise<void> {
+    if (!tenantId) return;
+
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true },
+    });
+
+    if (!tenant || tenant.status !== UserStatus.ativo) {
+      await onDenied?.();
+      throw new ForbiddenException(
+        'Esta imobiliária está inativa. O acesso foi suspenso.',
+      );
+    }
   }
 
   /** Resolve usuário por e-mail (+ tenantSlug quando o e-mail existe em vários tenants). */
@@ -207,6 +242,8 @@ export class AuthService {
       throw new ForbiddenException('Usuário inativo. Contate o administrador.');
     }
 
+    await this.assertTenantAllowsAccess(user.tenantId);
+
     const tokenMatches = await bcrypt.compare(
       refreshToken,
       user.hashedRefreshToken,
@@ -254,7 +291,7 @@ export class AuthService {
       where: { id: userId },
       select: {
         ...publicUserSelect,
-        tenant: { select: tenantBrandingSelect },
+        tenant: { select: { ...tenantBrandingSelect, status: true } },
       },
     });
 
@@ -266,12 +303,20 @@ export class AuthService {
       throw new ForbiddenException('Usuário inativo. Contate o administrador.');
     }
 
+    if (
+      user.tenantId &&
+      (!user.tenant || user.tenant.status !== UserStatus.ativo)
+    ) {
+      throw new UnauthorizedException('Sessão inválida.');
+    }
+
     const { tenant, ...rest } = user;
+    const branding = tenant ? stripTenantStatus(tenant) : null;
     return {
       ...rest,
       temVendaVinculada: await this.resolveTemVendaVinculada(rest),
-      tenant: tenant
-        ? { ...tenant, modules: applyPlanoModules(tenant.plano, tenant.modules) }
+      tenant: branding
+        ? { ...branding, modules: applyPlanoModules(branding.plano, branding.modules) }
         : null,
     };
   }

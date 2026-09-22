@@ -78,11 +78,18 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         financeiroCanEdit: true,
         financeiroCanDelete: true,
         permissions: true,
-        tenant: { select: { plano: true, modules: true } },
+        tenant: { select: { plano: true, modules: true, status: true } },
       },
     });
 
     if (!row || row.status !== UserStatus.ativo) {
+      throw new UnauthorizedException('Sessão inválida.');
+    }
+
+    if (
+      row.tenantId &&
+      (!row.tenant || row.tenant.status !== UserStatus.ativo)
+    ) {
       throw new UnauthorizedException('Sessão inválida.');
     }
 
