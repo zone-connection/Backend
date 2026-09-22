@@ -1049,6 +1049,17 @@ export class TenantDemoDataService {
       existentes.map((l) => [`${l.email}|${l.nome}`, l.id]),
     );
 
+    const funilComercial = await this.prisma.funil.findFirst({
+      where: { tenantId, tipo: FunilTipo.comercial, ativo: true },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'asc' }],
+      select: { id: true },
+    });
+    if (!funilComercial) {
+      throw new BadRequestException(
+        'Funil comercial ativo não encontrado para os leads de demonstração.',
+      );
+    }
+
     const data: Prisma.LeadCreateManyInput[] = [];
 
     for (const def of DEMO_LEADS) {
@@ -1084,6 +1095,7 @@ export class TenantDemoDataService {
         cidade: def.cidade,
         bairro: def.bairro,
         stage: def.stage,
+        funilId: funilComercial.id,
         prioridade: def.prioridade,
         renda: def.renda ?? null,
         tipoRenda: def.tipoRenda ?? null,
