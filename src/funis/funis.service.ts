@@ -317,8 +317,8 @@ export class FunisService {
       where: { tenantId, funilId: origem.id },
       data: {
         funilId: destino.id,
-        stage,
         ...timing,
+        stage,
       },
     });
 
@@ -1126,11 +1126,17 @@ export class FunisService {
     return this.attachOrphanStages(tenantId, funil);
   }
 
-  /** Primeira etapa ativa: papel inicial, ou a primeira da ordem. */
+  /** Etapa inicial ativa (a mais à esquerda, se houver mais de uma). */
   private firstStageSlug(
     funil: Prisma.FunilGetPayload<{ select: typeof funilSelect }>,
   ): string {
-    const active = funil.etapas.filter((e) => e.active);
+    const active = [...funil.etapas]
+      .filter((e) => e.active)
+      .sort(
+        (a, b) =>
+          a.sortOrder - b.sortOrder ||
+          a.label.localeCompare(b.label, 'pt'),
+      );
     const inicial = active.find(
       (e) =>
         this.resolveEtapaPapel(e, funil.etapas) === FunilEtapaPapel.inicial,
