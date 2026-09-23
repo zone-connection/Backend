@@ -23,6 +23,7 @@ import { PortalProprietarioModule } from './portal-proprietario/portal-proprieta
 import { ParceriasModule } from './parcerias/parcerias.module';
 import { ConstrutorasModule } from './construtoras/construtoras.module';
 import { ContratosModule } from './contratos/contratos.module';
+import { ListasDocumentosModule } from './listas-documentos/listas-documentos.module';
 import { LocalidadesModule } from './localidades/localidades.module';
 import { TreinamentoModule } from './treinamento/treinamento.module';
 import { EmpreendimentosModule } from './empreendimentos/empreendimentos.module';
@@ -59,6 +60,7 @@ import { THROTTLE } from './config/security.constants';
     DocumentacaoModule,
     ConstrutorasModule,
     ContratosModule,
+    ListasDocumentosModule,
     LocalidadesModule,
     TreinamentoModule,
     EmpreendimentosModule,

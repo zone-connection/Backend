@@ -207,6 +207,7 @@ model Tenant {
   cadastroVendas                 CadastroVenda[]
   presencaTipos                  PresencaTipo[]
   presencaLancamentos            PresencaLancamento[]
+  listasDocumento                ListaDocumento[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3114,4 +3115,41 @@ model PresencaLancamento {
   @@index([tenantId, data])
   @@index([userId, data])
   @@map("presenca_lancamentos")
+}
+
+/// Lista de documentos para o cliente (análise de crédito), editável por admin e gerente.
+model ListaDocumento {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nome      String
+  /// clt | autonomo | pensionista | servidor. Nulo em listas criadas pela imobiliária.
+  chave     String?
+  intro     String   @default("")
+  aviso     String   @default("")
+  sortOrder Int      @default(0)
+
+  itens ListaDocumentoItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, chave])
+  @@index([tenantId, sortOrder])
+  @@map("listas_documento")
+}
+
+model ListaDocumentoItem {
+  id          String         @id @default(uuid())
+  listaId     String
+  lista       ListaDocumento @relation(fields: [listaId], references: [id], onDelete: Cascade)
+  titulo      String
+  descricao   String         @default("")
+  sortOrder   Int            @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([listaId, sortOrder])
+  @@map("lista_documento_itens")
 }
