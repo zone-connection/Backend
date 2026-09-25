@@ -26,4 +26,13 @@ export class CreateTriagemDto {
   @IsString()
   @MaxLength(60)
   stage?: string;
+
+  /**
+   * Etapa de origem quando o funil já avançou o lead e o relato é registrado
+   * depois (um único acontecimento com from→to).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  stageAnterior?: string;
 }

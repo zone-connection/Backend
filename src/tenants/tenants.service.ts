@@ -1,30 +1,57 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { CatalogType, Prisma, Role, TenantPlano, UserStatus } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { CatalogType, FunilTipo, Prisma, Role, TenantPlano, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomInt } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { CreateTenantAdminDto } from './dto/create-tenant-admin.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
+import { UpdateTenantCompanyDto } from './dto/update-tenant-company.dto';
 import { CreateMetaConnectionDto } from './dto/create-meta-connection.dto';
 import { UpdateMetaConnectionDto } from './dto/update-meta-connection.dto';
 import { CreateOzapConnectionDto } from './dto/create-ozap-connection.dto';
 import { UpdateOzapConnectionDto } from './dto/update-ozap-connection.dto';
-import { tenantAdminSelect } from '../common/utils/tenant-branding';
+import {
+  tenantAdminSelect,
+  tenantBrandingSelect,
+} from '../common/utils/tenant-branding';
 import { publicUserSelect } from '../common/utils/user-select';
 import { SALT_ROUNDS } from '../config/security.constants';
-import { DEFAULT_FUNNEL_STAGES } from '../catalog/catalog.defaults';
+import {
+  DEFAULT_FUNIL_NAME,
+  DEFAULT_FUNNEL_STAGES,
+  funilEtapasCreateData,
+} from '../catalog/catalog.defaults';
 import {
   PLANO_MAX_USUARIOS,
+  applyPlanoModules,
   resolvePlanoFields,
 } from './tenant-plan';
+import {
+  mergeOperationModules,
+  pickOperationModules,
+} from './tenant-operation.util';
+import { UpdateTenantOperationModulesDto } from './dto/update-tenant-operation-modules.dto';
 import { CreateTenantUserDto } from './dto/create-tenant-user.dto';
-import { PLATFORM_TENANT_ID } from '../common/utils/tenant';
+import {
+  PLATFORM_TENANT_ID,
+  requireTenantId,
+} from '../common/utils/tenant';
+import { AuthenticatedUser } from '../common/types/authenticated-user';
+import { TenantLogoColorService } from './tenant-logo-color.service';
+import { TenantDemoDataService } from './tenant-demo-data.service';
+import { MediaService } from '../media/media.service';
+import { encryptSecret, metaTokenKey } from '../meta/meta-token.crypto';
+import { PopulateDemoDataDto } from './dto/populate-demo-data.dto';
+import { UpdateTenantAdminDto } from './dto/update-tenant-admin.dto';
 
 const tenantSelect = tenantAdminSelect;
 
@@ -49,6 +76,9 @@ const metaConnectionSelect = {
   tenantId: true,
   pageId: true,
   pageAccessToken: true,
+  pageName: true,
+  adAccountId: true,
+  adAccountName: true,
   ativo: true,
   createdAt: true,
   updatedAt: true,
@@ -81,7 +111,29 @@ function maskMetaConnection(connection: MetaConnection) {
 
 @Injectable()
 export class TenantsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(TenantsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly tenantLogoColor: TenantLogoColorService,
+    private readonly demoDataService: TenantDemoDataService,
+    private readonly config: ConfigService,
+    private readonly media: MediaService,
+  ) {}
+
+  /**
+   * Gera dados fictícios (usuários, leads, imóveis, agenda, financeiro…)
+   * no tenant informado. Uso exclusivo de demonstração/treinamento.
+   */
+  async populateDemoData(id: string, dto: PopulateDemoDataDto = {}) {
+    const result = await this.demoDataService.populate(id, dto);
+    await this.prisma.tenant.update({
+      where: { id },
+      data: { isTest: true },
+    });
+    const tenant = await this.findOne(id);
+    return { ...result, tenant };
+  }
 
   findAll() {
     return this.prisma.tenant
@@ -100,16 +152,30 @@ export class TenantsService {
             select: { id: true },
             take: 1,
           },
+          oruloConnections: {
+            where: { ativo: true },
+            select: { id: true },
+            take: 1,
+          },
         },
         orderBy: { name: 'asc' },
       })
       .then((rows) =>
-        rows.map(({ users, metaConnections, ozapConnections, ...tenant }) => ({
-          ...tenant,
-          admin: users[0] ?? null,
-          hasMetaConnection: metaConnections.length > 0,
-          hasOzapConnection: ozapConnections.length > 0,
-        })),
+        rows.map(
+          ({
+            users,
+            metaConnections,
+            ozapConnections,
+            oruloConnections,
+            ...tenant
+          }) => ({
+            ...tenant,
+            admin: users[0] ?? null,
+            hasMetaConnection: metaConnections.length > 0,
+            hasOzapConnection: ozapConnections.length > 0,
+            hasOruloConnection: oruloConnections.length > 0,
+          }),
+        ),
       );
   }
 
@@ -133,6 +199,9 @@ export class TenantsService {
       logoUrl: dto.logoUrl,
       modules: planFields.modules,
     });
+    const primaryColor = await this.tenantLogoColor.extractPrimaryColor(
+      extras.logoUrl ?? null,
+    );
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -142,7 +211,7 @@ export class TenantsService {
             slug,
             documento: this.normalizeDocumento(dto.documento),
             status: dto.status ?? UserStatus.ativo,
-            primaryColor: null,
+            primaryColor,
             sidebarStyle: 'default',
             density: 'comfortable',
             homePath: '/dashboard',
@@ -150,6 +219,7 @@ export class TenantsService {
             maxUsuarios: planFields.maxUsuarios,
             usuariosExtras: planFields.usuariosExtras,
             iaBotEnabled: planFields.iaBotEnabled,
+            isTest: dto.isTest ?? false,
             ...extras,
           },
           select: tenantSelect,
@@ -256,6 +326,21 @@ export class TenantsService {
           select: ozapConnectionSelect,
           orderBy: { createdAt: 'desc' },
         },
+        oruloConnections: {
+          select: {
+            id: true,
+            tenantId: true,
+            clientId: true,
+            ativo: true,
+            lastFullSyncAt: true,
+            lastReconcileAt: true,
+            lastError: true,
+            syncing: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
         _count: { select: { users: true } },
       },
     });
@@ -264,14 +349,27 @@ export class TenantsService {
       throw new NotFoundException('Tenant não encontrado.');
     }
 
-    const { _count, metaConnections, ozapConnections, users, ...rest } =
-      tenant;
+    const {
+      _count,
+      metaConnections,
+      ozapConnections,
+      oruloConnections,
+      users,
+      ...rest
+    } = tenant;
     return {
       ...rest,
       admin: users[0] ?? null,
       userCount: _count.users,
       metaConnections: metaConnections.map(maskMetaConnection),
       ozapConnections,
+      oruloConnections: oruloConnections.map((row) => ({
+        ...row,
+        clientId:
+          row.clientId.length <= 6
+            ? '••••'
+            : `${row.clientId.slice(0, 4)}…${row.clientId.slice(-4)}`,
+      })),
     };
   }
 
@@ -295,16 +393,24 @@ export class TenantsService {
     }
 
     const temporaryPassword = this.generateTemporaryPassword();
-    const user = await this.prisma.user.update({
-      where: { id: admin.id },
+    const hashed = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
+    const updated = await this.prisma.user.updateMany({
+      where: { id: admin.id, tenantId },
       data: {
-        password: await bcrypt.hash(temporaryPassword, SALT_ROUNDS),
+        password: hashed,
         hashedRefreshToken: null,
         passwordResetToken: null,
         passwordResetExpires: null,
         failedLoginAttempts: 0,
         lockedUntil: null,
       },
+    });
+    if (updated.count === 0) {
+      throw new NotFoundException('Administrador não encontrado neste tenant.');
+    }
+
+    const user = await this.prisma.user.findFirstOrThrow({
+      where: { id: admin.id, tenantId },
       select: publicUserSelect,
     });
 
@@ -312,8 +418,84 @@ export class TenantsService {
   }
 
   /**
-   * Remove o tenant e todos os dados vinculados (cascade).
-   * Equipes são apagadas antes por causa do FK Restrict em gerenteId → User.
+   * Atualiza nome/e-mail do admin principal deste tenant.
+   * O where inclui tenantId para não tocar no admin de outro cliente
+   * mesmo se o e-mail for igual (ex.: tenant duplicado).
+   */
+  async updateAdmin(tenantId: string, dto: UpdateTenantAdminDto) {
+    if (tenantId === PLATFORM_TENANT_ID) {
+      throw new BadRequestException(
+        'O tenant interno da plataforma não pode ser alterado por aqui.',
+      );
+    }
+    await this.ensureExists(tenantId);
+
+    const admin = await this.prisma.user.findFirst({
+      where: { tenantId, role: Role.admin },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, tenantId: true, email: true },
+    });
+
+    if (!admin || admin.tenantId !== tenantId) {
+      throw new NotFoundException(
+        'Este tenant ainda não tem administrador. Crie o admin inicial primeiro.',
+      );
+    }
+
+    const name = dto.name?.trim();
+    const email = dto.email?.trim().toLowerCase();
+    if (!name && !email) {
+      throw new BadRequestException('Informe nome ou e-mail para atualizar.');
+    }
+
+    if (email && email !== admin.email) {
+      const clash = await this.prisma.user.findFirst({
+        where: { tenantId, email, id: { not: admin.id } },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new ConflictException(
+          'Já existe um usuário com este e-mail neste tenant.',
+        );
+      }
+    }
+
+    const emailChanged = Boolean(email && email !== admin.email);
+
+    try {
+      const updated = await this.prisma.user.updateMany({
+        where: { id: admin.id, tenantId },
+        data: {
+          ...(name ? { name } : {}),
+          ...(email ? { email } : {}),
+          ...(emailChanged
+            ? {
+                hashedRefreshToken: null,
+                passwordResetToken: null,
+                passwordResetExpires: null,
+              }
+            : {}),
+        },
+      });
+      if (updated.count === 0) {
+        throw new NotFoundException('Administrador não encontrado neste tenant.');
+      }
+    } catch (error) {
+      throw this.translateUniqueConstraint(
+        error,
+        'Este e-mail já está em uso neste tenant.',
+      );
+    }
+
+    return this.prisma.user.findFirstOrThrow({
+      where: { id: admin.id, tenantId },
+      select: publicUserSelect,
+    });
+  }
+
+  /**
+   * Remove o tenant e todos os dados vinculados (leads, usuários, financeiro…).
+   * FKs Restrict impedem o cascade puro; apagamos o grafo na ordem certa.
    */
   async remove(id: string) {
     if (id === PLATFORM_TENANT_ID) {
@@ -329,12 +511,123 @@ export class TenantsService {
       throw new NotFoundException('Tenant não encontrado.');
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.equipe.deleteMany({ where: { tenantId: id } });
-      await tx.tenant.delete({ where: { id } });
-    });
+    try {
+      await this.prisma.$transaction(
+        async (tx) => {
+          await this.wipeTenantOwnedRows(tx, id);
+          await tx.tenant.delete({ where: { id } });
+        },
+        { maxWait: 15_000, timeout: 180_000 },
+      );
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        this.logger.error(
+          `Falha ao excluir tenant ${id}: ${JSON.stringify(error.meta)}`,
+        );
+        throw new ConflictException(
+          'Não foi possível excluir o tenant por um vínculo interno. Tente novamente.',
+        );
+      }
+      throw error;
+    }
 
     return { id: tenant.id, name: tenant.name, slug: tenant.slug };
+  }
+
+  /** Apaga o conteúdo do tenant antes do DELETE em `tenants`. */
+  private async wipeTenantOwnedRows(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+  ) {
+    await tx.presencaLancamento.deleteMany({ where: { tenantId } });
+    await tx.presencaTipo.deleteMany({ where: { tenantId } });
+    await tx.financeiroDespesa.updateMany({
+      where: { tenantId },
+      data: { origemId: null },
+    });
+    await tx.financeiroRecebimento.updateMany({
+      where: { tenantId },
+      data: { origemId: null },
+    });
+    await tx.treinamentoLink.deleteMany({ where: { tenantId } });
+    await tx.treinamentoSecao.updateMany({
+      where: { tenantId },
+      data: { parentId: null },
+    });
+    await tx.treinamentoSecao.deleteMany({ where: { tenantId } });
+
+    await tx.financeiroMovimento.deleteMany({ where: { tenantId } });
+    await tx.financeiroTitulo.deleteMany({ where: { tenantId } });
+    await tx.financeiroComissao.deleteMany({ where: { tenantId } });
+    await tx.financeiroDespesa.deleteMany({ where: { tenantId } });
+    await tx.financeiroRecebimento.deleteMany({ where: { tenantId } });
+    await tx.platformContrato.deleteMany({ where: { tenantId } });
+    await tx.platformFornecedorContrato.deleteMany({
+      where: { parceiro: { tenantId } },
+    });
+    await tx.financeiroDespesaTipo.deleteMany({ where: { tenantId } });
+    await tx.financeiroRecebimentoTipo.deleteMany({ where: { tenantId } });
+    await tx.financeiroCategoria.deleteMany({ where: { tenantId } });
+    await tx.financeiroParceiro.deleteMany({ where: { tenantId } });
+
+    await tx.vendaUsadoPosVendaPendencia.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoPosVenda.deleteMany({ where: { tenantId } });
+    await tx.imovelChaveMovimento.deleteMany({ where: { tenantId } });
+    await tx.imovelChave.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoDocumento.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoContrato.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoFechamento.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoNegociacaoMovimento.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoNegociacao.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoProposta.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoVisita.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoHistorico.deleteMany({ where: { tenantId } });
+    await tx.vendaUsadoVinculo.deleteMany({ where: { tenantId } });
+    await tx.vendaUsado.deleteMany({ where: { tenantId } });
+    await tx.interessadoUsado.deleteMany({ where: { tenantId } });
+
+    await tx.captacaoHistorico.deleteMany({ where: { tenantId } });
+    await tx.captacao.deleteMany({ where: { tenantId } });
+    await tx.parceria.deleteMany({ where: { tenantId } });
+    await tx.imovelFoto.deleteMany({ where: { tenantId } });
+    await tx.imovel.deleteMany({ where: { tenantId } });
+    await tx.proprietarioPortalAcesso.deleteMany({ where: { tenantId } });
+    await tx.proprietario.deleteMany({ where: { tenantId } });
+
+    await tx.documentacao.deleteMany({ where: { tenantId } });
+    await tx.proposta.deleteMany({ where: { tenantId } });
+    await tx.analise.deleteMany({ where: { tenantId } });
+    await tx.leadPrazoAdiamento.deleteMany({ where: { tenantId } });
+    await tx.leadReatribuicao.deleteMany({ where: { tenantId } });
+    await tx.lead.deleteMany({ where: { tenantId } });
+
+    await tx.agendamento.deleteMany({ where: { tenantId } });
+    await tx.notificacao.deleteMany({ where: { tenantId } });
+    await tx.meta.deleteMany({ where: { tenantId } });
+    await tx.catalogItem.deleteMany({ where: { tenantId } });
+    await tx.construtora.deleteMany({ where: { tenantId } });
+    await tx.empreendimento.deleteMany({ where: { tenantId } });
+    await tx.localidade.deleteMany({ where: { tenantId } });
+
+    await tx.contracheque.deleteMany({ where: { tenantId } });
+    await tx.funcionario.deleteMany({ where: { tenantId } });
+    await tx.equipeFunil.deleteMany({ where: { tenantId } });
+    await tx.funil.deleteMany({ where: { tenantId } });
+
+    await tx.tenantMetaConnection.deleteMany({ where: { tenantId } });
+    await tx.tenantOzapConnection.deleteMany({ where: { tenantId } });
+    await tx.tenantOruloConnection.deleteMany({ where: { tenantId } });
+    await tx.userSessionSegment.deleteMany({ where: { tenantId } });
+
+    await tx.user.updateMany({
+      where: { tenantId },
+      data: { equipeId: null },
+    });
+    await tx.equipe.deleteMany({ where: { tenantId } });
+    await tx.user.deleteMany({ where: { tenantId } });
   }
 
   /**
@@ -417,6 +710,8 @@ export class TenantsService {
         usuariosExtras: true,
         iaBotEnabled: true,
         modules: true,
+        logoUrl: true,
+        logoPublicId: true,
       },
     });
     if (!current) throw new NotFoundException('Tenant não encontrado.');
@@ -450,9 +745,17 @@ export class TenantsService {
       logoUrl: dto.logoUrl,
       modules: modulesToSave,
     });
+    const logoChanged =
+      dto.logoUrl !== undefined && extras.logoUrl !== current.logoUrl;
+    const primaryColor = logoChanged
+      ? await this.tenantLogoColor.extractPrimaryColor(extras.logoUrl ?? null)
+      : undefined;
+    if (logoChanged) {
+      await this.media.destroy(current.logoPublicId);
+    }
 
     try {
-      return await this.prisma.tenant.update({
+      const updated = await this.prisma.tenant.update({
         where: { id },
         data: {
           ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
@@ -468,7 +771,10 @@ export class TenantsService {
               : current.maxUsuarios),
           usuariosExtras: planFields.usuariosExtras,
           iaBotEnabled: planFields.iaBotEnabled,
-          primaryColor: null,
+          ...(dto.isTest !== undefined ? { isTest: dto.isTest } : {}),
+          ...(logoChanged
+            ? { primaryColor, logoPublicId: null }
+            : {}),
           sidebarStyle: 'default',
           density: 'comfortable',
           homePath: '/dashboard',
@@ -476,6 +782,12 @@ export class TenantsService {
         },
         select: tenantSelect,
       });
+
+      if (dto.status === UserStatus.inativo) {
+        await this.revokeTenantAccess(id);
+      }
+
+      return updated;
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -487,6 +799,18 @@ export class TenantsService {
       }
       throw error;
     }
+  }
+
+  /** Derruba sessões abertas quando a imobiliária é inativada. */
+  private async revokeTenantAccess(tenantId: string) {
+    await this.prisma.user.updateMany({
+      where: { tenantId },
+      data: { hashedRefreshToken: null },
+    });
+    await this.prisma.proprietarioPortalAcesso.updateMany({
+      where: { tenantId },
+      data: { hashedRefreshToken: null },
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -508,6 +832,10 @@ export class TenantsService {
   async createMetaConnection(tenantId: string, dto: CreateMetaConnectionDto) {
     await this.ensureExists(tenantId);
     const pageId = dto.pageId.trim();
+    const pageAccessToken = encryptSecret(
+      dto.pageAccessToken.trim(),
+      metaTokenKey(this.config),
+    );
     await this.ensurePageIdAvailable(pageId);
 
     try {
@@ -515,7 +843,7 @@ export class TenantsService {
         data: {
           tenantId,
           pageId,
-          pageAccessToken: dto.pageAccessToken,
+          pageAccessToken,
           ativo: dto.ativo ?? true,
         },
         select: metaConnectionSelect,
@@ -540,7 +868,12 @@ export class TenantsService {
       where: { id: connectionId },
       data: {
         ...(dto.pageAccessToken !== undefined
-          ? { pageAccessToken: dto.pageAccessToken }
+          ? {
+              pageAccessToken: encryptSecret(
+                dto.pageAccessToken.trim(),
+                metaTokenKey(this.config),
+              ),
+            }
           : {}),
         ...(dto.ativo !== undefined ? { ativo: dto.ativo } : {}),
       },
@@ -577,7 +910,7 @@ export class TenantsService {
     await this.ensureInstanceIdAvailable(dto.instanceId);
 
     try {
-      return await this.prisma.tenantOzapConnection.create({
+      const connection = await this.prisma.tenantOzapConnection.create({
         data: {
           tenantId,
           instanceId: dto.instanceId,
@@ -585,6 +918,13 @@ export class TenantsService {
         },
         select: ozapConnectionSelect,
       });
+      if (tenantId === PLATFORM_TENANT_ID) {
+        await this.prisma.tenant.update({
+          where: { id: tenantId },
+          data: { iaBotEnabled: true },
+        });
+      }
+      return connection;
     } catch (error) {
       throw this.translateUniqueConstraint(
         error,
@@ -647,6 +987,7 @@ export class TenantsService {
         data: {
           tenantId,
           name: 'Funil padrão',
+          tipo: FunilTipo.comercial,
           ativo: true,
           etapas: {
             create: DEFAULT_FUNNEL_STAGES.map((stage) => ({
@@ -657,6 +998,28 @@ export class TenantsService {
               active: true,
             })),
           },
+        },
+      });
+    }
+
+    for (const tipo of [FunilTipo.captacao, FunilTipo.venda_usados] as const) {
+      const exists = await tx.funil.findFirst({
+        where: { tenantId, tipo },
+        select: { id: true },
+      });
+      if (exists) continue;
+      const baseName = DEFAULT_FUNIL_NAME[tipo];
+      const clash = await tx.funil.findUnique({
+        where: { tenantId_name: { tenantId, name: baseName } },
+        select: { id: true },
+      });
+      await tx.funil.create({
+        data: {
+          tenantId,
+          name: clash ? `${baseName} (padrão)` : baseName,
+          tipo,
+          ativo: true,
+          etapas: { create: funilEtapasCreateData(tipo) },
         },
       });
     }
@@ -715,6 +1078,186 @@ export class TenantsService {
     }
 
     return chars.join('');
+  }
+
+  /** Dados da imobiliária do tenant do requester. */
+  async getCompanyProfile(requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: tenantBrandingSelect,
+    });
+    if (!tenant) {
+      throw new NotFoundException('Tenant não encontrado.');
+    }
+    return tenant;
+  }
+
+  /** Atualiza nome/documento/CRECI/contato da imobiliária (admin). */
+  async updateCompanyProfile(
+    requester: AuthenticatedUser,
+    dto: UpdateTenantCompanyDto,
+  ) {
+    const tenantId = this.assertCanEditCompany(requester);
+    await this.ensureExists(tenantId);
+
+    return this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.documento !== undefined
+          ? { documento: this.normalizeDocumento(dto.documento) }
+          : {}),
+        ...(dto.creci !== undefined ? { creci: dto.creci.trim() } : {}),
+        ...(dto.email !== undefined
+          ? { email: dto.email.trim().toLowerCase() }
+          : {}),
+        ...(dto.telefone !== undefined
+          ? { telefone: dto.telefone.trim() }
+          : {}),
+        ...(dto.endereco !== undefined
+          ? { endereco: dto.endereco.trim() }
+          : {}),
+        ...(dto.cidade !== undefined ? { cidade: dto.cidade.trim() } : {}),
+      },
+      select: tenantBrandingSelect,
+    });
+  }
+
+  async uploadCompanyLogo(
+    requester: AuthenticatedUser,
+    rawFile: Express.Multer.File | undefined,
+  ) {
+    const tenantId = this.assertCanEditCompany(requester);
+    const current = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { logoPublicId: true },
+    });
+    if (!current) throw new NotFoundException('Tenant não encontrado.');
+
+    const file = this.media.requireFile(rawFile);
+    const uploaded = await this.media.uploadImage({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      folder: this.media.folder(tenantId, 'tenants', tenantId),
+      maxWidth: 1600,
+      maxHeight: 1600,
+    });
+    const primaryColor = await this.tenantLogoColor.extractPrimaryColor(
+      uploaded.url,
+    );
+    await this.media.destroy(current.logoPublicId);
+
+    return this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        logoUrl: uploaded.url,
+        logoPublicId: uploaded.publicId,
+        primaryColor,
+      },
+      select: tenantBrandingSelect,
+    });
+  }
+
+  async removeCompanyLogo(requester: AuthenticatedUser) {
+    const tenantId = this.assertCanEditCompany(requester);
+    const current = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { logoPublicId: true },
+    });
+    if (!current) throw new NotFoundException('Tenant não encontrado.');
+
+    await this.media.destroy(current.logoPublicId);
+    return this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: { logoUrl: null, logoPublicId: null, primaryColor: null },
+      select: tenantBrandingSelect,
+    });
+  }
+
+  private assertCanEditCompany(requester: AuthenticatedUser): string {
+    if (requester.role !== Role.admin) {
+      throw new ForbiddenException(
+        'Somente o administrador pode editar os dados da imobiliária.',
+      );
+    }
+    const tenantId = requireTenantId(requester);
+    if (tenantId === PLATFORM_TENANT_ID) {
+      throw new BadRequestException(
+        'O tenant interno da plataforma não pode ser alterado por aqui.',
+      );
+    }
+    return tenantId;
+  }
+
+  async getOperationModules(requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { plano: true, modules: true },
+    });
+    if (!tenant) throw new NotFoundException('Tenant não encontrado.');
+    const modules = applyPlanoModules(tenant.plano, tenant.modules);
+    return {
+      modules,
+      operations: pickOperationModules(modules),
+      hideClientesNav: modules.hideClientesNav === true,
+      adminVerClientesCorretor: modules.adminVerClientesCorretor === true,
+      gerenteVerLeadsGerais: modules.gerenteVerLeadsGerais === true,
+    };
+  }
+
+  async updateOperationModules(
+    requester: AuthenticatedUser,
+    dto: UpdateTenantOperationModulesDto,
+  ) {
+    if (requester.role !== Role.admin) {
+      throw new ForbiddenException(
+        'Somente o administrador pode alterar as operações da imobiliária.',
+      );
+    }
+    const tenantId = requireTenantId(requester);
+    if (tenantId === PLATFORM_TENANT_ID) {
+      throw new BadRequestException(
+        'O tenant interno da plataforma não pode ser alterado por aqui.',
+      );
+    }
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { plano: true, modules: true },
+    });
+    if (!tenant) throw new NotFoundException('Tenant não encontrado.');
+
+    const current = applyPlanoModules(tenant.plano, tenant.modules);
+    const merged = mergeOperationModules(current, {
+      captacao: dto.captacao,
+      imoveisUsados: dto.imoveisUsados,
+      locacao: dto.locacao,
+      parcerias: dto.parcerias,
+    });
+    if (typeof dto.hideClientesNav === 'boolean') {
+      merged.hideClientesNav = dto.hideClientesNav;
+    }
+    if (typeof dto.adminVerClientesCorretor === 'boolean') {
+      merged.adminVerClientesCorretor = dto.adminVerClientesCorretor;
+    }
+    if (typeof dto.gerenteVerLeadsGerais === 'boolean') {
+      merged.gerenteVerLeadsGerais = dto.gerenteVerLeadsGerais;
+    }
+    const modules = applyPlanoModules(tenant.plano, merged);
+
+    await this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: { modules: modules as Prisma.InputJsonValue },
+    });
+
+    return {
+      modules,
+      operations: pickOperationModules(modules),
+      hideClientesNav: modules.hideClientesNav === true,
+      adminVerClientesCorretor: modules.adminVerClientesCorretor === true,
+      gerenteVerLeadsGerais: modules.gerenteVerLeadsGerais === true,
+    };
   }
 
   /** Mantém só dígitos do CPF/CNPJ (até 14). */

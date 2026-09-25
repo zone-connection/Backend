@@ -1,79 +1,121 @@
+import { MediaService } from "../media/media.service";
 import {
+  EMPREENDIMENTO_MAX_IMAGES,
+  resolveEmpreendimentoImages,
+  serializeStoredImages,
+  type StoredImage,
+} from "../media/stored-image";
+import { MatchingService } from "../matching/matching.service";
+import { CreateEmpreendimentoDto } from "./dto/create-empreendimento.dto";
+import { UpdateEmpreendimentoDto } from "./dto/update-empreendimento.dto";
+import { QueryEmpreendimentosDto } from "./dto/query-empreendimentos.dto";
+import { normalizeCor } from "../common/utils/cor";
+import { prismaTableOrderBy } from "../common/utils/table-sort";
+import { AuthenticatedUser } from "../common/types/authenticated-user";
+import { requireTenantId } from "../common/utils/tenant";
+import { PrismaService } from "../prisma/prisma.service";
+import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
-  Logger,
   NotFoundException,
-} from '@nestjs/common';
-import { Role } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { AuthenticatedUser } from '../common/types/authenticated-user';
-import { requireTenantId, DEFAULT_TENANT_SLUG } from '../common/utils/tenant';
-import { CreateEmpreendimentoDto } from './dto/create-empreendimento.dto';
-import { UpdateEmpreendimentoDto } from './dto/update-empreendimento.dto';
-import { QueryEmpreendimentosDto } from './dto/query-empreendimentos.dto';
-import { fetchSiteEmpreendimentos } from './site-sync';
-import { normalizeCor } from '../common/utils/cor';
+} from "@nestjs/common";
+import { Prisma, Role } from "@prisma/client";
+import {
+  catalogoFromTipologias,
+  normalizeEmpreendimentoVitrine,
+} from "./empreendimento-vitrine";
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function slugifyPublico(value: string) {
+  const slug = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return slug || "empreendimento";
+}
+
+const MATCHING_FIELDS = [
+  "cidade",
+  "localidadeId",
+  "construtoraId",
+  "quartos",
+  "vagas",
+  "valorReferencia",
+  "tags",
+  "ativo",
+  "vitrine",
+] as const;
 const empreendimentoSelect = {
   id: true,
+  tenantId: true,
   nome: true,
   cor: true,
   construtoraId: true,
+  localidadeId: true,
   cidade: true,
   endereco: true,
+  tipo: true,
+  status: true,
+  previsaoEntrega: true,
+  tags: true,
+  observacao: true,
+  vitrine: true,
   quartos: true,
   banheiros: true,
+  vagas: true,
+  valorReferencia: true,
+  rendaAPartirDe: true,
   areaM2: true,
   externalUrl: true,
   imagemUrl: true,
+  imagens: true,
   externalKey: true,
   ativo: true,
+  oruloBuildingId: true,
+  oruloStatus: true,
+  oruloSyncedAt: true,
   createdAt: true,
   updatedAt: true,
   construtora: { select: { id: true, nome: true, cor: true } },
+  localidade: { select: { id: true, nome: true } },
 } as const;
+
+type EmpreendimentoRow = Prisma.EmpreendimentoGetPayload<{
+  select: typeof empreendimentoSelect;
+}>;
 
 @Injectable()
 export class EmpreendimentosService {
-  private readonly logger = new Logger(EmpreendimentosService.name);
-  private imageSyncPromises = new Map<string, Promise<void>>();
-  /** Evita deleteMany repetido a cada listagem no mesmo processo. */
-  private purgedTenantIds = new Set<string>();
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly media: MediaService,
+    private readonly matching: MatchingService,
+  ) {}
 
-  constructor(private readonly prisma: PrismaService) {}
+  async listMatches(id: string, requester: AuthenticatedUser) {
+    return this.matching.matchForEmpreendimento(id, requester);
+  }
 
   async list(query: QueryEmpreendimentosDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    await this.purgeForeignSiteCatalogIfNeeded(tenantId);
-
-    const where = {
-      tenantId,
-      ...(query.construtoraId ? { construtoraId: query.construtoraId } : {}),
-      ...(query.ativo !== undefined ? { ativo: query.ativo } : {}),
-    };
-
-    let items = await this.prisma.empreendimento.findMany({
-      where,
+    const items = await this.prisma.empreendimento.findMany({
+      where: {
+        tenantId,
+        ...(query.construtoraId ? { construtoraId: query.construtoraId } : {}),
+        ...(query.ativo !== undefined ? { ativo: query.ativo } : {}),
+      },
       select: empreendimentoSelect,
-      orderBy: { nome: 'asc' },
+      orderBy: prismaTableOrderBy(query.sort, "nome"),
     });
-
-    // Capas: só para o tenant New Palace (único com sync de site).
-    if (
-      (await this.isSiteSyncTenant(tenantId)) &&
-      items.length > 0 &&
-      items.some((item) => !item.imagemUrl) &&
-      !query.construtoraId
-    ) {
-      await this.ensureCatalogImages(tenantId);
-      items = await this.prisma.empreendimento.findMany({
-        where,
-        select: empreendimentoSelect,
-        orderBy: { nome: 'asc' },
-      });
-    }
-
-    return items;
+    return this.attachMatchResumo(
+      items.map((item) => this.present(item, { capaOnly: true })),
+    );
   }
 
   async findOne(id: string, requester: AuthenticatedUser) {
@@ -82,12 +124,118 @@ export class EmpreendimentosService {
       where: { id, tenantId },
       select: empreendimentoSelect,
     });
-    if (!item) throw new NotFoundException('Empreendimento não encontrado.');
+    if (!item) throw new NotFoundException("Empreendimento não encontrado.");
+    const [presented] = await this.attachMatchResumo([this.present(item)]);
+    return presented;
+  }
+
+  /** Ficha pública para compartilhar (sem dados internos do CRM). */
+  async findPublic(id: string) {
+    if (!UUID_RE.test(id)) {
+      throw new NotFoundException("Empreendimento não encontrado.");
+    }
+    const item = await this.prisma.empreendimento.findFirst({
+      where: { id },
+      select: this.publicSelect(),
+    });
+    if (!item) throw new NotFoundException("Empreendimento não encontrado.");
+    return this.presentPublic(item);
+  }
+
+  async findPublicBySlug(tenantSlug: string, slug: string) {
+    const tenant = await this.prisma.tenant.findFirst({
+      where: { slug: tenantSlug },
+      select: { id: true },
+    });
+    if (!tenant) throw new NotFoundException("Empreendimento não encontrado.");
+    const rows = await this.prisma.empreendimento.findMany({
+      where: { tenantId: tenant.id },
+      select: { id: true, nome: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const hit = rows.find((row) => slugifyPublico(row.nome) === slug);
+    if (!hit) throw new NotFoundException("Empreendimento não encontrado.");
+    return this.findPublic(hit.id);
+  }
+
+  private publicSelect() {
+    return {
+      ...empreendimentoSelect,
+      tenant: {
+        select: {
+          name: true,
+          slug: true,
+          logoUrl: true,
+          telefone: true,
+          email: true,
+          endereco: true,
+          cidade: true,
+          creci: true,
+          primaryColor: true,
+        },
+      },
+    } as const;
+  }
+
+  private presentPublic(
+    item: EmpreendimentoRow & {
+      tenant: {
+        name: string;
+        slug: string;
+        logoUrl: string | null;
+        telefone: string;
+        email: string;
+        endereco: string;
+        cidade: string;
+        creci: string;
+        primaryColor: string | null;
+      };
+    },
+  ) {
+    const stored = resolveEmpreendimentoImages(item);
+    return {
+      nome: item.nome,
+      cidade: item.cidade,
+      endereco: item.endereco,
+      tipo: item.tipo,
+      status: item.status,
+      previsaoEntrega: item.previsaoEntrega
+        ? item.previsaoEntrega.toISOString().slice(0, 10)
+        : null,
+      quartos: item.quartos,
+      banheiros: item.banheiros,
+      vagas: item.vagas,
+      valorReferencia: item.valorReferencia,
+      areaM2: item.areaM2,
+      imagens: stored.slice(0, 15).map((image) => image.largeUrl || image.url),
+      localidade: item.localidade?.nome ?? null,
+      construtora: item.construtora?.nome ?? null,
+      vitrine: normalizeEmpreendimentoVitrine(item.vitrine),
+      imobiliaria: item.tenant.name,
+      tenantSlug: item.tenant.slug,
+      slug: slugifyPublico(item.nome),
+      logoUrl: item.tenant.logoUrl,
+      telefone: item.tenant.telefone || null,
+      email: item.tenant.email || null,
+      imobiliariaEndereco: item.tenant.endereco || null,
+      imobiliariaCidade: item.tenant.cidade || null,
+      creci: item.tenant.creci || null,
+      cor: item.tenant.primaryColor || item.cor,
+    };
+  }
+
+  private async findRow(id: string, requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    const item = await this.prisma.empreendimento.findFirst({
+      where: { id, tenantId },
+      select: empreendimentoSelect,
+    });
+    if (!item) throw new NotFoundException("Empreendimento não encontrado.");
     return item;
   }
 
   async create(dto: CreateEmpreendimentoDto, requester: AuthenticatedUser) {
-    this.assertAdminOrManager(requester);
+    this.assertCanCreate(requester);
     const tenantId = requireTenantId(requester);
     if (dto.construtoraId) {
       const construtora = await this.prisma.construtora.findFirst({
@@ -95,28 +243,49 @@ export class EmpreendimentosService {
         select: { id: true },
       });
       if (!construtora) {
-        throw new NotFoundException('Construtora não encontrada.');
+        throw new NotFoundException("Construtora não encontrada.");
       }
     }
+    const localidade = await this.resolveLocalidade(
+      tenantId,
+      dto.localidadeId,
+    );
     const key = this.slugify(dto.nome);
-    return this.prisma.empreendimento.create({
+    const vitrine = normalizeEmpreendimentoVitrine(dto.vitrine);
+    const catalogo = catalogoFromTipologias(vitrine?.tipologias ?? []);
+    const created = await this.prisma.empreendimento.create({
       data: {
         tenantId,
         nome: dto.nome.trim(),
         cor: normalizeCor(dto.cor),
         construtoraId: dto.construtoraId ?? null,
-        cidade: dto.cidade?.trim() || null,
+        localidadeId: localidade?.id ?? null,
+        cidade: dto.cidade?.trim() || localidade?.nome || null,
         endereco: dto.endereco?.trim() || null,
-        quartos: dto.quartos ?? null,
-        banheiros: dto.banheiros ?? null,
-        areaM2: dto.areaM2 ?? null,
+        tipo: dto.tipo?.trim() || null,
+        status: dto.status?.trim() || null,
+        previsaoEntrega: this.toDate(dto.previsaoEntrega),
+        tags: this.normalizeTags(dto.tags),
+        observacao: dto.observacao?.trim() || null,
+        vitrine: vitrine === null ? Prisma.JsonNull : (vitrine as Prisma.InputJsonValue),
+        quartos: dto.quartos ?? catalogo.quartos,
+        banheiros: dto.banheiros ?? catalogo.banheiros,
+        vagas: dto.vagas ?? catalogo.vagas,
+        valorReferencia: dto.valorReferencia ?? catalogo.valorReferencia,
+        rendaAPartirDe: dto.rendaAPartirDe ?? null,
+        areaM2: dto.areaM2 ?? catalogo.areaM2,
         externalUrl: dto.externalUrl?.trim() || null,
         imagemUrl: null,
+        imagens: [],
         externalKey: `manual-${key}-${Date.now()}`,
         ativo: dto.ativo ?? true,
       },
       select: empreendimentoSelect,
     });
+    void this.matching
+      .runAfterEmpreendimentoChange(created.id, tenantId)
+      .catch(() => undefined);
+    return this.present(created);
   }
 
   async update(
@@ -124,9 +293,22 @@ export class EmpreendimentosService {
     dto: UpdateEmpreendimentoDto,
     requester: AuthenticatedUser,
   ) {
-    this.assertAdmin(requester);
-    await this.findOne(id, requester);
-    return this.prisma.empreendimento.update({
+    this.assertCanManage(requester);
+    const row = await this.findRow(id, requester);
+    const localidade =
+      dto.localidadeId !== undefined
+        ? await this.resolveLocalidade(row.tenantId, dto.localidadeId)
+        : undefined;
+    const shouldRematch = MATCHING_FIELDS.some(
+      (field) => dto[field] !== undefined,
+    );
+    const vitrine =
+      dto.vitrine !== undefined
+        ? normalizeEmpreendimentoVitrine(dto.vitrine)
+        : undefined;
+    const catalogo = catalogoFromTipologias(vitrine?.tipologias ?? []);
+    const aplicarCatalogo = (vitrine?.tipologias.length ?? 0) > 0;
+    const updated = await this.prisma.empreendimento.update({
       where: { id },
       data: {
         ...(dto.nome !== undefined ? { nome: dto.nome.trim() } : {}),
@@ -134,183 +316,322 @@ export class EmpreendimentosService {
         ...(dto.construtoraId !== undefined
           ? { construtoraId: dto.construtoraId }
           : {}),
+        ...(dto.localidadeId !== undefined
+          ? { localidadeId: localidade?.id ?? null }
+          : {}),
         ...(dto.cidade !== undefined
           ? { cidade: dto.cidade?.trim() || null }
-          : {}),
+          : localidade
+            ? { cidade: localidade.nome }
+            : dto.localidadeId === null
+              ? { cidade: null }
+              : {}),
         ...(dto.endereco !== undefined
           ? { endereco: dto.endereco?.trim() || null }
           : {}),
-        ...(dto.quartos !== undefined ? { quartos: dto.quartos } : {}),
-        ...(dto.banheiros !== undefined ? { banheiros: dto.banheiros } : {}),
-        ...(dto.areaM2 !== undefined ? { areaM2: dto.areaM2 } : {}),
+        ...(dto.tipo !== undefined ? { tipo: dto.tipo?.trim() || null } : {}),
+        ...(dto.status !== undefined
+          ? { status: dto.status?.trim() || null }
+          : {}),
+        ...(dto.previsaoEntrega !== undefined
+          ? { previsaoEntrega: this.toDate(dto.previsaoEntrega) }
+          : {}),
+        ...(dto.tags !== undefined ? { tags: this.normalizeTags(dto.tags) } : {}),
+        ...(dto.observacao !== undefined
+          ? { observacao: dto.observacao?.trim() || null }
+          : {}),
+        ...(dto.quartos !== undefined
+          ? { quartos: dto.quartos }
+          : aplicarCatalogo
+            ? { quartos: catalogo.quartos }
+            : {}),
+        ...(dto.banheiros !== undefined
+          ? { banheiros: dto.banheiros }
+          : aplicarCatalogo
+            ? { banheiros: catalogo.banheiros }
+            : {}),
+        ...(dto.vagas !== undefined
+          ? { vagas: dto.vagas }
+          : aplicarCatalogo
+            ? { vagas: catalogo.vagas }
+            : {}),
+        ...(dto.valorReferencia !== undefined
+          ? { valorReferencia: dto.valorReferencia }
+          : aplicarCatalogo
+            ? { valorReferencia: catalogo.valorReferencia }
+            : {}),
+        ...(dto.rendaAPartirDe !== undefined
+          ? { rendaAPartirDe: dto.rendaAPartirDe }
+          : {}),
+        ...(dto.areaM2 !== undefined
+          ? { areaM2: dto.areaM2 }
+          : aplicarCatalogo
+            ? { areaM2: catalogo.areaM2 }
+            : {}),
         ...(dto.externalUrl !== undefined
           ? { externalUrl: dto.externalUrl?.trim() || null }
           : {}),
         ...(dto.ativo !== undefined ? { ativo: dto.ativo } : {}),
+        ...(vitrine !== undefined
+          ? {
+              vitrine:
+                vitrine === null
+                  ? Prisma.JsonNull
+                  : (vitrine as Prisma.InputJsonValue),
+            }
+          : {}),
       },
       select: empreendimentoSelect,
     });
+    if (shouldRematch && updated.ativo) {
+      void this.matching
+        .runAfterEmpreendimentoChange(updated.id, row.tenantId)
+        .catch(() => undefined);
+    }
+    return this.present(updated);
+  }
+
+  async uploadImagem(
+    id: string,
+    rawFile: Express.Multer.File | undefined,
+    requester: AuthenticatedUser,
+  ) {
+    this.assertCanManage(requester);
+    const row = await this.findRow(id, requester);
+    const current = resolveEmpreendimentoImages(row);
+    if (current.length >= EMPREENDIMENTO_MAX_IMAGES) {
+      throw new BadRequestException(
+        `Cada empreendimento pode ter no máximo ${EMPREENDIMENTO_MAX_IMAGES} imagens.`,
+      );
+    }
+    const file = this.media.requireFile(rawFile);
+    const uploaded = await this.media.uploadImage({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      folder: this.media.folder(row.tenantId, "empreendimentos", row.id),
+      maxWidth: 1920,
+      maxHeight: 1280,
+    });
+    const next = [...current, uploaded];
+    return this.persistImagens(row.id, next);
+  }
+
+  async uploadPlanta(
+    id: string,
+    rawFile: Express.Multer.File | undefined,
+    requester: AuthenticatedUser,
+  ) {
+    this.assertCanManage(requester);
+    const row = await this.findRow(id, requester);
+    const file = this.media.requireFile(rawFile);
+    const uploaded = await this.media.uploadImage({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      folder: this.media.folder(row.tenantId, 'empreendimentos', row.id),
+      maxWidth: 1920,
+      maxHeight: 1920,
+    });
+    return { url: uploaded.url };
+  }
+
+  async removeImagem(
+    id: string,
+    index: number,
+    requester: AuthenticatedUser,
+  ) {
+    this.assertCanManage(requester);
+    const row = await this.findRow(id, requester);
+    const current = resolveEmpreendimentoImages(row);
+    if (index < 0 || index >= current.length) {
+      throw new NotFoundException("Imagem não encontrada.");
+    }
+    const [removed] = current.splice(index, 1);
+    await this.media.destroy(removed?.publicId);
+    return this.persistImagens(row.id, current);
   }
 
   async remove(id: string, requester: AuthenticatedUser) {
-    this.assertAdmin(requester);
-    await this.findOne(id, requester);
+    this.assertCanRemove(requester);
+    const row = await this.findRow(id, requester);
+    await this.media.destroyMany(
+      resolveEmpreendimentoImages(row).map((image) => image.publicId),
+    );
     await this.prisma.empreendimento.delete({ where: { id } });
     return { ok: true };
   }
 
-  async syncFromSite(requester: AuthenticatedUser) {
-    this.assertAdmin(requester);
-    const tenantId = requireTenantId(requester);
-    if (!(await this.isSiteSyncTenant(tenantId))) {
-      throw new ForbiddenException(
-        'Sincronização com o site está disponível apenas para o tenant New Palace. Cadastre os imóveis manualmente.',
-      );
-    }
-    return this.runSync(tenantId);
-  }
-
-  /**
-   * Remove catálogo importado do site New Palace em tenants que não são a New Palace.
-   * Itens criados manualmente (externalKey manual-*) são preservados.
-   */
-  private async purgeForeignSiteCatalogIfNeeded(tenantId: string) {
-    if (await this.isSiteSyncTenant(tenantId)) return;
-    if (this.purgedTenantIds.has(tenantId)) return;
-
-    const result = await this.prisma.empreendimento.deleteMany({
-      where: {
-        tenantId,
-        NOT: { externalKey: { startsWith: 'manual-' } },
-      },
-    });
-    this.purgedTenantIds.add(tenantId);
-    if (result.count > 0) {
-      this.logger.log(
-        `Removidos ${result.count} imóveis importados do site New Palace do tenant ${tenantId}.`,
-      );
-    }
-  }
-
-  private async isSiteSyncTenant(tenantId: string): Promise<boolean> {
-    const tenant = await this.prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { slug: true },
-    });
-    return tenant?.slug === DEFAULT_TENANT_SLUG;
-  }
-
-  /** Completa uma única vez as capas do catálogo importado antes da migration. */
-  private async ensureCatalogImages(tenantId: string) {
-    let promise = this.imageSyncPromises.get(tenantId);
-    if (!promise) {
-      promise = this.runSync(tenantId)
-        .then((result) => {
-          this.logger.log(
-            `Capas do catálogo atualizadas: ${result.updated + result.created} empreendimentos.`,
-          );
-        })
-        .catch((err) => {
-          this.logger.error(
-            `Falha ao buscar capas dos empreendimentos: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        })
-        .finally(() => {
-          this.imageSyncPromises.delete(tenantId);
-        });
-      this.imageSyncPromises.set(tenantId, promise);
-    }
-    await promise;
-  }
-
-  private async runSync(tenantId: string) {
-    const { items, source, detail } = await fetchSiteEmpreendimentos();
-    if (detail) {
-      this.logger.warn(detail);
-    }
-
-    let created = 0;
-    let updated = 0;
-
-    for (const item of items) {
-      const existing = await this.prisma.empreendimento.findUnique({
-        where: {
-          tenantId_externalKey: { tenantId, externalKey: item.externalKey },
+  private persistImagens(id: string, images: StoredImage[]) {
+    return this.prisma.empreendimento
+      .update({
+        where: { id },
+        data: {
+          imagens: serializeStoredImages(images),
+          imagemUrl: images[0]?.url ?? null,
         },
-        select: { id: true },
-      });
+        select: empreendimentoSelect,
+      })
+      .then((item) => this.present(item));
+  }
 
-      if (existing) {
-        await this.prisma.empreendimento.update({
-          where: { id: existing.id },
-          data: {
-            nome: item.nome,
-            cidade: item.cidade,
-            endereco: item.endereco,
-            quartos: item.quartos,
-            banheiros: item.banheiros,
-            areaM2: item.areaM2,
-            externalUrl: item.externalUrl,
-            imagemUrl: item.imagemUrl,
-            ativo: true,
-          },
-        });
-        updated += 1;
-      } else {
-        await this.prisma.empreendimento.create({
-          data: {
-            tenantId,
-            nome: item.nome,
-            cidade: item.cidade,
-            endereco: item.endereco,
-            quartos: item.quartos,
-            banheiros: item.banheiros,
-            areaM2: item.areaM2,
-            externalUrl: item.externalUrl,
-            imagemUrl: item.imagemUrl,
-            externalKey: item.externalKey,
-            ativo: true,
-          },
-        });
-        created += 1;
+  private async attachMatchResumo<
+    T extends { id: string },
+  >(
+    items: Array<
+      T & {
+        matchTotal?: number;
+        matchMuitoCompativeis?: number;
+        matchInteressePrevio?: number;
+        matchComputedAt?: string | null;
       }
+    >,
+  ) {
+    if (items.length === 0) return items;
+    try {
+      const rows = await this.prisma.empreendimento.findMany({
+        where: { id: { in: items.map((item) => item.id) } },
+        select: {
+          id: true,
+          matchTotal: true,
+          matchMuitoCompativeis: true,
+          matchInteressePrevio: true,
+          matchComputedAt: true,
+        },
+      });
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      return items.map((item) => {
+        const row = byId.get(item.id);
+        return {
+          ...item,
+          matchTotal: row?.matchTotal ?? 0,
+          matchMuitoCompativeis: row?.matchMuitoCompativeis ?? 0,
+          matchInteressePrevio: row?.matchInteressePrevio ?? 0,
+          matchComputedAt: row?.matchComputedAt
+            ? row.matchComputedAt.toISOString()
+            : null,
+        };
+      });
+    } catch {
+      return items.map((item) => ({
+        ...item,
+        matchTotal: item.matchTotal ?? 0,
+        matchMuitoCompativeis: item.matchMuitoCompativeis ?? 0,
+        matchInteressePrevio: item.matchInteressePrevio ?? 0,
+        matchComputedAt: item.matchComputedAt ?? null,
+      }));
     }
+  }
 
+  private present(
+    item: EmpreendimentoRow,
+    opts: { capaOnly?: boolean } = {},
+  ) {
+    const stored = resolveEmpreendimentoImages(item);
+    const { tenantId: _tenantId, previsaoEntrega, vitrine, ...rest } = item;
+    const capa = stored[0]?.url ?? null;
+    const imagens = stored.map((image) => image.largeUrl || image.url);
     return {
-      ok: true,
-      source,
-      detail: detail ?? null,
-      total: items.length,
-      created,
-      updated,
+      ...rest,
+      vitrine: normalizeEmpreendimentoVitrine(vitrine),
+      previsaoEntrega: previsaoEntrega
+        ? previsaoEntrega.toISOString().slice(0, 10)
+        : null,
+      matchTotal: 0,
+      matchMuitoCompativeis: 0,
+      matchInteressePrevio: 0,
+      matchComputedAt: null as string | null,
+      imagens: opts.capaOnly ? (capa ? [capa] : []) : imagens,
+      imagemUrl: capa,
     };
   }
 
-  private assertAdmin(requester: AuthenticatedUser) {
-    if (requester.role !== Role.admin) {
+  private toVitrineJson(value: unknown) {
+    const next = normalizeEmpreendimentoVitrine(value);
+    return next === null ? Prisma.JsonNull : next;
+  }
+
+  private normalizeTags(tags?: string[] | null) {
+    if (!tags) return [];
+    const seen = new Set<string>();
+    const next: string[] = [];
+    for (const tag of tags) {
+      const label = tag.trim();
+      if (!label) continue;
+      const key = label.toLocaleLowerCase("pt-BR");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      next.push(label);
+    }
+    return next;
+  }
+
+  private toDate(value?: string | null) {
+    if (value === undefined) return undefined;
+    if (!value) return null;
+    const date = new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  private async resolveLocalidade(
+    tenantId: string,
+    localidadeId?: string | null,
+  ) {
+    if (!localidadeId) return null;
+    const localidade = await this.prisma.localidade.findFirst({
+      where: { id: localidadeId, tenantId },
+      select: { id: true, nome: true },
+    });
+    if (!localidade) {
+      throw new NotFoundException("Localidade não encontrada.");
+    }
+    return localidade;
+  }
+
+  private assertCanRemove(requester: AuthenticatedUser) {
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.analista &&
+      requester.role !== Role.treinee
+    ) {
       throw new ForbiddenException(
-        'Apenas administradores podem alterar empreendimentos.',
+        "Apenas administradores, analistas e treinees podem remover empreendimentos.",
       );
     }
   }
 
-  private assertAdminOrManager(requester: AuthenticatedUser) {
-    if (requester.role !== Role.admin && requester.role !== Role.gerente) {
+  private assertCanManage(requester: AuthenticatedUser) {
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.gerente &&
+      requester.role !== Role.analista &&
+      requester.role !== Role.treinee &&
+      requester.role !== Role.corretor
+    ) {
       throw new ForbiddenException(
-        'Apenas administradores e gerentes podem cadastrar empreendimentos.',
+        "Apenas administradores, gerentes, analistas, treinees e corretores podem editar empreendimentos.",
+      );
+    }
+  }
+
+  private assertCanCreate(requester: AuthenticatedUser) {
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.gerente &&
+      requester.role !== Role.analista &&
+      requester.role !== Role.treinee
+    ) {
+      throw new ForbiddenException(
+        "Apenas administradores, gerentes, analistas e treinees podem cadastrar empreendimentos.",
       );
     }
   }
 
   private slugify(value: string): string {
     return value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
       .slice(0, 80);
   }
 }

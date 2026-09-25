@@ -1,0 +1,8 @@
+-- AlterEnum Role
+ALTER TYPE "Role" ADD VALUE 'financeiro';
+
+ALTER TABLE "users"
+  ADD COLUMN IF NOT EXISTS "financeiroCanView" BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS "financeiroCanCreate" BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS "financeiroCanEdit" BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS "financeiroCanDelete" BOOLEAN NOT NULL DEFAULT true;

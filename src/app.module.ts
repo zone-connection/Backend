@@ -15,16 +15,31 @@ import { EquipesModule } from './equipes/equipes.module';
 import { AnaliseModule } from './analise/analise.module';
 import { NotificacoesModule } from './notificacoes/notificacoes.module';
 import { AgendaModule } from './agenda/agenda.module';
+import { GoogleCalendarModule } from './google-calendar/google-calendar.module';
 import { TenantsModule } from './tenants/tenants.module';
+import { CaptacaoModule } from './captacao/captacao.module';
+import { ImoveisUsadosModule } from './imoveis-usados/imoveis-usados.module';
+import { PortalProprietarioModule } from './portal-proprietario/portal-proprietario.module';
+import { ParceriasModule } from './parcerias/parcerias.module';
 import { ConstrutorasModule } from './construtoras/construtoras.module';
+import { ContratosModule } from './contratos/contratos.module';
+import { ListasDocumentosModule } from './listas-documentos/listas-documentos.module';
+import { LocalidadesModule } from './localidades/localidades.module';
+import { TreinamentoModule } from './treinamento/treinamento.module';
 import { EmpreendimentosModule } from './empreendimentos/empreendimentos.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { MetasModule } from './metas/metas.module';
 import { OzapModule } from './ozap/ozap.module';
 import { MetaModule } from './meta/meta.module';
+import { OruloModule } from './orulo/orulo.module';
+import { GrupoZapModule } from './grupozap/grupozap.module';
 import { PropostasModule } from './propostas/propostas.module';
 import { FinanceiroModule } from './financeiro/financeiro.module';
+import { FuncionariosModule } from './funcionarios/funcionarios.module';
+import { PresencaModule } from './presenca/presenca.module';
+import { CadastroVendasModule } from './cadastro-vendas/cadastro-vendas.module';
 import { PlatformContratosModule } from './platform-contratos/platform-contratos.module';
+import { PlatformFornecedorContratosModule } from './platform-fornecedor-contratos/platform-fornecedor-contratos.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { CsrfGuard } from './common/guards/csrf.guard';
 import { validateEnv } from './config/env.validation';
@@ -45,19 +60,34 @@ import { THROTTLE } from './config/security.constants';
     TriagemModule,
     DocumentacaoModule,
     ConstrutorasModule,
+    ContratosModule,
+    ListasDocumentosModule,
+    LocalidadesModule,
+    TreinamentoModule,
     EmpreendimentosModule,
     DashboardModule,
     MetasModule,
     OzapModule,
     MetaModule,
+    OruloModule,
+    GrupoZapModule,
     PropostasModule,
     FinanceiroModule,
+    FuncionariosModule,
+    PresencaModule,
+    CadastroVendasModule,
     PlatformContratosModule,
+    PlatformFornecedorContratosModule,
     EquipesModule,
     AnaliseModule,
     NotificacoesModule,
     AgendaModule,
+    GoogleCalendarModule,
     TenantsModule,
+    CaptacaoModule,
+    ImoveisUsadosModule,
+    PortalProprietarioModule,
+    ParceriasModule,
   ],
   controllers: [AppController],
   providers: [
