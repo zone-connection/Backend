@@ -32,6 +32,7 @@ import { MetasModule } from './metas/metas.module';
 import { OzapModule } from './ozap/ozap.module';
 import { MetaModule } from './meta/meta.module';
 import { OruloModule } from './orulo/orulo.module';
+import { GrupoZapModule } from './grupozap/grupozap.module';
 import { PropostasModule } from './propostas/propostas.module';
 import { FinanceiroModule } from './financeiro/financeiro.module';
 import { FuncionariosModule } from './funcionarios/funcionarios.module';
@@ -69,6 +70,7 @@ import { THROTTLE } from './config/security.constants';
     OzapModule,
     MetaModule,
     OruloModule,
+    GrupoZapModule,
     PropostasModule,
     FinanceiroModule,
     FuncionariosModule,

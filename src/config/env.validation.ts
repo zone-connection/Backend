@@ -27,6 +27,7 @@ export function validateEnv(config: Record<string, unknown>) {
   const accessSecret = String(config.JWT_ACCESS_SECRET ?? '');
   const refreshSecret = String(config.JWT_REFRESH_SECRET ?? '');
   const ozapWebhookSecret = String(config.OZAP_WEBHOOK_SECRET ?? '');
+  const grupoZapSecret = String(config.GRUPOZAP_SECRET_KEY ?? '');
   const metaAppSecret = String(config.META_APP_SECRET ?? '');
   const metaVerifyToken = String(config.META_VERIFY_TOKEN ?? '');
 
@@ -56,6 +57,12 @@ export function validateEnv(config: Record<string, unknown>) {
   ) {
     errors.push(
       `OZAP_WEBHOOK_SECRET deve ter ao menos ${MIN_SECRET_LENGTH} caracteres.`,
+    );
+  }
+
+  if (grupoZapSecret && grupoZapSecret.length < 16) {
+    errors.push(
+      'GRUPOZAP_SECRET_KEY deve ter ao menos 16 caracteres.',
     );
   }
 

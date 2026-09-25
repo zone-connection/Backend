@@ -165,6 +165,7 @@ model Tenant {
   metaConnections   TenantMetaConnection[]
   ozapConnections   TenantOzapConnection[]
   oruloConnections  TenantOruloConnection[]
+  grupoZapConnection TenantGrupoZapConnection?
   financeiroParceiros     FinanceiroParceiro[]
   financeiroMovimentos    FinanceiroMovimento[]
   financeiroTitulos       FinanceiroTitulo[]
@@ -606,6 +607,7 @@ model Lead {
   notificacoes  Notificacao[]
   ozapLink      LeadOzapLink?
   metaLink      LeadMetaLink?
+  grupoZapLink  LeadGrupoZapLink?
   participacoesParceria ParceriaParticipacao[]
 
   createdAt DateTime @default(now())
@@ -730,6 +732,85 @@ model MetaWebhookDelivery {
   @@index([pageId])
   @@index([leadgenId])
   @@map("meta_webhook_deliveries")
+}
+
+/// Conexão da imobiliária com OLX, ZAP e Viva Real (Grupo OLX).
+/// anuncianteId vai na URL do webhook e do feed — identifica o cliente no CRM.
+model TenantGrupoZapConnection {
+  id             String  @id @default(uuid())
+  tenantId       String  @unique
+  tenant         Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  anuncianteId   String  @unique
+  ativo          Boolean @default(true)
+  /// Atributo displayAddress do VRSync: All, Street ou Neighborhood.
+  displayAddress String  @default("Neighborhood")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("tenant_grupozap_connections")
+}
+
+/// Entrega do webhook de leads. originLeadId impede duplicar retentativa.
+model GrupoZapWebhookDelivery {
+  id           String   @id @default(uuid())
+  originLeadId String   @unique
+  tenantId     String
+  payload      Json
+  processedAt  DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("grupozap_webhook_deliveries")
+}
+
+/// Vínculo do lead do CRM com o contato enviado pelo Grupo OLX.
+model LeadGrupoZapLink {
+  id               String  @id @default(uuid())
+  leadId           String  @unique
+  lead             Lead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  originLeadId     String  @unique
+  originListingId  String  @default("")
+  clientListingId  String  @default("")
+  leadOrigin       String
+  leadType         String  @default("")
+  transactionType  String  @default("")
+  temperature      String  @default("")
+  message          String  @default("")
+  leadCerto        Boolean @default(false)
+  imovelId         String?
+
+  createdAt DateTime @default(now())
+
+  @@index([imovelId])
+  @@map("lead_grupozap_links")
+}
+
+/// Último relatório de importação de anúncios recebido do Grupo OLX.
+model GrupoZapImportReport {
+  id         String   @id @default(uuid())
+  externalId String   @unique
+  company    String   @default("")
+  payload    Json
+  receivedAt DateTime @default(now())
+
+  @@map("grupozap_import_reports")
+}
+
+/// Crítica ou aviso do relatório, ligado ao imóvel pelo ListingID.
+model GrupoZapListingIssue {
+  id               String @id @default(uuid())
+  tenantId         String
+  imovelId         String
+  imovel           Imovel @relation(fields: [imovelId], references: [id], onDelete: Cascade)
+  reportExternalId String
+  level            String
+  message          String
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([imovelId])
+  @@map("grupozap_listing_issues")
 }
 
 /// Origem do relato de triagem (após avanço no funil ou criação manual).
@@ -1761,6 +1842,7 @@ model Imovel {
 
   captacoes Captacao[]
   vendaUsado VendaUsado?
+  grupoZapIssues GrupoZapListingIssue[]
   chaves     ImovelChave[]
   posVendas  VendaUsadoPosVenda[]
 
