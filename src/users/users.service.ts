@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -33,6 +34,7 @@ import {
 } from '../mailer/mailer.service';
 import { SALT_ROUNDS } from '../config/security.constants';
 import { CreateUserDto } from './dto/create-user.dto';
+import { ImportUsersDto } from './dto/import-users.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 import { assertRoleAllowedForPlano, PLANO_MAX_USUARIOS } from '../tenants/tenant-plan';
@@ -132,6 +134,77 @@ export class UsersService {
       },
       select: publicUserSelect,
     });
+  }
+
+  async importMany(dto: ImportUsersDto, requester: AuthenticatedUser) {
+    const created: Array<{
+      id: string;
+      name: string;
+      email: string;
+      role: Role;
+    }> = [];
+    const errors: Array<{ index: number; nome: string; message: string }> = [];
+    const seen = new Set<string>();
+
+    for (let index = 0; index < dto.users.length; index += 1) {
+      const item = dto.users[index]!;
+      const email = item.email.toLowerCase().trim();
+      if (seen.has(email)) {
+        errors.push({
+          index,
+          nome: item.name,
+          message: 'E-mail repetido nesta importação.',
+        });
+        continue;
+      }
+      seen.add(email);
+      try {
+        const user = await this.create(
+          {
+            name: item.name,
+            email,
+            password: item.password,
+            creci: item.creci?.trim() || undefined,
+            role: item.role,
+          } as CreateUserDto,
+          requester,
+        );
+        created.push({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        });
+      } catch (err) {
+        errors.push({
+          index,
+          nome: item.name,
+          message: this.importErrorMessage(err),
+        });
+      }
+    }
+
+    return {
+      created: created.length,
+      failed: errors.length,
+      users: created,
+      errors,
+    };
+  }
+
+  private importErrorMessage(err: unknown): string {
+    if (err instanceof HttpException) {
+      const body = err.getResponse();
+      if (typeof body === 'string') return body;
+      if (body && typeof body === 'object' && 'message' in body) {
+        const message = (body as { message?: string | string[] }).message;
+        if (Array.isArray(message)) return message[0] ?? err.message;
+        if (typeof message === 'string') return message;
+      }
+    }
+    return err instanceof Error
+      ? err.message
+      : 'Não foi possível criar o usuário.';
   }
 
   /** Cota de usuários do tenant do requester. */

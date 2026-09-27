@@ -13,6 +13,41 @@ export function demoUserEmail(slug: string, key: string): string {
   return `${key}@${slug}.demo`.toLowerCase();
 }
 
+/** Quantos registros extras (~30%) entram na carga de demonstração. */
+export function demoExtraCount(length: number): number {
+  if (length <= 0) return 0;
+  return Math.max(1, Math.round(length * 0.3));
+}
+
+export function expandDemoVolume<T>(
+  items: readonly T[],
+  clone: (item: T, n: number) => T,
+): T[] {
+  const count = demoExtraCount(items.length);
+  const extras: T[] = [];
+  for (let n = 1; n <= count; n += 1) {
+    extras.push(clone(items[(n - 1) % items.length]!, n));
+  }
+  return [...items, ...extras];
+}
+
+function bumpDigits(raw: string, n: number): string {
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return raw;
+  const next = (BigInt(digits) + BigInt(n) * 97n)
+    .toString()
+    .padStart(digits.length, '0')
+    .slice(-digits.length);
+  if (digits.length === 11 && raw.includes('(')) {
+    return `(${next.slice(0, 2)}) ${next.slice(2, 7)}-${next.slice(7)}`;
+  }
+  return next;
+}
+
+export function extraDemoLeadKeys(leads: readonly { key: string }[]): string[] {
+  return leads.filter((lead) => /-d\d+$/.test(lead.key)).map((lead) => lead.key);
+}
+
 export type DemoUserKey =
   | 'gerente'
   | 'gerente2'
@@ -189,13 +224,18 @@ export const DEMO_CATALOG: {
   },
 ];
 
-export const DEMO_LOCALIDADES = [
+export const DEMO_LOCALIDADES_BASE = [
   'Recife',
   'Olinda',
   'Jaboatão dos Guararapes',
   'Ipojuca / Porto de Galinhas',
   'Caruaru',
 ] as const;
+
+export const DEMO_LOCALIDADES = expandDemoVolume(
+  DEMO_LOCALIDADES_BASE,
+  (nome, n) => `${nome} (${n + 1})`,
+);
 
 export interface DemoConstrutoraDef {
   nome: string;
@@ -208,7 +248,7 @@ export interface DemoConstrutoraDef {
   localidades: number[];
 }
 
-export const DEMO_CONSTRUTORAS: readonly DemoConstrutoraDef[] = [
+export const DEMO_CONSTRUTORAS_BASE: readonly DemoConstrutoraDef[] = [
   {
     nome: 'Moura Dubeux',
     cor: '#1D4ED8',
@@ -261,6 +301,16 @@ export const DEMO_CONSTRUTORAS: readonly DemoConstrutoraDef[] = [
   },
 ];
 
+export const DEMO_CONSTRUTORAS: readonly DemoConstrutoraDef[] = expandDemoVolume(
+  DEMO_CONSTRUTORAS_BASE,
+  (item, n) => ({
+    ...item,
+    nome: `${item.nome} ${n + 1}`,
+    contato: bumpDigits(item.contato, n),
+    viabilizadorContato: bumpDigits(item.viabilizadorContato, n),
+  }),
+);
+
 export interface DemoEmpreendimentoDef {
   nome: string;
   cor: string;
@@ -279,7 +329,7 @@ export interface DemoEmpreendimentoDef {
   ativo?: boolean;
 }
 
-export const DEMO_EMPREENDIMENTOS: readonly DemoEmpreendimentoDef[] = [
+export const DEMO_EMPREENDIMENTOS_BASE: readonly DemoEmpreendimentoDef[] = [
   {
     nome: 'Reserva Boa Viagem',
     cor: '#1D4ED8',
@@ -379,6 +429,13 @@ export const DEMO_EMPREENDIMENTOS: readonly DemoEmpreendimentoDef[] = [
   },
 ];
 
+export const DEMO_EMPREENDIMENTOS: readonly DemoEmpreendimentoDef[] =
+  expandDemoVolume(DEMO_EMPREENDIMENTOS_BASE, (item, n) => ({
+    ...item,
+    nome: `${item.nome} ${n + 1}`,
+    endereco: `${item.endereco} — bloco ${n + 1}`,
+  }));
+
 export interface DemoLeadDef {
   key: string;
   nome: string;
@@ -405,7 +462,7 @@ export interface DemoLeadDef {
   perda?: { motivo: string; por: DemoUserKey };
 }
 
-export const DEMO_LEADS: readonly DemoLeadDef[] = [
+export const DEMO_LEADS_BASE: readonly DemoLeadDef[] = [
   {
     key: 'mariana',
     nome: 'Mariana Freitas',
@@ -862,8 +919,20 @@ export const DEMO_LEADS: readonly DemoLeadDef[] = [
   },
 ];
 
+export const DEMO_LEADS: readonly DemoLeadDef[] = expandDemoVolume(
+  DEMO_LEADS_BASE,
+  (lead, n) => ({
+    ...lead,
+    key: `${lead.key}-d${n}`,
+    nome: `${lead.nome} ${n + 1}`,
+    email: lead.email.replace('@', `.d${n}@`),
+    telefone: bumpDigits(lead.telefone, n),
+    diasAtras: lead.diasAtras + (n % 7),
+  }),
+);
+
 /** Relatos de triagem (histórico de contato) por lead. */
-export const DEMO_TRIAGEM: readonly {
+export const DEMO_TRIAGEM_BASE: readonly {
   lead: string;
   autor: DemoUserKey;
   texto: string;
@@ -928,6 +997,16 @@ export const DEMO_TRIAGEM: readonly {
   },
 ];
 
+export const DEMO_TRIAGEM = (() => {
+  const keys = extraDemoLeadKeys(DEMO_LEADS);
+  const count = Math.min(demoExtraCount(DEMO_TRIAGEM_BASE.length), keys.length);
+  const extras = Array.from({ length: count }, (_, index) => {
+    const src = DEMO_TRIAGEM_BASE[index % DEMO_TRIAGEM_BASE.length]!;
+    return { ...src, lead: keys[index]! };
+  });
+  return [...DEMO_TRIAGEM_BASE, ...extras];
+})();
+
 export const DEMO_TREINAMENTO: readonly {
   titulo: string;
   links: { titulo: string; url: string }[];
@@ -965,7 +1044,7 @@ export const DEMO_TREINAMENTO: readonly {
   },
 ];
 
-export const DEMO_FINANCEIRO_PARCEIROS = [
+export const DEMO_FINANCEIRO_PARCEIROS_BASE = [
   {
     nome: 'Imobiliária Parceira Norte',
     documento: '12.345.678/0001-90',
@@ -1007,6 +1086,17 @@ export const DEMO_FINANCEIRO_PARCEIROS = [
     cidade: 'Olinda',
   },
 ];
+
+export const DEMO_FINANCEIRO_PARCEIROS = expandDemoVolume(
+  DEMO_FINANCEIRO_PARCEIROS_BASE,
+  (item, n) => ({
+    ...item,
+    nome: `${item.nome} ${n + 1}`,
+    documento: bumpDigits(item.documento, n),
+    email: item.email.replace('@', `.d${n}@`),
+    telefone: bumpDigits(item.telefone, n),
+  }),
+);
 
 export const DEMO_DESPESA_TIPOS = [
   { nome: 'Aluguel e condomínio', natureza: 'fixa' as const, orcadoMensal: 9500 },
@@ -1059,7 +1149,7 @@ export type DemoCaptacaoImovelDef = {
   };
 };
 
-export const DEMO_CAPTATION_IMOVEIS: readonly DemoCaptacaoImovelDef[] = [
+export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
   {
     email: 'lucia.andrade.captacao@example.com',
     proprietario: 'Lúcia Andrade',
@@ -1287,7 +1377,17 @@ export const DEMO_CAPTATION_IMOVEIS: readonly DemoCaptacaoImovelDef[] = [
   },
 ];
 
-export const DEMO_INTERESSADOS_USADOS = [
+export const DEMO_CAPTATION_IMOVEIS: readonly DemoCaptacaoImovelDef[] =
+  expandDemoVolume(DEMO_CAPTATION_IMOVEIS_BASE, (item, n) => ({
+    ...item,
+    email: item.email.replace('@', `.d${n}@`),
+    proprietario: `${item.proprietario} ${n + 1}`,
+    telefone: bumpDigits(item.telefone, n),
+    cpfCnpj: bumpDigits(item.cpfCnpj, n),
+    numero: String(Number(item.numero.replace(/\D/g, '') || '1') + n),
+  }));
+
+export const DEMO_INTERESSADOS_USADOS_BASE = [
   {
     nome: 'Bruno Cavalcanti',
     telefone: '(81) 98870-2201',
@@ -1315,4 +1415,14 @@ export const DEMO_INTERESSADOS_USADOS = [
     precoMax: 650000,
     quartosMin: 2,
   },
-] as const;
+];
+
+export const DEMO_INTERESSADOS_USADOS = expandDemoVolume(
+  DEMO_INTERESSADOS_USADOS_BASE,
+  (item, n) => ({
+    ...item,
+    nome: `${item.nome} ${n + 1}`,
+    telefone: bumpDigits(item.telefone, n),
+    email: item.email.replace('@', `.d${n}@`),
+  }),
+);

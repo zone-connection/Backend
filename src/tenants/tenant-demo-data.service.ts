@@ -56,27 +56,38 @@ import { slugify } from '../catalog/catalog.util';
 import { isStatusVendido } from '../common/utils/documentacao-status';
 import {
   DEMO_CAPTATION_IMOVEIS,
+  DEMO_CAPTATION_IMOVEIS_BASE,
   DEMO_CATALOG,
   DEMO_INTERESSADOS_USADOS,
+  DEMO_INTERESSADOS_USADOS_BASE,
   DEMO_CONSTRUTORAS,
+  DEMO_CONSTRUTORAS_BASE,
   DEMO_DESPESA_TIPOS,
   DEMO_EMPREENDIMENTOS,
+  DEMO_EMPREENDIMENTOS_BASE,
   DEMO_EQUIPES,
   DEMO_FINANCEIRO_PARCEIROS,
+  DEMO_FINANCEIRO_PARCEIROS_BASE,
   DEMO_LEADS,
+  DEMO_LEADS_BASE,
   DEMO_LOCALIDADES,
+  DEMO_LOCALIDADES_BASE,
   DEMO_PASSWORD,
   DEMO_RECEBIMENTO_TIPOS,
   DEMO_TREINAMENTO,
   DEMO_TRIAGEM,
+  DEMO_TRIAGEM_BASE,
   DEMO_USERS,
+  demoExtraCount,
   demoUserEmail,
+  extraDemoLeadKeys,
   type DemoUserKey,
 } from './demo-seed.data';
 import { PopulateDemoDataDto } from './dto/populate-demo-data.dto';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+
 
 export type DemoDataCounts = {
   usuarios: number;
@@ -129,7 +140,33 @@ export type PopulateDemoDataResult = {
 /** Gera uma carga completa de dados fictícios em um tenant (demonstração). */
 @Injectable()
 export class TenantDemoDataService {
+  private extraVolume = false;
+
   constructor(private readonly prisma: PrismaService) {}
+
+  private pick<T>(full: readonly T[], base: readonly T[]): readonly T[] {
+    return this.extraVolume ? full : base;
+  }
+
+  private leads() {
+    return this.pick(DEMO_LEADS, DEMO_LEADS_BASE);
+  }
+
+  private withExtraLeadVolume<T extends { lead?: string; titulo?: string }>(
+    defs: readonly T[],
+  ): T[] {
+    if (!this.extraVolume) return [];
+    const keys = extraDemoLeadKeys(this.leads());
+    const count = Math.min(demoExtraCount(defs.length), keys.length);
+    return Array.from({ length: count }, (_, index) => {
+      const src = defs[index % defs.length]!;
+      const next: T = { ...src, lead: keys[index]! };
+      if (typeof src.titulo === 'string') {
+        return { ...next, titulo: `${src.titulo} (${index + 1})` };
+      }
+      return next;
+    });
+  }
 
   async populate(
     tenantId: string,
@@ -155,6 +192,7 @@ export class TenantDemoDataService {
     });
     if (!tenant) throw new NotFoundException('Tenant não encontrado.');
 
+    this.extraVolume = dto.volumeExtra === true;
     const limpou = dto.limparAntes === true;
     if (limpou) {
       await this.wipeOperationalData(tenantId, tenant.slug);
@@ -692,7 +730,10 @@ export class TenantDemoDataService {
 
     const vendaImovelIds: string[] = [];
 
-    for (const def of DEMO_CAPTATION_IMOVEIS) {
+    for (const def of this.pick(
+      DEMO_CAPTATION_IMOVEIS,
+      DEMO_CAPTATION_IMOVEIS_BASE,
+    )) {
       const existente = await this.prisma.proprietario.findFirst({
         where: { tenantId, email: def.email },
         select: { id: true },
@@ -809,7 +850,10 @@ export class TenantDemoDataService {
     }
 
     const interessadoIds: string[] = [];
-    for (const def of DEMO_INTERESSADOS_USADOS) {
+    for (const def of this.pick(
+      DEMO_INTERESSADOS_USADOS,
+      DEMO_INTERESSADOS_USADOS_BASE,
+    )) {
       const jaTem = await this.prisma.interessadoUsado.findFirst({
         where: { tenantId, email: def.email },
         select: { id: true },
@@ -923,7 +967,7 @@ export class TenantDemoDataService {
 
   private async seedLocalidades(tenantId: string): Promise<string[]> {
     const ids: string[] = [];
-    for (const nome of DEMO_LOCALIDADES) {
+    for (const nome of this.pick(DEMO_LOCALIDADES, DEMO_LOCALIDADES_BASE)) {
       const row = await this.prisma.localidade.upsert({
         where: { tenantId_nome: { tenantId, nome } },
         update: {},
@@ -940,7 +984,7 @@ export class TenantDemoDataService {
     localidadeIds: string[],
   ): Promise<string[]> {
     const ids: string[] = [];
-    for (const def of DEMO_CONSTRUTORAS) {
+    for (const def of this.pick(DEMO_CONSTRUTORAS, DEMO_CONSTRUTORAS_BASE)) {
       const existing = await this.prisma.construtora.findFirst({
         where: { tenantId, nome: def.nome },
         select: { id: true },
@@ -982,7 +1026,10 @@ export class TenantDemoDataService {
     const now = Date.now();
     const ids: string[] = [];
 
-    for (const def of DEMO_EMPREENDIMENTOS) {
+    for (const def of this.pick(
+      DEMO_EMPREENDIMENTOS,
+      DEMO_EMPREENDIMENTOS_BASE,
+    )) {
       const externalKey = `demo-${slugify(def.nome)}`;
       const previsao =
         def.previsaoMesesFrente > 0
@@ -1040,8 +1087,8 @@ export class TenantDemoDataService {
     const existentes = await this.prisma.lead.findMany({
       where: {
         tenantId,
-        email: { in: DEMO_LEADS.map((l) => l.email) },
-        nome: { in: DEMO_LEADS.map((l) => l.nome) },
+        email: { in: this.leads().map((l) => l.email) },
+        nome: { in: this.leads().map((l) => l.nome) },
       },
       select: { id: true, email: true, nome: true },
     });
@@ -1062,7 +1109,7 @@ export class TenantDemoDataService {
 
     const data: Prisma.LeadCreateManyInput[] = [];
 
-    for (const def of DEMO_LEADS) {
+    for (const def of this.leads()) {
       const jaExiste = idByEmail.get(`${def.email}|${def.nome}`);
       if (jaExiste) {
         leadIdByKey.set(def.key, jaExiste);
@@ -1143,7 +1190,8 @@ export class TenantDemoDataService {
     const now = Date.now();
     const data: Prisma.TriagemEventCreateManyInput[] = [];
 
-    const leadIds = DEMO_TRIAGEM.map((t) => leadIdByKey.get(t.lead)).filter(
+    const triagens = this.pick(DEMO_TRIAGEM, DEMO_TRIAGEM_BASE);
+    const leadIds = triagens.map((t) => leadIdByKey.get(t.lead)).filter(
       (id): id is string => Boolean(id),
     );
     const comTriagem = new Set(
@@ -1155,7 +1203,7 @@ export class TenantDemoDataService {
       ).map((t) => t.leadId),
     );
 
-    for (const def of DEMO_TRIAGEM) {
+    for (const def of triagens) {
       const leadId = leadIdByKey.get(def.lead);
       const autorId = userIdByKey.get(def.autor);
       if (!leadId || !autorId || comTriagem.has(leadId)) continue;
@@ -1311,6 +1359,7 @@ export class TenantDemoDataService {
         obs: 'Consulta Bacen em andamento.',
       },
     ];
+    defs.push(...this.withExtraLeadVolume(defs));
 
     const leadIds = defs
       .map((d) => ctx.leadIdByKey.get(d.lead))
@@ -1335,7 +1384,7 @@ export class TenantDemoDataService {
     for (const def of defs) {
       const leadId = ctx.leadIdByKey.get(def.lead);
       if (!leadId) continue;
-      const leadDef = DEMO_LEADS.find((l) => l.key === def.lead);
+      const leadDef = this.leads().find((l) => l.key === def.lead);
       if (!leadDef) continue;
 
       // Documentação já existente entra no resumo para que as comissões
@@ -1507,6 +1556,7 @@ export class TenantDemoDataService {
         observacao: 'Recusada — cliente achou a parcela alta.',
       },
     ];
+    defs.push(...this.withExtraLeadVolume(defs));
 
     const leadIds = defs
       .map((d) => ctx.leadIdByKey.get(d.lead))
@@ -1544,7 +1594,7 @@ export class TenantDemoDataService {
     for (const def of defs) {
       const leadId = ctx.leadIdByKey.get(def.lead);
       if (!leadId || jaTem.has(leadId)) continue;
-      const leadDef = DEMO_LEADS.find((l) => l.key === def.lead);
+      const leadDef = this.leads().find((l) => l.key === def.lead);
       if (!leadDef) continue;
 
       const criadoEm = new Date(now - def.diasAtras * DAY_MS);
@@ -1657,13 +1707,14 @@ export class TenantDemoDataService {
         temEntrada: false,
       },
     ];
+    defs.push(...this.withExtraLeadVolume(defs));
 
     let criadas = 0;
 
     for (const def of defs) {
       const leadId = ctx.leadIdByKey.get(def.lead);
       if (!leadId) continue;
-      const leadDef = DEMO_LEADS.find((l) => l.key === def.lead);
+      const leadDef = this.leads().find((l) => l.key === def.lead);
       if (!leadDef) continue;
 
       const existing = await this.prisma.analise.findUnique({
@@ -1895,6 +1946,7 @@ export class TenantDemoDataService {
         local: 'Stand Candeias',
       },
     ];
+    defs.push(...this.withExtraLeadVolume(defs));
 
     const jaExistentes = new Set(
       (
@@ -2133,6 +2185,7 @@ export class TenantDemoDataService {
         horasAtras: 1,
       },
     ];
+    defs.push(...this.withExtraLeadVolume(defs));
 
     const data: Prisma.NotificacaoCreateManyInput[] = [];
     for (const def of defs) {
@@ -2254,7 +2307,10 @@ export class TenantDemoDataService {
 
     // Parceiros
     const parceiroIdByNome = new Map<string, string>();
-    for (const def of DEMO_FINANCEIRO_PARCEIROS) {
+    for (const def of this.pick(
+      DEMO_FINANCEIRO_PARCEIROS,
+      DEMO_FINANCEIRO_PARCEIROS_BASE,
+    )) {
       const existing = await this.prisma.financeiroParceiro.findFirst({
         where: { tenantId, nome: def.nome },
         select: { id: true },
@@ -2300,7 +2356,7 @@ export class TenantDemoDataService {
         select: { id: true },
       });
 
-      for (let mesAtras = 2; mesAtras >= 0; mesAtras -= 1) {
+      for (let mesAtras = this.extraVolume ? 3 : 2; mesAtras >= 0; mesAtras -= 1) {
         const data = new Date(
           Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - mesAtras, 8),
         );
@@ -2352,7 +2408,7 @@ export class TenantDemoDataService {
         select: { id: true },
       });
 
-      for (let mesAtras = 2; mesAtras >= 0; mesAtras -= 1) {
+      for (let mesAtras = this.extraVolume ? 3 : 2; mesAtras >= 0; mesAtras -= 1) {
         const data = new Date(
           Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - mesAtras, 12),
         );

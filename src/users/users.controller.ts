@@ -19,6 +19,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { ImportUsersDto } from './dto/import-users.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 import { ResetUserPasswordDto } from './dto/reset-user-password.dto';
@@ -42,6 +43,15 @@ export class UsersController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.usersService.create(dto, requester);
+  }
+
+  @Post('import')
+  @Roles(Role.admin, Role.gerente, Role.analista)
+  importMany(
+    @Body() dto: ImportUsersDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.usersService.importMany(dto, requester);
   }
 
   @Get('quota')
