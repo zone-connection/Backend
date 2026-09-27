@@ -64,6 +64,7 @@ function destinoFunil(etapas: ReturnType<typeof etapa>[]) {
 type Harness = {
   service: FunisService;
   updates: Array<{ where: unknown; data: Record<string, unknown> }>;
+  funilUpdates: Array<{ where: unknown; data: Record<string, unknown> }>;
   deletes: string[];
   stageCalls: unknown[][];
   owned?: Record<string, unknown> | null;
@@ -80,6 +81,7 @@ function harness(opts: {
   migrated?: number;
 } = {}): Harness {
   const updates: Harness['updates'] = [];
+  const funilUpdates: Harness['funilUpdates'] = [];
   const deletes: string[] = [];
   const stageCalls: unknown[][] = [];
   const owned =
@@ -117,6 +119,20 @@ function harness(opts: {
         return null;
       },
       count: async () => opts.funilCount ?? 2,
+      updateMany: async (args: {
+        where: unknown;
+        data: Record<string, unknown>;
+      }) => {
+        funilUpdates.push(args);
+        return { count: 1 };
+      },
+      update: async (args: {
+        where: unknown;
+        data: Record<string, unknown>;
+      }) => {
+        funilUpdates.push(args);
+        return {};
+      },
       delete: async (args: { where: { id: string } }) => {
         deletes.push(args.where.id);
         return {};
@@ -152,6 +168,7 @@ function harness(opts: {
   return {
     service: new FunisService(prisma as never, monitoramento as never),
     updates,
+    funilUpdates,
     deletes,
     stageCalls,
   };
@@ -159,7 +176,9 @@ function harness(opts: {
 
 describe('migração de leads entre funis', () => {
   it('coloca os leads na etapa inicial do destino, sem apagar corretor nem perda', async () => {
-    const { service, updates, stageCalls } = harness({ migrated: 3 });
+    const { service, updates, stageCalls, funilUpdates } = harness({
+      migrated: 3,
+    });
     const result = await service.migrarLeads(ORIGEM, DESTINO, requester);
 
     assert.equal(result.migrados, 3);
@@ -178,6 +197,12 @@ describe('migração de leads entre funis', () => {
     assert.equal(stageCalls[0]?.[0], TENANT);
     assert.equal(stageCalls[0]?.[1], 'novo');
     assert.equal(stageCalls[0]?.[3], DESTINO);
+    assert.equal(funilUpdates.length, 2);
+    assert.equal(
+      (funilUpdates[1].where as { id: string }).id,
+      DESTINO,
+    );
+    assert.equal(funilUpdates[1].data.ativo, true);
   });
 
   it('aceita slug legado "novo" como etapa inicial', async () => {
@@ -265,11 +290,30 @@ describe('migração de leads entre funis', () => {
   });
 
   it('funil sem leads migra zero e não inventa card', async () => {
-    const { service, updates } = harness({ migrated: 0 });
+    const { service, updates, funilUpdates } = harness({ migrated: 0 });
     const result = await service.migrarLeads(ORIGEM, DESTINO, requester);
     assert.equal(result.migrados, 0);
     assert.equal(updates.length, 1);
     assert.equal(updates[0].data.funilId, DESTINO);
+    assert.equal(funilUpdates.length, 0);
+  });
+
+  it('não troca o funil em uso se o destino já está no kanban', async () => {
+    const destino = destinoFunil([
+      etapa('novo-lead', {
+        sortOrder: 0,
+        papel: FunilEtapaPapel.inicial,
+      }),
+    ]);
+    destino.ativo = true;
+    const { service, updates, funilUpdates } = harness({
+      migrated: 2,
+      destino,
+    });
+    const result = await service.migrarLeads(ORIGEM, DESTINO, requester);
+    assert.equal(result.stage, 'novo-lead');
+    assert.equal(updates[0].data.stage, 'novo-lead');
+    assert.equal(funilUpdates.length, 0);
   });
 });
 

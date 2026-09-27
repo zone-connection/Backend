@@ -280,7 +280,9 @@ export class FunisService {
 
   /**
    * Leva todos os contatos de um funil comercial para outro.
-   * Na chegada, entram na primeira etapa do destino.
+   * Na chegada, entram na primeira etapa do destino (papel inicial).
+   * O destino passa a ser o funil do kanban, senão esses leads ficam
+   * fora do quadro — o kanban só lista o funil em uso.
    */
   async migrarLeads(
     id: string,
@@ -321,6 +323,21 @@ export class FunisService {
         stage,
       },
     });
+
+    if (result.count > 0 && !destino.ativo) {
+      await this.prisma.funil.updateMany({
+        where: whereDeactivateActiveOfTipo(
+          tenantId,
+          FunilTipo.comercial,
+          destino.id,
+        ),
+        data: { ativo: false },
+      });
+      await this.prisma.funil.update({
+        where: { id: destino.id },
+        data: { ativo: true },
+      });
+    }
 
     return {
       ok: true as const,
