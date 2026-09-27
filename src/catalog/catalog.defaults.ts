@@ -249,6 +249,7 @@ export const DEFAULT_DOCUMENTACAO_STATUS1: readonly DefaultCatalogLabel[] = [
   { label: 'Em análise', color: 'bg-indigo-100 text-indigo-700' },
   { label: 'Aprovado', color: 'bg-green-100 text-green-700' },
   { label: 'Aprovado c/ restrição', color: 'bg-amber-100 text-amber-700' },
+  { label: 'Reprovado', color: 'bg-red-100 text-red-700' },
 ] as const;
 
 export const DEFAULT_DOCUMENTACAO_STATUS2: readonly DefaultCatalogLabel[] = [

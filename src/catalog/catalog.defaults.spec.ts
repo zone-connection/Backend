@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   DEFAULT_CAPTATION_FUNNEL_STAGES,
+  DEFAULT_DOCUMENTACAO_STATUS1,
   DEFAULT_FUNNEL_STAGES,
   DEFAULT_VENDA_USADOS_FUNNEL_STAGES,
   defaultStagesForTipo,
@@ -29,6 +30,14 @@ describe('etapas padrão por tipo de funil', () => {
       stages.filter((s) => s.papel === 'analise').length,
       0,
     );
+  });
+
+  it('catálogo de documentação inclui Aprovado e Aprovado c/ restrição', () => {
+    const labels = DEFAULT_DOCUMENTACAO_STATUS1.map((item) => item.label);
+    assert.ok(labels.includes('Aprovado'));
+    assert.ok(labels.includes('Aprovado c/ restrição'));
+    assert.ok(labels.includes('Reprovado'));
+    assert.ok(labels.includes('Em análise'));
   });
 
   it('venda de usados tem 9 etapas sem análise de crédito', () => {

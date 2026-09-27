@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   AnaliseStatus,
+  CatalogType,
   FunilEtapaPapel,
   Prisma,
   Role,
@@ -292,12 +293,28 @@ export class DocumentacaoService {
       gerenteId = requester.id;
     }
 
-    const status1 = dto.status1.trim();
+    const fonte = await this.resolveCatalogLabel(
+      tenantId,
+      CatalogType.documentacao_fonte,
+      dto.fonte,
+      'Fonte',
+    );
+    const status1 = await this.resolveCatalogLabel(
+      tenantId,
+      CatalogType.documentacao_status1,
+      dto.status1,
+      'Status 1',
+    );
     const parsedAnalise = parseOptionalDate(dto.dataAnalise);
     const dataAnalise =
       parsedAnalise ?? (isStatusAnalise(status1) ? todayDateOnly() : null);
 
-    const status2 = dto.status2.trim();
+    const status2 = await this.resolveCatalogLabel(
+      tenantId,
+      CatalogType.documentacao_status2,
+      dto.status2,
+      'Status 2',
+    );
     const createdAt = parseOptionalCreatedAt(dto.createdAt);
 
     // Uma ficha ativa por lead: evita duplicar (comercial + analista).
@@ -318,7 +335,7 @@ export class DocumentacaoService {
       construtoraId: dto.construtoraId || lead.construtoraId || null,
       empreendimentoId:
         dto.empreendimentoId || lead.empreendimentoId || null,
-      fonte: dto.fonte.trim(),
+      fonte,
       status1,
       status2,
       corretorId,
@@ -459,12 +476,29 @@ export class DocumentacaoService {
         ? { connect: { id: dto.empreendimentoId } }
         : { disconnect: true };
     }
-    if (dto.fonte !== undefined) data.fonte = dto.fonte.trim();
+    if (dto.fonte !== undefined) {
+      data.fonte = await this.resolveCatalogLabel(
+        tenantId,
+        CatalogType.documentacao_fonte,
+        dto.fonte,
+        'Fonte',
+      );
+    }
     if (dto.status1 !== undefined) {
-      data.status1 = dto.status1.trim();
+      data.status1 = await this.resolveCatalogLabel(
+        tenantId,
+        CatalogType.documentacao_status1,
+        dto.status1,
+        'Status 1',
+      );
     }
     if (dto.status2 !== undefined) {
-      data.status2 = dto.status2.trim();
+      data.status2 = await this.resolveCatalogLabel(
+        tenantId,
+        CatalogType.documentacao_status2,
+        dto.status2,
+        'Status 2',
+      );
     }
     if (dto.corretorId !== undefined) {
       const resolvedCorretorId = await this.resolveCreditCorretorId(
@@ -880,18 +914,34 @@ export class DocumentacaoService {
       select: { id: true, status2: true, dataVenda: true },
     });
     const now = new Date();
+    const status2Vendido = await this.firstCatalogLabel(
+      tenantId,
+      CatalogType.documentacao_status2,
+      ['Vendido'],
+    );
     if (existing) {
       await this.prisma.documentacao.update({
         where: { id: existing.id },
         data: {
           stageSituacao: stage,
           ...(!isStatusVendido(existing.status2)
-            ? { status2: 'Vendido', dataVenda: existing.dataVenda ?? now }
+            ? { status2: status2Vendido, dataVenda: existing.dataVenda ?? now }
             : {}),
         },
       });
       return;
     }
+
+    const fonte = await this.firstCatalogLabel(
+      tenantId,
+      CatalogType.documentacao_fonte,
+      [lead.origem?.trim() || '', 'Outro'],
+    );
+    const status1 = await this.firstCatalogLabel(
+      tenantId,
+      CatalogType.documentacao_status1,
+      ['Aprovado'],
+    );
 
     await this.prisma.documentacao.create({
       data: {
@@ -901,9 +951,9 @@ export class DocumentacaoService {
         tipoContato: lead.tipo,
         stageSituacao: stage,
         nome: lead.nome,
-        fonte: lead.origem?.trim() || 'Outro',
-        status1: 'Aprovado',
-        status2: 'Vendido',
+        fonte,
+        status1,
+        status2: status2Vendido,
         corretorId: lead.corretorId,
         construtoraId: lead.construtoraId,
         empreendimentoId: lead.empreendimentoId,
@@ -1031,6 +1081,65 @@ export class DocumentacaoService {
       },
     });
     return corretor?.equipe?.gerenteId ?? null;
+  }
+
+  private async firstCatalogLabel(
+    tenantId: string,
+    type:
+      | typeof CatalogType.documentacao_fonte
+      | typeof CatalogType.documentacao_status1
+      | typeof CatalogType.documentacao_status2,
+    preferred: string[],
+  ): Promise<string> {
+    const items = await this.prisma.catalogItem.findMany({
+      where: { tenantId, type, active: true },
+      select: { label: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    for (const want of preferred) {
+      const key = want.trim().toLowerCase();
+      if (!key) continue;
+      const found = items.find(
+        (item) => item.label.trim().toLowerCase() === key,
+      );
+      if (found) return found.label;
+    }
+    if (items[0]?.label.trim()) return items[0].label.trim();
+    const fallback = preferred.find((item) => item.trim());
+    if (!fallback) {
+      throw new BadRequestException(
+        'Catálogo de documentação vazio. Cadastre fontes e status em Configurações.',
+      );
+    }
+    return fallback.trim();
+  }
+
+  private async resolveCatalogLabel(
+    tenantId: string,
+    type:
+      | typeof CatalogType.documentacao_fonte
+      | typeof CatalogType.documentacao_status1
+      | typeof CatalogType.documentacao_status2,
+    raw: string,
+    field: string,
+  ): Promise<string> {
+    const label = raw.trim();
+    if (!label) {
+      throw new BadRequestException(`Informe ${field}.`);
+    }
+    const items = await this.prisma.catalogItem.findMany({
+      where: { tenantId, type, active: true },
+      select: { label: true },
+    });
+    const found = items.find(
+      (item) => item.label.trim().toLowerCase() === label.toLowerCase(),
+    );
+    if (!found) {
+      throw new BadRequestException(
+        `${field} “${label}” não está no catálogo. Cadastre em Configurações → Documentação.`,
+      );
+    }
+    return found.label;
   }
 
   private async ensureLeadAccessible(
