@@ -224,13 +224,13 @@ export const DEMO_CATALOG: {
   },
 ];
 
-export const DEMO_LOCALIDADES_BASE = [
+export const DEMO_LOCALIDADES_BASE: readonly string[] = [
   'Recife',
   'Olinda',
   'Jaboatão dos Guararapes',
   'Ipojuca / Porto de Galinhas',
   'Caruaru',
-] as const;
+];
 
 export const DEMO_LOCALIDADES = expandDemoVolume(
   DEMO_LOCALIDADES_BASE,
