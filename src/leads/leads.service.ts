@@ -31,6 +31,10 @@ import { TeamScopeService } from '../equipes/team-scope.service';
 import { whereNotRetrabalho } from '../equipes/lead-retrabalho.where';
 import { AnaliseService } from '../analise/analise.service';
 import { FunisService } from '../funis/funis.service';
+import {
+  forwardStageHops,
+  hopAutoTexto,
+} from '../triagem/stage-hops';
 import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.service';
 import { DocumentacaoService } from '../documentacao/documentacao.service';
 import { leadSelect, LeadEntity } from './lead-select';
@@ -1462,19 +1466,22 @@ export class LeadsService {
     // Registra na Triagem a mudança de etapa, salvo quando o funil vai
     // consolidar um único evento após o modal de relato.
     if (!dto.omitTriagem && stageAnterior && stageAnterior !== stage) {
-      const [fromLabel, toLabel] = await Promise.all([
-        this.resolveStageLabel(tenantId, stageAnterior),
-        this.resolveStageLabel(tenantId, stage),
-      ]);
-      await this.prisma.triagemEvent.create({
-        data: {
+      const stages = await this.funis.listProgressionStages(
+        tenantId,
+        previous?.funilId,
+      );
+      const hops = forwardStageHops(stages, stageAnterior, stage);
+      const now = new Date();
+      await this.prisma.triagemEvent.createMany({
+        data: hops.map((hop, i) => ({
           leadId: id,
           autorId: requester.id,
-          texto: `Etapa avançada de "${fromLabel}" para "${toLabel}".`,
-          stageAnterior,
-          stageNovo: stage,
+          texto: hopAutoTexto(hop),
+          stageAnterior: hop.fromSlug,
+          stageNovo: hop.toSlug,
           origem: TriagemOrigem.funil,
-        },
+          createdAt: new Date(now.getTime() + i),
+        })),
       });
       await this.monitoramento.recordMovement(id, 'triagem');
     }
@@ -1503,18 +1510,6 @@ export class LeadsService {
     }
 
     return this.decorateOne(lead, requester);
-  }
-
-  /** Label amigável da etapa do funil (fallback para o slug). */
-  private async resolveStageLabel(
-    tenantId: string,
-    slug: string,
-  ): Promise<string> {
-    const item = await this.prisma.catalogItem.findFirst({
-      where: { tenantId, type: CatalogType.funil_etapa, slug },
-      select: { label: true },
-    });
-    return item?.label ?? slug;
   }
 
   /**

@@ -18,6 +18,12 @@ import { CreateTriagemDto } from './dto/create-triagem.dto';
 import { UpdateTriagemDto } from './dto/update-triagem.dto';
 import { QueryTriagemLeadsDto } from './dto/query-triagem-leads.dto';
 import { QueryTriagemKpisDto } from './dto/query-triagem-kpis.dto';
+import {
+  forwardStageHops,
+  hopAutoTexto,
+  isAutoAvancoTexto,
+  type StageHop,
+} from './stage-hops';
 
 const leadListSelect = {
   id: true,
@@ -30,6 +36,8 @@ const leadListSelect = {
   interesse: true,
   cidade: true,
   bairro: true,
+  estadoCivil: true,
+  tipoRenda: true,
   corretorId: true,
   corretor: { select: { id: true, name: true } },
   origemAtrasoLiberacao: true,
@@ -64,10 +72,17 @@ export class TriagemService {
   /**
    * Lista contatos para a tela de triagem.
    * Corretor: próprios leads + clientes.
-   * Admin/gerente: só leads (`tipo=lead`) do `corretorId` obrigatório (dentro da equipe).
+   * Admin/gerente: leads e clientes do `corretorId` obrigatório (dentro da equipe).
    */
   async listLeads(query: QueryTriagemLeadsDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
+
+    const splitContacts = (
+      contacts: Array<{ tipo: ContatoTipo }>,
+    ) => ({
+      leads: contacts.filter((c) => c.tipo === ContatoTipo.lead),
+      clientes: contacts.filter((c) => c.tipo === ContatoTipo.cliente),
+    });
 
     if (isCorretorLike(requester.role)) {
       const contacts = await this.prisma.lead.findMany({
@@ -80,10 +95,7 @@ export class TriagemService {
         orderBy: { updatedAt: 'desc' },
       });
 
-      return {
-        leads: contacts.filter((c) => c.tipo === ContatoTipo.lead),
-        clientes: contacts.filter((c) => c.tipo === ContatoTipo.cliente),
-      };
+      return splitContacts(contacts);
     }
 
     if (!query.corretorId) {
@@ -100,18 +112,17 @@ export class TriagemService {
       throw new NotFoundException('Lead não encontrado.');
     }
 
-    const leads = await this.prisma.lead.findMany({
+    const contacts = await this.prisma.lead.findMany({
       where: {
         tenantId,
         corretorId: query.corretorId,
-        tipo: ContatoTipo.lead,
         perdidoAt: null,
       },
       select: leadListSelect,
       orderBy: { updatedAt: 'desc' },
     });
 
-    return { leads, clientes: [] as typeof leads };
+    return splitContacts(contacts);
   }
 
   /** Histórico de relatos de um lead (RBAC por dono). */
@@ -161,6 +172,7 @@ export class TriagemService {
         origemAtrasoLiberacao: true,
         perdidoAt: true,
         stage: true,
+        funilId: true,
       },
     });
 
@@ -203,7 +215,7 @@ export class TriagemService {
         stageNovo = targetStage;
         shouldUpdateStage = true;
       } else if (origem === TriagemOrigem.funil) {
-        // Funil já avançou a etapa; o relato consolida o único acontecimento.
+        // Funil já avançou a etapa; o relato consolida o acontecimento.
         stageNovo = targetStage;
         const from = dto.stageAnterior?.trim();
         if (from && from !== targetStage) {
@@ -218,13 +230,22 @@ export class TriagemService {
       stageNovo = lead.stage;
     }
 
+    let hops: StageHop[] = [];
+    if (stageAnterior && stageNovo && stageAnterior !== stageNovo) {
+      const stages = await this.funis.listProgressionStages(
+        tenantId,
+        lead.funilId,
+      );
+      hops = forwardStageHops(stages, stageAnterior, stageNovo);
+    }
+
     const now = new Date();
     const timing =
       shouldUpdateStage && targetStage
         ? await this.monitoramento.stageChangeData(tenantId, targetStage, now)
         : await this.monitoramento.followUpData(tenantId, lead.stage, now);
 
-    const event = await this.prisma.$transaction(async (tx) => {
+    const events = await this.prisma.$transaction(async (tx) => {
       await tx.lead.update({
         where: { id: lead.id },
         data: {
@@ -234,17 +255,43 @@ export class TriagemService {
         },
       });
 
-      return tx.triagemEvent.create({
-        data: {
-          leadId: lead.id,
-          autorId: requester.id,
-          texto,
-          stageAnterior,
-          stageNovo,
-          origem,
-        },
-        select: eventSelect,
-      });
+      if (hops.length > 1) {
+        const useAutoForAll = isAutoAvancoTexto(texto);
+        const created = [];
+        for (let i = 0; i < hops.length; i++) {
+          const hop = hops[i];
+          const isLast = i === hops.length - 1;
+          created.push(
+            await tx.triagemEvent.create({
+              data: {
+                leadId: lead.id,
+                autorId: requester.id,
+                texto: isLast && !useAutoForAll ? texto : hopAutoTexto(hop),
+                stageAnterior: hop.fromSlug,
+                stageNovo: hop.toSlug,
+                origem,
+                createdAt: new Date(now.getTime() + i),
+              },
+              select: eventSelect,
+            }),
+          );
+        }
+        return created;
+      }
+
+      return [
+        await tx.triagemEvent.create({
+          data: {
+            leadId: lead.id,
+            autorId: requester.id,
+            texto,
+            stageAnterior,
+            stageNovo,
+            origem,
+          },
+          select: eventSelect,
+        }),
+      ];
     });
 
     if (targetStage) {
@@ -258,7 +305,7 @@ export class TriagemService {
       }
     }
 
-    return event;
+    return [...events].reverse();
   }
 
   /**

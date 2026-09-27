@@ -740,6 +740,27 @@ export class FunisService {
     return funil.etapas.filter((e) => e.active).map((e) => e.slug);
   }
 
+  /** Etapas ativas na ordem do funil, sem a coluna de perdido. */
+  async listProgressionStages(
+    tenantId: string,
+    funilId?: string | null,
+  ): Promise<Array<{ slug: string; label: string }>> {
+    const byId = funilId
+      ? await this.prisma.funil.findFirst({
+          where: { id: funilId, tenantId },
+          select: funilSelect,
+        })
+      : null;
+    const funil = byId ?? (await this.ensureTenantHasFunil(tenantId));
+    return funil.etapas
+      .filter(
+        (e) =>
+          e.active &&
+          this.resolveEtapaPapel(e, funil.etapas) !== FunilEtapaPapel.perdido,
+      )
+      .map((e) => ({ slug: e.slug, label: e.label }));
+  }
+
   async getDefaultStageSlug(tenantId: string): Promise<string> {
     const slug = await this.getSlugByPapel(tenantId, FunilEtapaPapel.inicial);
     if (slug) return slug;
