@@ -7,7 +7,9 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -25,6 +27,7 @@ import { UpdateTenantAdminDto } from './dto/update-tenant-admin.dto';
 import { PopulateDemoDataDto } from './dto/populate-demo-data.dto';
 import { UpsertOruloConnectionDto } from '../orulo/dto/upsert-orulo-connection.dto';
 import { OruloService } from '../orulo/orulo.service';
+import { imageUploadInterceptor } from '../media/media.constants';
 
 /**
  * Administração de tenants (imobiliárias) da plataforma.
@@ -61,6 +64,20 @@ export class TenantsController {
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.tenantsService.findOne(id);
+  }
+
+  @Post(':id/logo')
+  @UseInterceptors(imageUploadInterceptor())
+  uploadLogo(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.tenantsService.uploadLogo(id, file);
+  }
+
+  @Delete(':id/logo')
+  removeLogo(@Param('id', ParseUUIDPipe) id: string) {
+    return this.tenantsService.removeLogo(id);
   }
 
   @Post(':id/admin')

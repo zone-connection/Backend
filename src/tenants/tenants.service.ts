@@ -1129,6 +1129,32 @@ export class TenantsService {
     rawFile: Express.Multer.File | undefined,
   ) {
     const tenantId = this.assertCanEditCompany(requester);
+    return this.replaceTenantLogo(tenantId, rawFile);
+  }
+
+  async removeCompanyLogo(requester: AuthenticatedUser) {
+    const tenantId = this.assertCanEditCompany(requester);
+    return this.clearTenantLogo(tenantId);
+  }
+
+  /** Logo enviada pelo super admin, no mesmo campo usado pelo perfil da imobiliária. */
+  uploadLogo(tenantId: string, rawFile: Express.Multer.File | undefined) {
+    return this.replaceTenantLogo(tenantId, rawFile);
+  }
+
+  removeLogo(tenantId: string) {
+    return this.clearTenantLogo(tenantId);
+  }
+
+  private async replaceTenantLogo(
+    tenantId: string,
+    rawFile: Express.Multer.File | undefined,
+  ) {
+    if (tenantId === PLATFORM_TENANT_ID) {
+      throw new BadRequestException(
+        'O tenant interno da plataforma não pode ser alterado por aqui.',
+      );
+    }
     const current = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { logoPublicId: true },
@@ -1159,8 +1185,12 @@ export class TenantsService {
     });
   }
 
-  async removeCompanyLogo(requester: AuthenticatedUser) {
-    const tenantId = this.assertCanEditCompany(requester);
+  private async clearTenantLogo(tenantId: string) {
+    if (tenantId === PLATFORM_TENANT_ID) {
+      throw new BadRequestException(
+        'O tenant interno da plataforma não pode ser alterado por aqui.',
+      );
+    }
     const current = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { logoPublicId: true },
