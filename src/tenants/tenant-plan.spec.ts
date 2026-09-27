@@ -64,4 +64,11 @@ describe('módulos de operação no plano', () => {
     });
     assert.equal(next.gerenteVerLeadsGerais, true);
   });
+
+  it('preserva corretores criam propostas ao normalizar', () => {
+    const next = normalizeModulesForPlano(TenantPlano.ouro, {
+      corretoresCriamPropostas: true,
+    });
+    assert.equal(next.corretoresCriamPropostas, true);
+  });
 });

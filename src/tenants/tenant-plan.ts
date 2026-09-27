@@ -73,6 +73,9 @@ export const ADMIN_VER_CLIENTES_CORRETOR_KEY = 'adminVerClientesCorretor';
 /** Gerentes veem leads de outras equipes e o pool geral (sem dono). */
 export const GERENTE_VER_LEADS_GERAIS_KEY = 'gerenteVerLeadsGerais';
 
+/** Corretor, trainee e analista podem criar propostas ligadas só a eles. */
+export const CORRETORES_CRIAM_PROPOSTAS_KEY = 'corretoresCriamPropostas';
+
 function withNavPrefs(
   normalized: Record<string, boolean>,
   raw: Record<string, boolean>,
@@ -85,6 +88,10 @@ function withNavPrefs(
   if (typeof raw[GERENTE_VER_LEADS_GERAIS_KEY] === 'boolean') {
     normalized[GERENTE_VER_LEADS_GERAIS_KEY] =
       raw[GERENTE_VER_LEADS_GERAIS_KEY];
+  }
+  if (typeof raw[CORRETORES_CRIAM_PROPOSTAS_KEY] === 'boolean') {
+    normalized[CORRETORES_CRIAM_PROPOSTAS_KEY] =
+      raw[CORRETORES_CRIAM_PROPOSTAS_KEY];
   }
   return normalized;
 }

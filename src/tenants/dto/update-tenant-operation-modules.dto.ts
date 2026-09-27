@@ -32,4 +32,9 @@ export class UpdateTenantOperationModulesDto {
   @IsOptional()
   @IsBoolean()
   gerenteVerLeadsGerais?: boolean;
+
+  /** Corretor, trainee e analista criam propostas da própria carteira. */
+  @IsOptional()
+  @IsBoolean()
+  corretoresCriamPropostas?: boolean;
 }

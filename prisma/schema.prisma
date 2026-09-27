@@ -158,6 +158,7 @@ model Tenant {
   leadPrazoAdiamentos LeadPrazoAdiamento[]
   documentacoes     Documentacao[]
   propostas         Proposta[]
+  propostaVinculos  PropostaVinculo[]
   analises          Analise[]
   agendamentos      Agendamento[]
   notificacoes      Notificacao[]
@@ -372,6 +373,9 @@ model User {
 
   // Propostas em que este usuário é o corretor responsável.
   propostasComoCorretor Proposta[] @relation("PropostaCorretor")
+
+  propostaVinculos         PropostaVinculo[] @relation("PropostaVinculoCorretor")
+  propostaVinculosRemovidos PropostaVinculo[] @relation("PropostaVinculoRemovidoPor")
 
   // Análises registradas por este usuário (auto ou edição).
   analises Analise[] @relation("AnaliseAutor")
@@ -975,6 +979,7 @@ model Empreendimento {
   documentacoes Documentacao[]
   cadastroVendas CadastroVenda[]
   propostas     Proposta[]
+  propostaVinculos PropostaVinculo[]
   leads         Lead[]
   notificacoes  Notificacao[]
 
@@ -1184,6 +1189,7 @@ model Proposta {
   observacao String?
 
   notificacoes Notificacao[]
+  vinculos     PropostaVinculo[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1197,6 +1203,61 @@ model Proposta {
   @@index([createdAt])
   @@index([validade])
   @@map("propostas")
+}
+
+/// Vínculo individual entre uma proposta comercial e um imóvel ou empreendimento.
+/// Remover o vínculo não apaga a proposta nem os demais vínculos.
+model PropostaVinculo {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  propostaId String
+  proposta   Proposta @relation(fields: [propostaId], references: [id], onDelete: Cascade)
+
+  imovelId String?
+  imovel   Imovel? @relation(fields: [imovelId], references: [id], onDelete: Cascade)
+
+  empreendimentoId String?
+  empreendimento   Empreendimento? @relation(fields: [empreendimentoId], references: [id], onDelete: Cascade)
+
+  /// Proprietário do imóvel no momento do vínculo. Isola o portal por dono.
+  proprietarioId String?
+  proprietario   Proprietario? @relation(fields: [proprietarioId], references: [id], onDelete: SetNull)
+
+  corretorId   String?
+  corretor     User?   @relation("PropostaVinculoCorretor", fields: [corretorId], references: [id], onDelete: SetNull)
+  corretorNome String
+
+  vinculadoEm DateTime @default(now())
+
+  removidoEm     DateTime?
+  removidoPorId  String?
+  removidoPor    User?     @relation("PropostaVinculoRemovidoPor", fields: [removidoPorId], references: [id], onDelete: SetNull)
+  removidoPorNome String?
+
+  notificacoes PropostaVinculoNotificacao[]
+
+  @@index([tenantId, propostaId])
+  @@index([tenantId, imovelId])
+  @@index([tenantId, empreendimentoId])
+  @@index([tenantId, proprietarioId])
+  @@map("proposta_vinculos")
+}
+
+/// Registro de cada tentativa de e-mail ao proprietário quando um vínculo é criado.
+model PropostaVinculoNotificacao {
+  id        String   @id @default(uuid())
+  vinculoId String
+  vinculo   PropostaVinculo @relation(fields: [vinculoId], references: [id], onDelete: Cascade)
+  email     String   @default("")
+  /// enviado | falhou | sem_email
+  status    String
+  detalhe   String   @default("")
+  enviadoEm DateTime @default(now())
+
+  @@index([vinculoId])
+  @@map("proposta_vinculo_notificacoes")
 }
 
 /// Status do parecer da análise de crédito/cadastro.
@@ -1629,6 +1690,7 @@ model Proprietario {
   captacoes    Captacao[]
   posVendas    VendaUsadoPosVenda[]
   portalAcesso ProprietarioPortalAcesso?
+  propostaVinculos PropostaVinculo[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1842,6 +1904,7 @@ model Imovel {
 
   captacoes Captacao[]
   vendaUsado VendaUsado?
+  propostaVinculos PropostaVinculo[]
   grupoZapIssues GrupoZapListingIssue[]
   chaves     ImovelChave[]
   posVendas  VendaUsadoPosVenda[]

@@ -39,6 +39,45 @@ const TEXTO_PORTAL_ACAO = {
   quero_falar: 'O proprietário pediu para falar com o corretor.',
 } as const;
 
+function somar(valores: number[]) {
+  return valores.reduce((total, valor) => total + valor, 0);
+}
+
+function composicaoProposta(proposta: {
+  entrada: number | null;
+  apartado: number | null;
+  preChaves: number[];
+  posChaves: number[];
+  intercaladas: number[];
+  fgts: number | null;
+  moraBem: number | null;
+  mcmv: number | null;
+  financiamento: number | null;
+}) {
+  const linhas: Array<{ label: string; valor: number }> = [];
+  const simples: Array<[string, number | null]> = [
+    ['Sinal', proposta.entrada],
+    ['Apartado', proposta.apartado],
+    ['FGTS', proposta.fgts],
+    ['Mora Bem', proposta.moraBem],
+    ['MCMV', proposta.mcmv],
+    ['Financiamento', proposta.financiamento],
+  ];
+  for (const [label, valor] of simples) {
+    if (valor) linhas.push({ label, valor });
+  }
+  const listas: Array<[string, number[]]> = [
+    ['Pré-chaves', proposta.preChaves],
+    ['Pós-chaves', proposta.posChaves],
+    ['Intercaladas', proposta.intercaladas],
+  ];
+  for (const [label, valores] of listas) {
+    const valor = somar(valores);
+    if (valor) linhas.push({ label, valor });
+  }
+  return linhas;
+}
+
 const PROPOSTAS_VISIVEIS: VendaUsadoPropostaStatus[] = [
   VendaUsadoPropostaStatus.enviada,
   VendaUsadoPropostaStatus.em_analise,
@@ -703,12 +742,22 @@ export class PortalProprietarioImoveisService {
   }
 
   async getPropostas(imovelId: string, session: PortalProprietarioSession) {
-    const venda = await this.requireVenda(imovelId, session);
-    if (!venda) return [];
+    const imovel = await this.requireImovel(imovelId, session);
+    const venda = imovel.vendaUsado;
+    const usadas = venda
+      ? await this.listarPropostasUsado(venda.id, session)
+      : [];
+    const vinculadas = await this.listarPropostasVinculadas(imovelId, session);
+    return [...vinculadas, ...usadas];
+  }
 
+  private async listarPropostasUsado(
+    vendaId: string,
+    session: PortalProprietarioSession,
+  ) {
     const propostas = await this.prisma.vendaUsadoProposta.findMany({
       where: {
-        vendaUsadoId: venda.id,
+        vendaUsadoId: vendaId,
         tenantId: session.tenantId,
         status: { in: PROPOSTAS_VISIVEIS },
       },
@@ -728,13 +777,19 @@ export class PortalProprietarioImoveisService {
       const ultimo = movimentos[movimentos.length - 1];
       return {
         id: item.id,
+        origem: 'usado' as const,
         numero: String(propostas.length - index).padStart(3, '0'),
+        codigo: null as string | null,
         valor: money(item.valor),
+        desconto: null as number | null,
         entrada: money(item.entrada),
         valorFinanciamento: money(item.valorFinanciamento),
         status: item.status,
         data: item.createdAt,
         interessadoNome: item.interessado.nome,
+        unidade: null as string | null,
+        empreendimentoNome: null as string | null,
+        composicao: [] as Array<{ label: string; valor: number }>,
         negociacao: item.negociacao
           ? {
               status: item.negociacao.status,
@@ -742,6 +797,68 @@ export class PortalProprietarioImoveisService {
               ultimaContraproposta: money(ultimo?.valor) ?? money(item.valor),
             }
           : null,
+      };
+    });
+  }
+
+  private async listarPropostasVinculadas(
+    imovelId: string,
+    session: PortalProprietarioSession,
+  ) {
+    const vinculos = await this.prisma.propostaVinculo.findMany({
+      where: {
+        tenantId: session.tenantId,
+        imovelId,
+        proprietarioId: session.proprietarioId,
+        removidoEm: null,
+        imovel: { proprietarioId: session.proprietarioId },
+      },
+      orderBy: { vinculadoEm: 'desc' },
+      select: {
+        id: true,
+        vinculadoEm: true,
+        proposta: {
+          select: {
+            codigo: true,
+            clienteNome: true,
+            unidade: true,
+            valor: true,
+            desconto: true,
+            entrada: true,
+            apartado: true,
+            preChaves: true,
+            posChaves: true,
+            intercaladas: true,
+            fgts: true,
+            moraBem: true,
+            mcmv: true,
+            financiamento: true,
+            status: true,
+            empreendimento: { select: { nome: true } },
+          },
+        },
+      },
+    });
+
+    return vinculos.map((item) => {
+      const proposta = item.proposta;
+      const composicao = composicaoProposta(proposta);
+      return {
+        id: item.id,
+        origem: 'crm' as const,
+        numero: proposta.codigo,
+        codigo: proposta.codigo,
+        valor: proposta.valor,
+        desconto: proposta.desconto,
+        entrada: proposta.entrada,
+        valorFinanciamento: proposta.financiamento,
+        status: proposta.status,
+        data: item.vinculadoEm,
+        interessadoNome: proposta.clienteNome,
+        unidade: proposta.unidade,
+        empreendimentoNome: proposta.empreendimento?.nome ?? null,
+        composicao,
+        negociacao: null,
       };
     });
   }

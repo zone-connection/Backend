@@ -141,11 +141,75 @@ describe('portal proprietário — isolamento e dados', () => {
           ];
         },
       },
+      propostaVinculo: {
+        findMany: async (args: {
+          where: {
+            proprietarioId: string;
+            imovelId: string;
+            tenantId: string;
+            removidoEm: null;
+          };
+        }) => {
+          assert.equal(args.where.proprietarioId, 'p1');
+          assert.equal(args.where.imovelId, 'i1');
+          assert.equal(args.where.tenantId, 't1');
+          assert.equal(args.where.removidoEm, null);
+          return [];
+        },
+      },
     };
     const service = new PortalProprietarioImoveisService(prisma as never);
     const propostas = await service.getPropostas('i1', sessionA);
     assert.equal(propostas[0].valor, 430000);
     assert.equal(propostas[0].negociacao?.ultimaContraproposta, 440000);
+  });
+
+  it('proposta vinculada no CRM aparece só para o proprietário do imóvel', async () => {
+    const prisma = {
+      imovel: { findFirst: async () => imovelA({ vendaUsado: null }) },
+      propostaVinculo: {
+        findMany: async (args: {
+          where: { proprietarioId: string; imovel: { proprietarioId: string } };
+        }) => {
+          assert.equal(args.where.proprietarioId, sessionA.proprietarioId);
+          assert.equal(
+            args.where.imovel.proprietarioId,
+            sessionA.proprietarioId,
+          );
+          return [
+            {
+              id: 'vinc-1',
+              vinculadoEm: new Date('2026-09-26T12:00:00Z'),
+              proposta: {
+                codigo: 'PROP-2026-0008',
+                clienteNome: 'Geisa',
+                unidade: '101',
+                valor: 250000,
+                desconto: 0,
+                entrada: 10000,
+                apartado: null,
+                preChaves: [],
+                posChaves: [],
+                intercaladas: [],
+                fgts: null,
+                moraBem: null,
+                mcmv: null,
+                financiamento: 200000,
+                status: 'enviada',
+                empreendimento: { nome: 'Porto Beach' },
+              },
+            },
+          ];
+        },
+      },
+    };
+    const service = new PortalProprietarioImoveisService(prisma as never);
+    const propostas = await service.getPropostas('i1', sessionA);
+    assert.equal(propostas.length, 1);
+    assert.equal(propostas[0].origem, 'crm');
+    assert.equal(propostas[0].codigo, 'PROP-2026-0008');
+    assert.equal(propostas[0].interessadoNome, 'Geisa');
+    assert.equal(propostas[0].valor, 250000);
   });
 
   it('visita de outro imóvel não é encontrada', async () => {

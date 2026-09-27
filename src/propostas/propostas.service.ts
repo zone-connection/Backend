@@ -14,6 +14,7 @@ import { prismaTableOrderBy } from "../common/utils/table-sort";
 import { CreatePropostaDto } from "./dto/create-proposta.dto";
 import { UpdatePropostaDto } from "./dto/update-proposta.dto";
 import { QueryPropostaDto } from "./dto/query-proposta.dto";
+import { QueryPropostasVinculadasDto } from "./dto/query-propostas-vinculadas.dto";
 
 const userMini = { select: { id: true, name: true } } as const;
 
@@ -88,6 +89,25 @@ const propostaSelect = {
       telefone: true,
       corretorId: true,
       equipe: { select: { id: true, name: true } },
+    },
+  },
+  vinculos: {
+    where: { removidoEm: null },
+    select: {
+      id: true,
+      imovelId: true,
+      empreendimentoId: true,
+      proprietario: { select: { id: true, nome: true } },
+      imovel: {
+        select: {
+          id: true,
+          logradouro: true,
+          numero: true,
+          bairro: true,
+          cidade: true,
+        },
+      },
+      empreendimento: { select: { id: true, nome: true, cidade: true } },
     },
   },
 } as const;
@@ -170,7 +190,16 @@ export class PropostasService {
     const tenantId = requireTenantId(requester);
     const where: Prisma.PropostaWhereInput = { tenantId };
 
-    if (requester.role !== Role.admin) {
+    if (this.isPropostaIndividual(requester.role)) {
+      await this.assertCorretoresCriamPropostas(requester);
+      where.OR = [
+        { corretorId: requester.id },
+        { autorId: requester.id },
+      ];
+    } else if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.super_admin
+    ) {
       const leadScope = await this.teamScope.leadScope(requester);
       const corretorIds = await this.allowedCorretorIds(requester);
       where.OR = [
@@ -259,20 +288,74 @@ export class PropostasService {
     return item;
   }
 
+  async listVinculadas(
+    query: QueryPropostasVinculadasDto,
+    requester: AuthenticatedUser,
+  ) {
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.gerente &&
+      requester.role !== Role.super_admin
+    ) {
+      throw new ForbiddenException(
+        "Apenas gestores podem ver as propostas deste imóvel ou empreendimento.",
+      );
+    }
+    const tenantId = requireTenantId(requester);
+    const empreendimentoId = query.empreendimentoId || null;
+    const imovelId = query.imovelId || null;
+    if (Boolean(empreendimentoId) === Boolean(imovelId)) {
+      throw new BadRequestException(
+        "Informe um imóvel ou um empreendimento.",
+      );
+    }
+
+    const where: Prisma.PropostaWhereInput = { tenantId };
+    if (imovelId) {
+      where.vinculos = { some: { imovelId, removidoEm: null } };
+    } else if (empreendimentoId) {
+      where.OR = [
+        { empreendimentoId },
+        {
+          vinculos: {
+            some: { empreendimentoId, removidoEm: null },
+          },
+        },
+      ];
+    }
+
+    return this.prisma.proposta.findMany({
+      where,
+      select: propostaSelect,
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
   async create(dto: CreatePropostaDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
+    const individual = this.isPropostaIndividual(requester.role);
+    if (individual) await this.assertCorretoresCriamPropostas(requester);
 
     let clienteNome = dto.clienteNome.trim();
     let clienteTelefone = dto.clienteTelefone?.trim() || null;
-    let corretorId = dto.corretorId || null;
+    let corretorId = individual ? requester.id : dto.corretorId || null;
     let construtoraId = dto.construtoraId || null;
     let empreendimentoId = dto.empreendimentoId || null;
 
     if (dto.leadId) {
       const lead = await this.ensureLeadAccessible(dto.leadId, requester);
+      if (
+        individual &&
+        lead.corretorId &&
+        lead.corretorId !== requester.id
+      ) {
+        throw new ForbiddenException(
+          "A proposta só pode ser criada para os seus leads e clientes.",
+        );
+      }
       clienteNome = lead.nome;
       clienteTelefone = lead.telefone || clienteTelefone;
-      corretorId = corretorId || lead.corretorId;
+      corretorId = individual ? requester.id : corretorId || lead.corretorId;
       construtoraId = construtoraId || lead.construtoraId;
       empreendimentoId = empreendimentoId || lead.empreendimentoId;
     }
@@ -386,7 +469,15 @@ export class PropostasService {
         : { disconnect: true };
     }
     if (dto.corretorId !== undefined) {
-      if (dto.corretorId) {
+      if (this.isPropostaIndividual(requester.role)) {
+        await this.assertCorretoresCriamPropostas(requester);
+        if (dto.corretorId && dto.corretorId !== requester.id) {
+          throw new ForbiddenException(
+            "A proposta permanece vinculada a você.",
+          );
+        }
+        data.corretor = { connect: { id: requester.id } };
+      } else if (dto.corretorId) {
         const allowed = await this.teamScope.canAccessCorretor(
           requester,
           dto.corretorId,
@@ -402,6 +493,15 @@ export class PropostasService {
     if (dto.leadId !== undefined) {
       if (dto.leadId) {
         const lead = await this.ensureLeadAccessible(dto.leadId, requester);
+        if (
+          this.isPropostaIndividual(requester.role) &&
+          lead.corretorId &&
+          lead.corretorId !== requester.id
+        ) {
+          throw new ForbiddenException(
+            "A proposta só pode ficar nos seus leads e clientes.",
+          );
+        }
         data.lead = { connect: { id: lead.id } };
         if (dto.clienteNome === undefined) data.clienteNome = lead.nome;
         if (dto.clienteTelefone === undefined) {
@@ -455,6 +555,28 @@ export class PropostasService {
     return `${prefix}${String(Number.isFinite(seq) ? seq : 1).padStart(4, "0")}`;
   }
 
+  private isPropostaIndividual(role: Role) {
+    return (
+      role === Role.corretor ||
+      role === Role.treinee ||
+      role === Role.analista
+    );
+  }
+
+  private async assertCorretoresCriamPropostas(requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { modules: true },
+    });
+    const modules = (tenant?.modules ?? {}) as Record<string, unknown>;
+    if (modules.corretoresCriamPropostas !== true) {
+      throw new ForbiddenException(
+        "A imobiliária ainda não liberou a criação de propostas para este perfil.",
+      );
+    }
+  }
+
   private async allowedCorretorIds(requester: AuthenticatedUser) {
     const ids = await this.teamScope.getVisibleCorretorIds(requester);
     return ids ?? [];
@@ -464,10 +586,22 @@ export class PropostasService {
     item: { autorId: string; corretorId: string | null; leadId: string | null },
     requester: AuthenticatedUser,
   ) {
-    if (requester.role === Role.admin) return;
+    if (
+      requester.role === Role.admin ||
+      requester.role === Role.super_admin
+    ) {
+      return;
+    }
+    if (this.isPropostaIndividual(requester.role)) {
+      await this.assertCorretoresCriamPropostas(requester);
+      if (item.autorId === requester.id || item.corretorId === requester.id) {
+        return;
+      }
+      throw new NotFoundException("Proposta não encontrada.");
+    }
     if (requester.role !== Role.gerente) {
       throw new ForbiddenException(
-        "Apenas administradores e gerentes podem acessar propostas.",
+        "Apenas administradores, gerentes e corretores podem acessar propostas.",
       );
     }
     if (item.corretorId) {
