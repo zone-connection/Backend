@@ -79,6 +79,7 @@ function harness(opts: {
   funilCount?: number;
   leadCount?: number;
   migrated?: number;
+  lost?: number;
 } = {}): Harness {
   const updates: Harness['updates'] = [];
   const funilUpdates: Harness['funilUpdates'] = [];
@@ -139,7 +140,18 @@ function harness(opts: {
       },
     },
     lead: {
-      count: async () => opts.leadCount ?? 0,
+      count: async (args?: { where?: { perdidoAt?: unknown } }) => {
+        const perdido = args?.where?.perdidoAt;
+        if (
+          perdido &&
+          typeof perdido === 'object' &&
+          perdido !== null &&
+          'not' in perdido
+        ) {
+          return opts.lost ?? 0;
+        }
+        return opts.leadCount ?? 0;
+      },
       updateMany: async (args: {
         where: unknown;
         data: Record<string, unknown>;
@@ -187,7 +199,9 @@ describe('migração de leads entre funis', () => {
     assert.deepEqual(updates[0].where, {
       tenantId: TENANT,
       funilId: ORIGEM,
+      perdidoAt: null,
     });
+    assert.equal(result.ignoradosPerdidos, 0);
     assert.equal(updates[0].data.funilId, DESTINO);
     assert.equal(updates[0].data.stage, 'novo');
     assert.equal(updates[0].data.prazoAdiado, false);

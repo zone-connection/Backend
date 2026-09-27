@@ -315,12 +315,24 @@ export class FunisService {
       new Date(),
       destino.id,
     );
+    const ativosWhere = {
+      tenantId,
+      funilId: origem.id,
+      perdidoAt: null,
+    };
     const result = await this.prisma.lead.updateMany({
-      where: { tenantId, funilId: origem.id },
+      where: ativosWhere,
       data: {
         funilId: destino.id,
         ...timing,
         stage,
+      },
+    });
+    const ignoradosPerdidos = await this.prisma.lead.count({
+      where: {
+        tenantId,
+        funilId: origem.id,
+        perdidoAt: { not: null },
       },
     });
 
@@ -342,6 +354,7 @@ export class FunisService {
     return {
       ok: true as const,
       migrados: result.count,
+      ignoradosPerdidos,
       destinoFunilId: destino.id,
       stage,
     };
