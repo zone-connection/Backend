@@ -74,13 +74,19 @@ export class PresencaController {
   mes(
     @Query('ano') ano: string,
     @Query('mes') mes: string,
+    @Query('userIds') userIds: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     const now = new Date();
+    const ids = (userIds ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
     return this.presenca.mes(
       Number(ano) || now.getFullYear(),
       Number(mes) || now.getMonth() + 1,
       user,
+      ids,
     );
   }
 

@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PresencaNatureza, Prisma, Role } from '@prisma/client';
+import { PresencaNatureza, Role } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -209,7 +209,12 @@ export class PresencaService {
     return { ok: true };
   }
 
-  async mes(ano: number, mes: number, requester: AuthenticatedUser) {
+  async mes(
+    ano: number,
+    mes: number,
+    requester: AuthenticatedUser,
+    requestedUserIds: string[] = [],
+  ) {
     if (mes < 1 || mes > 12 || ano < 2000 || ano > 2100) {
       throw new BadRequestException('Mês ou ano inválido.');
     }
@@ -220,11 +225,91 @@ export class PresencaService {
       orderBy: [{ sortOrder: 'asc' }, { nome: 'asc' }],
     });
     const visible = await this.visibleUserIds(requester);
+    const userFilter = this.resolveUserFilter(visible, requestedUserIds);
+    const current = await this.loadGrid(tenantId, ano, mes, userFilter);
+    const prev = prevMonth(ano, mes);
+    const previous = await this.loadGrid(tenantId, prev.ano, prev.mes, userFilter);
+    const prevByUser = new Map(previous.grid.map((u) => [u.userId, u]));
+
+    const comparativoUsuarios = current.grid.map((u) => ({
+      userId: u.userId,
+      nome: u.nome,
+      role: u.role,
+      equipe: u.equipe,
+      atual: this.totaisFromDias(current.days, u.dias),
+      anterior: this.totaisFromDias(
+        previous.days,
+        prevByUser.get(u.userId)?.dias ?? {},
+      ),
+    }));
+
+    return {
+      ano,
+      mes,
+      dias: current.days,
+      tipos,
+      podeEditar: this.podeEditar(requester.role),
+      podeTipos: this.podeTipos(requester.role),
+      usuarios: current.grid,
+      comparativoUsuarios,
+      resumo: this.buildResumo(current.days, current.grid),
+      resumoAnterior: {
+        ano: prev.ano,
+        mes: prev.mes,
+        ...this.buildResumo(previous.days, previous.grid),
+      },
+    };
+  }
+
+  private resolveUserFilter(
+    visible: string[] | null,
+    requested: string[],
+  ): string[] | null {
+    if (!requested.length) return visible;
+    if (!visible) return requested;
+    const allow = new Set(visible);
+    return requested.filter((id) => allow.has(id));
+  }
+
+  private totaisFromDias(
+    days: string[],
+    dias: Record<string, { natureza: PresencaNatureza } | null>,
+  ) {
+    let presentes = 0;
+    let equivalente = 0;
+    let faltas = 0;
+    let justificadas = 0;
+    let lancamentos = 0;
+    for (const d of days) {
+      const cell = dias[d];
+      if (!cell) continue;
+      lancamentos += 1;
+      if (veio(cell.natureza)) presentes += 1;
+      equivalente += peso(cell.natureza);
+      if (cell.natureza === 'falta') faltas += 1;
+      if (cell.natureza === 'falta_justificada') justificadas += 1;
+    }
+    return {
+      presentes,
+      equivalente: Math.round(equivalente * 100) / 100,
+      faltas,
+      justificadas,
+      lancamentos,
+    };
+  }
+
+  private async loadGrid(
+    tenantId: string,
+    ano: number,
+    mes: number,
+    userFilter: string[] | null,
+  ) {
+    const { start, end, days } = monthBounds(ano, mes);
     const users = await this.prisma.user.findMany({
       where: {
         tenantId,
         status: 'ativo',
-        ...(visible ? { id: { in: visible } } : {}),
+        ...(userFilter ? { id: { in: userFilter } } : {}),
       },
       select: {
         id: true,
@@ -234,12 +319,11 @@ export class PresencaService {
       },
       orderBy: { name: 'asc' },
     });
-    const { start, end, days } = monthBounds(ano, mes);
     const lancamentos = await this.prisma.presencaLancamento.findMany({
       where: {
         tenantId,
         data: { gte: start, lte: end },
-        ...(visible ? { userId: { in: visible } } : {}),
+        ...(userFilter ? { userId: { in: userFilter } } : {}),
       },
       include: { tipo: true },
     });
@@ -271,31 +355,7 @@ export class PresencaService {
         }),
       ),
     }));
-
-    const resumo = this.buildResumo(days, grid);
-    const prev = prevMonth(ano, mes);
-    const resumoAnterior = await this.resumoPeriodo(
-      tenantId,
-      prev.ano,
-      prev.mes,
-      visible,
-    );
-
-    return {
-      ano,
-      mes,
-      dias: days,
-      tipos,
-      podeEditar: this.podeEditar(requester.role),
-      podeTipos: this.podeTipos(requester.role),
-      usuarios: grid,
-      resumo,
-      resumoAnterior: {
-        ano: prev.ano,
-        mes: prev.mes,
-        ...resumoAnterior,
-      },
-    };
+    return { days, grid };
   }
 
   private buildResumo(
@@ -331,43 +391,6 @@ export class PresencaService {
       mediaEquivalente: Math.round(mediaEquivalente * 100) / 100,
       totalVieramDia: porDia.reduce((s, x) => s + x.vieram, 0),
     };
-  }
-
-  private async resumoPeriodo(
-    tenantId: string,
-    ano: number,
-    mes: number,
-    visible: string[] | null,
-  ) {
-    const { start, end, days } = monthBounds(ano, mes);
-    const users = await this.prisma.user.findMany({
-      where: {
-        tenantId,
-        status: 'ativo',
-        ...(visible ? { id: { in: visible } } : {}),
-      },
-      select: { id: true },
-    });
-    const lancamentos = await this.prisma.presencaLancamento.findMany({
-      where: {
-        tenantId,
-        data: { gte: start, lte: end },
-        ...(visible ? { userId: { in: visible } } : {}),
-      },
-      include: { tipo: true },
-    });
-    const byKey = new Map(
-      lancamentos.map((l) => [`${l.userId}|${ymd(l.data)}`, l] as const),
-    );
-    const grid = users.map((u) => ({
-      dias: Object.fromEntries(
-        days.map((d) => {
-          const l = byKey.get(`${u.id}|${d}`);
-          return [d, l ? { natureza: l.tipo.natureza } : null];
-        }),
-      ),
-    }));
-    return this.buildResumo(days, grid);
   }
 
   async upsertLancamento(
