@@ -25,6 +25,7 @@ import {
   isStatusAprovado,
   isStatusParecerFinal,
   isStatusVendido,
+  leavesAnaliseOnStatus1,
   documentacaoVinculadaAoCorretorWhere,
 } from '../common/utils/documentacao-status';
 import { PLATFORM_TENANT_ID, requireTenantId } from '../common/utils/tenant';
@@ -149,7 +150,8 @@ export class DocumentacaoService {
       orderBy: prismaTableOrderBy(query.sort, 'nome'),
     });
 
-    // Alinha funil: vendidos → Venda; parecer final → sai de Em análise
+    // Alinha funil: vendidos → Venda; aprovado → sai de Em análise.
+    // Reprovado permanece na análise até dar perda.
     const vendidoLeadIds = [
       ...new Set(
         docs.filter((d) => isStatusVendido(d.status2)).map((d) => d.leadId),
@@ -160,7 +162,8 @@ export class DocumentacaoService {
         docs
           .filter(
             (d) =>
-              !isStatusVendido(d.status2) && isStatusParecerFinal(d.status1),
+              !isStatusVendido(d.status2) &&
+              leavesAnaliseOnStatus1(d.status1),
           )
           .map((d) => d.leadId),
       ),
@@ -404,26 +407,29 @@ export class DocumentacaoService {
 
     if (isStatusVendido(status2)) {
       await this.moveLeadsToVendaStage(tenantId, [lead.id], requester.id);
-    } else if (isStatusParecerFinal(status1)) {
-      await this.applyParecerFromDocumentacao(
-        tenantId,
-        lead.id,
-        requester.id,
-        status1,
-      );
     } else {
-      await this.enqueueAnaliseFromDoc({
-        leadId: lead.id,
-        autorId: requester.id,
-        tenantId,
-        status1,
-        requesterRole: requester.role,
-        temEntrada: created.temEntrada,
-        valorEntrada: created.valorEntrada,
-        temFgts: created.temFgts,
-        valorFgts: created.valorFgts,
-        temDependente: created.temDependente,
-      });
+      if (isStatusParecerFinal(status1)) {
+        await this.applyParecerFromDocumentacao(
+          tenantId,
+          lead.id,
+          requester.id,
+          status1,
+        );
+      }
+      if (!leavesAnaliseOnStatus1(status1)) {
+        await this.enqueueAnaliseFromDoc({
+          leadId: lead.id,
+          autorId: requester.id,
+          tenantId,
+          status1,
+          requesterRole: requester.role,
+          temEntrada: created.temEntrada,
+          valorEntrada: created.valorEntrada,
+          temFgts: created.temFgts,
+          valorFgts: created.valorFgts,
+          temDependente: created.temDependente,
+        });
+      }
     }
 
     // Releitura: etapa do lead pode ter mudado (venda / parecer).
@@ -600,26 +606,29 @@ export class DocumentacaoService {
         [existing.leadId],
         requester.id,
       );
-    } else if (isStatusParecerFinal(updated.status1)) {
-      await this.applyParecerFromDocumentacao(
-        tenantId,
-        existing.leadId,
-        requester.id,
-        updated.status1,
-      );
     } else {
-      await this.enqueueAnaliseFromDoc({
-        leadId: existing.leadId,
-        autorId: requester.id,
-        tenantId,
-        status1: updated.status1,
-        requesterRole: requester.role,
-        temEntrada: updated.temEntrada,
-        valorEntrada: updated.valorEntrada,
-        temFgts: updated.temFgts,
-        valorFgts: updated.valorFgts,
-        temDependente: updated.temDependente,
-      });
+      if (isStatusParecerFinal(updated.status1)) {
+        await this.applyParecerFromDocumentacao(
+          tenantId,
+          existing.leadId,
+          requester.id,
+          updated.status1,
+        );
+      }
+      if (!leavesAnaliseOnStatus1(updated.status1)) {
+        await this.enqueueAnaliseFromDoc({
+          leadId: existing.leadId,
+          autorId: requester.id,
+          tenantId,
+          status1: updated.status1,
+          requesterRole: requester.role,
+          temEntrada: updated.temEntrada,
+          valorEntrada: updated.valorEntrada,
+          temFgts: updated.temFgts,
+          valorFgts: updated.valorFgts,
+          temDependente: updated.temDependente,
+        });
+      }
     }
 
     // Releitura: etapa do lead pode ter mudado (venda / parecer).
@@ -729,8 +738,8 @@ export class DocumentacaoService {
     valorFgts: number | null;
     temDependente: boolean;
   }) {
-    // Parecer já registrado: não recoloca na fila nem força Em análise.
-    if (isStatusParecerFinal(input.status1)) return;
+    // Aprovado sai da fila. Reprovado permanece em Em análise até dar perda.
+    if (leavesAnaliseOnStatus1(input.status1)) return;
 
     const shouldEnqueue =
       isStatusAnalise(input.status1) ||
@@ -779,8 +788,8 @@ export class DocumentacaoService {
   }
 
   /**
-   * Espelha o parecer (Aprovado/Reprovado) na ficha de Análise e tira o lead
-   * da etapa Em análise do funil (volta à etapa anterior, se houver).
+   * Espelha o parecer (Aprovado/Reprovado) na ficha de Análise.
+   * Aprovado sai de Em análise. Reprovado permanece até dar perda.
    */
   private async applyParecerFromDocumentacao(
     tenantId: string,
@@ -804,6 +813,8 @@ export class DocumentacaoService {
       },
       data: { status: analiseStatus },
     });
+
+    if (!leavesAnaliseOnStatus1(status1)) return;
 
     const analiseSlugs = await this.funis.getSlugsByPapel(
       tenantId,

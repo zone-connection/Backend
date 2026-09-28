@@ -338,12 +338,14 @@ export class AnaliseService {
         newStatus,
         dto.vgv,
       );
-      await this.leaveAnaliseAfterParecer(
-        tenantId,
-        existing.leadId,
-        requester.id,
-        newStatus,
-      );
+      if (newStatus === AnaliseStatus.aprovado) {
+        await this.leaveAnaliseAfterParecer(
+          tenantId,
+          existing.leadId,
+          requester.id,
+          newStatus,
+        );
+      }
 
       const notifyIds = new Set<string>();
       if (
@@ -408,7 +410,7 @@ export class AnaliseService {
     });
   }
 
-  /** Tira o lead da etapa Em análise após parecer aprovado/reprovado. */
+  /** Tira o lead da etapa Em análise após parecer aprovado. Reprovado fica até dar perda. */
   private async leaveAnaliseAfterParecer(
     tenantId: string,
     leadId: string,

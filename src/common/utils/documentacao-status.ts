@@ -136,12 +136,19 @@ export function isStatusPreAnalise(
   return status1Group(status) === 'pre_analise';
 }
 
-/** Parecer final do Status 1 (aprovado ou reprovado) — já saiu da fila. */
+/** Parecer final do Status 1 (aprovado ou reprovado). */
 export function isStatusParecerFinal(
   status: string | null | undefined,
 ): boolean {
   const g = status1Group(status);
   return g === 'aprovado' || g === 'reprovado';
+}
+
+/** Só o aprovado sai de Em análise. Reprovado fica na fila até dar perda. */
+export function leavesAnaliseOnStatus1(
+  status: string | null | undefined,
+): boolean {
+  return isStatusAprovado(status);
 }
 
 export function isStatusReprovado(

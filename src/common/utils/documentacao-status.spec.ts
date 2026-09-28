@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   isStatusAprovado,
   isStatusParecerFinal,
+  leavesAnaliseOnStatus1,
   status1Group,
 } from './documentacao-status';
 
@@ -19,5 +20,11 @@ describe('status1 da documentação', () => {
   it('reconhece análise e reprovado', () => {
     assert.equal(status1Group('Em análise'), 'analise');
     assert.equal(status1Group('Reprovado'), 'reprovado');
+  });
+
+  it('reprovado não sai da análise; aprovado sai', () => {
+    assert.equal(leavesAnaliseOnStatus1('Aprovado'), true);
+    assert.equal(leavesAnaliseOnStatus1('Reprovado'), false);
+    assert.equal(leavesAnaliseOnStatus1('Em análise'), false);
   });
 });
