@@ -1,4 +1,4 @@
-import { PrazoUnidade } from '@prisma/client';
+import { ContatoTipo, PrazoUnidade } from '@prisma/client';
 
 export const MONITORAMENTO_FILTROS = [
   'todos',
@@ -81,6 +81,7 @@ export type LeadPrazoAdiamentoView = {
 export type CorretorMonitoramentoLead = {
   id: string;
   nome: string;
+  tipo: ContatoTipo;
   stage: string;
   problemas: ProblemaMonitoramento[];
   tarefasAtrasadas: TarefaAtrasadaResumo[];
