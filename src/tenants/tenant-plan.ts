@@ -20,6 +20,7 @@ const OPERACIONAL = [
   'construtoras',
   'leadsPerdidos',
   'vendas',
+  'muralChaves',
 ] as const;
 
 const ADMINISTRATIVO = [
@@ -131,6 +132,7 @@ const SOLO_ENABLED = new Set<string>([
   'metas',
   'financeiro',
   'comercial',
+  'muralChaves',
 ]);
 
 export function isAdminGroupEnabled(

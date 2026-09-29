@@ -78,6 +78,12 @@ export const PERMISSION_MODULES = [
   { key: 'corretores', label: 'Ranking', routes: ['/corretores'], group: 'gestao' },
   { key: 'atrasos', label: 'Atrasos', routes: ['/atrasos'], group: 'gestao' },
   { key: 'presenca', label: 'Presença', routes: ['/presenca'], group: 'gestao' },
+  {
+    key: 'muralChaves',
+    label: 'Mural de chaves',
+    routes: ['/mural-chaves'],
+    group: 'operacao',
+  },
   { key: 'metas', label: 'Metas', routes: ['/metas'], group: 'gestao' },
   { key: 'analise', label: 'Análise', routes: ['/resultado'], group: 'gestao' },
   {
@@ -175,6 +181,16 @@ export const PERMISSION_ACTIONS = [
     label: 'Exportar informações financeiras',
     module: 'financeiro',
   },
+  {
+    key: 'muralChaves.gerenciar',
+    label: 'Gerenciar chaves (cadastro, retirada manual e devolução)',
+    module: 'muralChaves',
+  },
+  {
+    key: 'muralChaves.identificador',
+    label: 'Alterar identificador da chave',
+    module: 'muralChaves',
+  },
 ] as const;
 
 const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
@@ -194,6 +210,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/configuracoes',
     '/financeiro',
     '/presenca',
+    '/mural-chaves',
   ],
   admin: [
     '/dashboard',
@@ -209,6 +226,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/corretores',
     '/atrasos',
     '/presenca',
+    '/mural-chaves',
     '/metas',
     '/triagem',
     '/documentacao',
@@ -240,6 +258,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/corretores',
     '/atrasos',
     '/presenca',
+    '/mural-chaves',
     '/metas',
     '/triagem',
     '/documentacao',
@@ -265,6 +284,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/clientes',
     '/clientes-perdidos',
     '/presenca',
+    '/mural-chaves',
     '/metas',
     '/triagem',
     '/documentacao',
@@ -280,6 +300,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/caca-lead',
     '/resultado',
     '/presenca',
+    '/mural-chaves',
     '/documentacao',
     '/propostas',
     '/contratos',
@@ -301,6 +322,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/financeiro/despesas',
     '/financeiro/comissao',
     '/presenca',
+    '/mural-chaves',
     '/perfil',
   ],
   treinee: [
@@ -315,6 +337,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/clientes',
     '/clientes-perdidos',
     '/presenca',
+    '/mural-chaves',
     '/metas',
     '/triagem',
     '/documentacao',
@@ -328,7 +351,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/perfil',
   ],
   /** Solo: acesso só via permissions liberadas pelo admin. */
-  assistente: ['/perfil', '/caca-lead', '/presenca'],
+  assistente: ['/perfil', '/caca-lead', '/presenca', '/mural-chaves'],
 };
 
 function roleHasRoute(role: Role, route: string): boolean {
@@ -414,6 +437,12 @@ export function defaultsFromRole(role: Role): UserPermissions {
     'financeiro.fluxo': finUser && Boolean(modules.financeiro),
     'financeiro.comissao': Boolean(modules.comissao),
     'financeiro.export': role === Role.admin,
+    'muralChaves.gerenciar':
+      role === Role.admin ||
+      role === Role.gerente ||
+      role === Role.super_admin,
+    'muralChaves.identificador':
+      role === Role.admin || role === Role.super_admin,
   };
 
   return { modules, actions };
@@ -487,6 +516,7 @@ export function modulesForApiPath(rawPath: string): string[] {
   }
   if (path.includes('financeiro')) return ['financeiro'];
   if (path.startsWith('presenca')) return ['presenca'];
+  if (path.startsWith('mural-chaves')) return ['muralChaves'];
   if (path.startsWith('cadastro-vendas')) return ['vendas'];
   if (path.startsWith('documentacao')) return ['documentacao', 'vendas'];
   if (path.startsWith('propostas')) return ['propostas'];

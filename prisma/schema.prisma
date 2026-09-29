@@ -198,6 +198,8 @@ model Tenant {
   vendaUsadoContratos            VendaUsadoContrato[]
   imovelChaves                   ImovelChave[]
   imovelChaveMovimentos          ImovelChaveMovimento[]
+  muralChaves                    MuralChave[]
+  muralChaveMovimentos           MuralChaveMovimento[]
   vendaUsadoPosVendas            VendaUsadoPosVenda[]
   vendaUsadoPosVendaPendencias   VendaUsadoPosVendaPendencia[]
   proprietarioPortalAcessos      ProprietarioPortalAcesso[]
@@ -439,6 +441,15 @@ model User {
   vendasUsadoContratosAssinatura  VendaUsadoContrato[] @relation("VendaUsadoContratoAssinatura")
   imovelChavesResponsavel         ImovelChave[] @relation("ImovelChaveResponsavel")
   imovelChaveMovimentos           ImovelChaveMovimento[] @relation("ImovelChaveMovimentoAutor")
+  muralChavesResponsavel          MuralChave[] @relation("MuralChaveResponsavel")
+  muralChavesRetiradas            MuralChave[] @relation("MuralChaveRetiradoPor")
+  muralChavesRetiradaRegistrada  MuralChave[] @relation("MuralChaveRetiradaRegistradaPor")
+  muralMovimentosAutor            MuralChaveMovimento[] @relation("MuralMovAutor")
+  muralMovimentosRetirou          MuralChaveMovimento[] @relation("MuralMovRetirou")
+  muralMovimentosRegistrou        MuralChaveMovimento[] @relation("MuralMovRegistrou")
+  muralMovimentosDevolveu         MuralChaveMovimento[] @relation("MuralMovDevolveu")
+  muralMovimentosRecebeu          MuralChaveMovimento[] @relation("MuralMovRecebeu")
+  muralMovimentosConfirmouPara    MuralChaveMovimento[] @relation("MuralMovConfirmouPara")
   vendasUsadoPosVenda             VendaUsadoPosVenda[] @relation("VendaUsadoPosVendaResponsavel")
   vendasUsadoPosVendaPendencia    VendaUsadoPosVendaPendencia[] @relation("VendaUsadoPosVendaPendenciaResponsavel")
   parceriasConvidadas             Parceria[] @relation("ParceriaConvidadoPor")
@@ -978,6 +989,7 @@ model Empreendimento {
 
   documentacoes Documentacao[]
   cadastroVendas CadastroVenda[]
+  muralChaves    MuralChave[]
   propostas     Proposta[]
   propostaVinculos PropostaVinculo[]
   leads         Lead[]
@@ -1489,6 +1501,9 @@ enum NotificacaoTipo {
   proposta_vencimento_proximo
   lead_atribuido
   lead_pool
+  chave_retirada
+  chave_devolucao
+  chave_confirmacao
 }
 
 /// Aviso in-app para o usuário (ex.: resultado da análise para o corretor).
@@ -1907,6 +1922,7 @@ model Imovel {
   propostaVinculos PropostaVinculo[]
   grupoZapIssues GrupoZapListingIssue[]
   chaves     ImovelChave[]
+  muralChaves MuralChave[]
   posVendas  VendaUsadoPosVenda[]
 
   createdAt DateTime @default(now())
@@ -2516,6 +2532,131 @@ model ImovelChaveMovimento {
   @@index([tenantId, chaveId])
   @@index([chaveId, createdAt])
   @@map("imovel_chave_movimentos")
+}
+
+enum MuralChaveStatus {
+  disponivel
+  em_uso
+}
+
+enum MuralChaveLocal {
+  proprietario
+  imobiliaria
+  corretor
+  outro
+}
+
+enum MuralChaveMovimentoTipo {
+  cadastro
+  edicao
+  identificador
+  retirada
+  retirada_manual
+  devolucao
+  confirmacao
+}
+
+/// Chave individual do mural da imobiliária. O identificador é texto livre;
+/// o vínculo e o histórico ficam no id, então renomear não apaga movimentações.
+model MuralChave {
+  id                String           @id @default(uuid())
+  tenantId          String
+  tenant            Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  identificador     String
+  /// Comparação única sem diferenciar maiúsculas (o texto exibido permanece o original).
+  identificadorNorm String
+
+  imovelId         String?
+  imovel           Imovel?          @relation(fields: [imovelId], references: [id], onDelete: SetNull)
+  empreendimentoId String?
+  empreendimento   Empreendimento?  @relation(fields: [empreendimentoId], references: [id], onDelete: SetNull)
+  /// Rótulo do imóvel quando não há ficha (ex.: Apartamento 304).
+  unidade          String           @default("")
+
+  status          MuralChaveStatus @default(disponivel)
+  local           MuralChaveLocal  @default(imobiliaria)
+  localDescricao  String           @default("")
+
+  responsavelAtualId String?
+  responsavelAtual   User?   @relation("MuralChaveResponsavel", fields: [responsavelAtualId], references: [id], onDelete: SetNull)
+
+  retiradaEm               DateTime?
+  previsaoDevolucao        DateTime?
+  retiradoPorId            String?
+  retiradoPor              User?     @relation("MuralChaveRetiradoPor", fields: [retiradoPorId], references: [id], onDelete: SetNull)
+  retiradaRegistradaPorId  String?
+  retiradaRegistradaPor    User?     @relation("MuralChaveRetiradaRegistradaPor", fields: [retiradaRegistradaPorId], references: [id], onDelete: SetNull)
+
+  observacoes String @default("")
+
+  movimentos MuralChaveMovimento[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, identificadorNorm])
+  @@index([tenantId, status])
+  @@index([tenantId, empreendimentoId])
+  @@index([tenantId, imovelId])
+  @@map("mural_chaves")
+}
+
+/// Histórico append-only. Não apagar linhas já gravadas.
+model MuralChaveMovimento {
+  id       String    @id @default(uuid())
+  tenantId String
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  chaveId  String
+  chave    MuralChave @relation(fields: [chaveId], references: [id], onDelete: Cascade)
+
+  tipo   MuralChaveMovimentoTipo
+  manual Boolean @default(false)
+
+  identificador         String
+  identificadorAnterior String @default("")
+
+  imovelId           String?
+  empreendimentoId   String?
+  unidade            String @default("")
+  empreendimentoNome String @default("")
+  imovelLabel        String @default("")
+
+  quemRetirouId   String?
+  quemRetirou     User?   @relation("MuralMovRetirou", fields: [quemRetirouId], references: [id], onDelete: SetNull)
+  quemRetirouNome String  @default("")
+
+  quemRegistrouRetiradaId   String?
+  quemRegistrouRetirada     User?   @relation("MuralMovRegistrou", fields: [quemRegistrouRetiradaId], references: [id], onDelete: SetNull)
+  quemRegistrouRetiradaNome String  @default("")
+
+  retiradaEm        DateTime?
+  previsaoDevolucao DateTime?
+
+  quemDevolveuId   String?
+  quemDevolveu     User?   @relation("MuralMovDevolveu", fields: [quemDevolveuId], references: [id], onDelete: SetNull)
+  quemDevolveuNome String  @default("")
+
+  quemRecebeuDevolucaoId   String?
+  quemRecebeuDevolucao     User?   @relation("MuralMovRecebeu", fields: [quemRecebeuDevolucaoId], references: [id], onDelete: SetNull)
+  quemRecebeuDevolucaoNome String  @default("")
+  devolucaoEm              DateTime?
+
+  confirmacaoPendente Boolean   @default(false)
+  confirmadoEm        DateTime?
+  confirmadoParaId    String?
+  confirmadoPara      User?     @relation("MuralMovConfirmouPara", fields: [confirmadoParaId], references: [id], onDelete: SetNull)
+  confirmadoParaNome  String    @default("")
+
+  autorId    String
+  autor      User   @relation("MuralMovAutor", fields: [autorId], references: [id], onDelete: Restrict)
+  autorNome  String
+  observacao String @default("")
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, chaveId, createdAt])
+  @@index([quemDevolveuId, confirmacaoPendente])
+  @@map("mural_chave_movimentos")
 }
 
 /// Acompanhamento após a venda concluída.

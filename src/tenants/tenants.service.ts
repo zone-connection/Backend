@@ -577,6 +577,8 @@ export class TenantsService {
     await tx.vendaUsadoPosVenda.deleteMany({ where: { tenantId } });
     await tx.imovelChaveMovimento.deleteMany({ where: { tenantId } });
     await tx.imovelChave.deleteMany({ where: { tenantId } });
+    await tx.muralChaveMovimento.deleteMany({ where: { tenantId } });
+    await tx.muralChave.deleteMany({ where: { tenantId } });
     await tx.vendaUsadoDocumento.deleteMany({ where: { tenantId } });
     await tx.vendaUsadoContrato.deleteMany({ where: { tenantId } });
     await tx.vendaUsadoFechamento.deleteMany({ where: { tenantId } });

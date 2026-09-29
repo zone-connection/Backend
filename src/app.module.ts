@@ -37,6 +37,7 @@ import { PropostasModule } from './propostas/propostas.module';
 import { FinanceiroModule } from './financeiro/financeiro.module';
 import { FuncionariosModule } from './funcionarios/funcionarios.module';
 import { PresencaModule } from './presenca/presenca.module';
+import { MuralChavesModule } from './mural-chaves/mural-chaves.module';
 import { CadastroVendasModule } from './cadastro-vendas/cadastro-vendas.module';
 import { PlatformContratosModule } from './platform-contratos/platform-contratos.module';
 import { PlatformFornecedorContratosModule } from './platform-fornecedor-contratos/platform-fornecedor-contratos.module';
@@ -75,6 +76,7 @@ import { THROTTLE } from './config/security.constants';
     FinanceiroModule,
     FuncionariosModule,
     PresencaModule,
+    MuralChavesModule,
     CadastroVendasModule,
     PlatformContratosModule,
     PlatformFornecedorContratosModule,
