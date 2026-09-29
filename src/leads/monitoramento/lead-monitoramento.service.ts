@@ -663,22 +663,27 @@ export class LeadMonitoramentoService {
 
     const leads = await this.prisma.lead.findMany({
       where: {
-        ...leadScope,
-        tipo: ContatoTipo.lead,
-        perdidoAt: null,
-        corretorId: { not: null },
-        ...(ctx.terminalSlugs.length > 0
-          ? { stage: { notIn: ctx.terminalSlugs } }
-          : {}),
-        OR: [
-          { lastMovementAt: { lt: idleBefore } },
-          { prazoDueAt: { lt: now } },
-          { agendamentos: { some: overdueTarefaWhere(now) } },
+        AND: [
+          leadScope,
+          { tipo: ContatoTipo.lead },
+          { perdidoAt: null },
+          { corretorId: { not: null } },
+          ...(ctx.terminalSlugs.length > 0
+            ? [{ stage: { notIn: ctx.terminalSlugs } }]
+            : []),
+          {
+            OR: [
+              { lastMovementAt: { lt: idleBefore } },
+              { prazoDueAt: { lt: now } },
+              { agendamentos: { some: overdueTarefaWhere(now) } },
+            ],
+          },
         ],
       },
       select: {
         id: true,
         nome: true,
+        tipo: true,
         stage: true,
         corretorId: true,
         equipeId: true,
@@ -697,6 +702,7 @@ export class LeadMonitoramentoService {
       now,
     );
     for (const lead of decorated) {
+      if (lead.tipo !== ContatoTipo.lead) continue;
       if (!lead.corretorId || !lead.corretor) continue;
       const mon = lead.monitoramento;
       if (mon.visual !== 'vermelho') continue;
@@ -725,6 +731,7 @@ export class LeadMonitoramentoService {
       row.leads.push({
         id: lead.id,
         nome: lead.nome,
+        tipo: lead.tipo,
         stage: lead.stage,
         problemas: mon.problemas,
         tarefasAtrasadas: mon.tarefasAtrasadas,
