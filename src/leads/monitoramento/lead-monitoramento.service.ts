@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   AtrasoLiberacaoDestino,
+  ContatoTipo,
   FunilEtapaPapel,
   NotificacaoTipo,
   Prisma,
@@ -663,6 +664,7 @@ export class LeadMonitoramentoService {
     const leads = await this.prisma.lead.findMany({
       where: {
         ...leadScope,
+        tipo: ContatoTipo.lead,
         perdidoAt: null,
         corretorId: { not: null },
         ...(ctx.terminalSlugs.length > 0
@@ -731,7 +733,11 @@ export class LeadMonitoramentoService {
 
     const visibleIds = await this.teamScope.getVisibleCorretorIds(requester);
     const reatribuicoes = await this.prisma.leadReatribuicao.findMany({
-      where: { tenantId, origem: TriagemOrigem.retrabalho },
+      where: {
+        tenantId,
+        origem: TriagemOrigem.retrabalho,
+        lead: { tipo: ContatoTipo.lead },
+      },
       select: {
         leadId: true,
         fromCorretorId: true,
