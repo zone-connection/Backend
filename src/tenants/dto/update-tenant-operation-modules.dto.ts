@@ -37,4 +37,9 @@ export class UpdateTenantOperationModulesDto {
   @IsOptional()
   @IsBoolean()
   corretoresCriamPropostas?: boolean;
+
+  /** Mostra o Mural de Chaves em Gestão. Sem este opt-in o menu fica oculto. */
+  @IsOptional()
+  @IsBoolean()
+  muralChavesOptIn?: boolean;
 }

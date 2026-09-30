@@ -82,7 +82,7 @@ export const PERMISSION_MODULES = [
     key: 'muralChaves',
     label: 'Mural de chaves',
     routes: ['/mural-chaves'],
-    group: 'operacao',
+    group: 'gestao',
   },
   { key: 'metas', label: 'Metas', routes: ['/metas'], group: 'gestao' },
   { key: 'analise', label: 'Análise', routes: ['/resultado'], group: 'gestao' },

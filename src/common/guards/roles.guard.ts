@@ -42,6 +42,17 @@ export class RolesGuard implements CanActivate {
     }
 
     const rawPath = `${request.originalUrl ?? request.url ?? ''}`.split('?')[0];
+    if (
+      user.tenantId &&
+      user.role !== Role.super_admin &&
+      /\/mural-chaves(?:\/|$)/.test(rawPath) &&
+      user.tenantModules?.muralChaves !== true
+    ) {
+      throw new ForbiddenException(
+        'O Mural de Chaves não está ativo nesta imobiliária.',
+      );
+    }
+
     const operation = operationModuleForApiPath(rawPath);
     if (operation && user.tenantId) {
       if (!isTenantOperationEnabled(user.tenantModules, operation)) {

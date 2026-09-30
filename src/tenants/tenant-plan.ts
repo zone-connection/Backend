@@ -77,6 +77,9 @@ export const GERENTE_VER_LEADS_GERAIS_KEY = 'gerenteVerLeadsGerais';
 /** Corretor, trainee e analista podem criar propostas ligadas só a eles. */
 export const CORRETORES_CRIAM_PROPOSTAS_KEY = 'corretoresCriamPropostas';
 
+/** Mural de chaves nasce oculto. Só aparece depois que o admin ativa. */
+export const MURAL_CHAVES_OPT_IN_KEY = 'muralChavesOptIn';
+
 function withNavPrefs(
   normalized: Record<string, boolean>,
   raw: Record<string, boolean>,
@@ -94,7 +97,17 @@ function withNavPrefs(
     normalized[CORRETORES_CRIAM_PROPOSTAS_KEY] =
       raw[CORRETORES_CRIAM_PROPOSTAS_KEY];
   }
+  if (typeof raw[MURAL_CHAVES_OPT_IN_KEY] === 'boolean') {
+    normalized[MURAL_CHAVES_OPT_IN_KEY] = raw[MURAL_CHAVES_OPT_IN_KEY];
+  }
   return normalized;
+}
+
+function applyMuralChavesVisibility(
+  next: Record<string, boolean>,
+  raw: Record<string, boolean>,
+) {
+  next.muralChaves = raw[MURAL_CHAVES_OPT_IN_KEY] === true;
 }
 
 const OPERACAO_DEFAULT: Record<(typeof OPERACOES)[number], boolean> = {
@@ -132,7 +145,6 @@ const SOLO_ENABLED = new Set<string>([
   'metas',
   'financeiro',
   'comercial',
-  'muralChaves',
 ]);
 
 export function isAdminGroupEnabled(
@@ -229,6 +241,7 @@ export function normalizeModulesForPlano(
         next[k] = modules[k] === true;
       }
     }
+    applyMuralChavesVisibility(next, modules);
     return withNavPrefs(next, modules);
   }
 
@@ -259,6 +272,7 @@ export function normalizeModulesForPlano(
   next.vendas = plano === TenantPlano.bronze || next.documentacao !== false;
 
   applyOperationDefaults(next);
+  applyMuralChavesVisibility(next, modules);
 
   return withNavPrefs(
     Object.fromEntries(ALL.map((k) => [k, next[k] === true])),
