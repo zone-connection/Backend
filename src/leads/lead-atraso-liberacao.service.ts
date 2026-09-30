@@ -7,6 +7,7 @@ import {
 import {
   AtrasoLiberacaoDestino,
   ContatoTipo,
+  FunilEtapaPapel,
   FunilTipo,
   NotificacaoTipo,
   Prisma,
@@ -20,6 +21,7 @@ import {
   isEtapaTerminal,
   prazoToMs,
 } from './monitoramento/prazo.util';
+import { excludeVendaOuVgvWhere } from './lead-redistribuicao.util';
 
 const BATCH = 80;
 const INTERVAL_MS = 5 * 60 * 1000;
@@ -205,6 +207,9 @@ export class LeadAtrasoLiberacaoService implements OnModuleInit, OnModuleDestroy
     );
     const ctx = await this.monitoramento.loadFunilContext(funil.tenantId);
     const nowMs = now.getTime();
+    const vendaSlugs = [...ctx.etapasBySlug.values()]
+      .filter((etapa) => etapa.papel === FunilEtapaPapel.venda)
+      .map((etapa) => etapa.slug);
 
     let cursor: string | undefined;
     let released = 0;
@@ -217,6 +222,7 @@ export class LeadAtrasoLiberacaoService implements OnModuleInit, OnModuleDestroy
           perdidoAt: null,
           corretorId: { not: null },
           origemAtrasoLiberacao: null,
+          ...excludeVendaOuVgvWhere(vendaSlugs),
         },
         select: {
           id: true,
@@ -267,6 +273,7 @@ export class LeadAtrasoLiberacaoService implements OnModuleInit, OnModuleDestroy
             corretorId: { not: null },
             origemAtrasoLiberacao: null,
             perdidoAt: null,
+            ...excludeVendaOuVgvWhere(vendaSlugs),
           },
           data,
         });

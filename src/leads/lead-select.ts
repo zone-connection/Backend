@@ -63,6 +63,7 @@ export const leadSelect = {
       id: true,
       status1: true,
       status2: true,
+      vgv: true,
       updatedAt: true,
     },
   },

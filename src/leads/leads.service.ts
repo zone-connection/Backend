@@ -54,6 +54,11 @@ import {
   dadosAposRedistribuir,
   isOrigemRetrabalho,
 } from './retrabalho-tag';
+import {
+  excludeVendaOuVgvWhere,
+  LEAD_VENDA_OU_VGV_MESSAGE,
+  leadImpedeRedistribuicao,
+} from './lead-redistribuicao.util';
 import type { LeadNotifySnapshot } from '../lead-notify/lead-notify.messages';
 import { PresenceService } from '../presence/presence.service';
 
@@ -79,6 +84,8 @@ function isSyntheticEmail(email: string | null | undefined): boolean {
 export type LeadWithDocStatus = LeadEntity & {
   documentacaoStatus1: string | null;
   documentacaoStatus2: string | null;
+  documentacaoVgv: number | null;
+  podeRedistribuir: boolean;
 };
 
 export type LeadWithMonitoramento = LeadWithDocStatus & {
@@ -90,16 +97,28 @@ export interface PaginatedLeads {
   meta: { total: number; page: number; limit: number; totalPages: number };
 }
 
-/** Expõe Status 1/2 da ficha mais recente no root do lead (cards do funil). */
-function withDocumentacaoStatus<T extends LeadEntity>(lead: T): T & {
+/** Expõe Status 1/2 e VGV da ficha mais recente no root do lead. */
+function withDocumentacaoStatus<T extends LeadEntity>(
+  lead: T,
+  vendaSlugs: readonly string[] = [],
+): T & {
   documentacaoStatus1: string | null;
   documentacaoStatus2: string | null;
+  documentacaoVgv: number | null;
+  podeRedistribuir: boolean;
 } {
   const latest = lead.documentacoes?.[0];
+  const documentacoes = lead.documentacoes ?? [];
   return {
     ...lead,
     documentacaoStatus1: latest?.status1 ?? null,
     documentacaoStatus2: latest?.status2 ?? null,
+    documentacaoVgv: latest?.vgv ?? null,
+    podeRedistribuir: !leadImpedeRedistribuicao({
+      stage: lead.stage,
+      vendaSlugs,
+      documentacoes,
+    }),
   };
 }
 
@@ -380,7 +399,7 @@ export class LeadsService {
     }
 
     const disponiveis = await this.prisma.lead.count({
-      where: this.poolAdminWhere(tenantId),
+      where: await this.poolAdminWhere(tenantId),
     });
     const [equipes, corretores] = await Promise.all([
       this.prisma.equipe.findMany({
@@ -472,7 +491,7 @@ export class LeadsService {
     }
 
     const leads = await this.prisma.lead.findMany({
-      where: this.poolAdminWhere(tenantId),
+      where: await this.poolAdminWhere(tenantId),
       select: { id: true, origemAtrasoLiberacao: true },
       orderBy: { createdAt: 'asc' },
       take: totalPedido,
@@ -571,7 +590,7 @@ export class LeadsService {
       );
     }
     const tenantId = requireTenantId(requester);
-    const leadWhere = this.poolAdminWhere(tenantId);
+    const leadWhere = await this.poolAdminWhere(tenantId);
 
     if (dto.alocacoes?.length) {
       const totalPedido = dto.alocacoes.reduce((s, a) => s + a.quantidade, 0);
@@ -960,20 +979,31 @@ export class LeadsService {
         : await this.prisma.documentacao.findMany({
             where: { tenantId, leadId: { in: leadIds } },
             orderBy: { updatedAt: 'desc' },
-            select: { leadId: true, status1: true, status2: true },
+            select: { leadId: true, status1: true, status2: true, vgv: true },
           });
     const latestDoc = new Map<
       string,
-      { status1: string; status2: string }
+      { status1: string; status2: string; vgv: number | null }
+    >();
+    const docsByLead = new Map<
+      string,
+      Array<{ vgv: number | null; status2: string }>
     >();
     for (const doc of docs) {
+      const list = docsByLead.get(doc.leadId) ?? [];
+      list.push({ vgv: doc.vgv, status2: doc.status2 });
+      docsByLead.set(doc.leadId, list);
       if (!latestDoc.has(doc.leadId)) {
         latestDoc.set(doc.leadId, {
           status1: doc.status1,
           status2: doc.status2,
+          vgv: doc.vgv,
         });
       }
     }
+    const vendaSlugs = [...monCtx.etapasBySlug.values()]
+      .filter((etapa) => etapa.papel === FunilEtapaPapel.venda)
+      .map((etapa) => etapa.slug);
 
     return {
       data: decorated.map((lead) => {
@@ -985,6 +1015,12 @@ export class LeadsService {
             fromBatch?.status1 ?? fromNested?.status1 ?? null,
           documentacaoStatus2:
             fromBatch?.status2 ?? fromNested?.status2 ?? null,
+          documentacaoVgv: fromBatch?.vgv ?? fromNested?.vgv ?? null,
+          podeRedistribuir: !leadImpedeRedistribuicao({
+            stage: lead.stage,
+            vendaSlugs,
+            documentacoes: docsByLead.get(lead.id) ?? lead.documentacoes ?? [],
+          }),
         };
       }),
       meta: {
@@ -1155,7 +1191,7 @@ export class LeadsService {
     ]);
 
     return {
-      data: data.map(withDocumentacaoStatus),
+      data: data.map((lead) => withDocumentacaoStatus(lead)),
       meta: {
         total,
         page,
@@ -1197,6 +1233,14 @@ export class LeadsService {
       previousCorretorId = current?.corretorId ?? null;
       previousEquipeId = current?.equipeId ?? null;
       previousOrigemAtraso = current?.origemAtrasoLiberacao ?? null;
+      const ownerChanges =
+        (dto.corretorId !== undefined &&
+          dto.corretorId !== (current?.corretorId ?? null)) ||
+        (dto.equipeId !== undefined &&
+          dto.equipeId !== (current?.equipeId ?? null));
+      if (ownerChanges) {
+        await this.assertPodeRedistribuir(tenantId, id);
+      }
       if (
         previousOrigemAtraso === AtrasoLiberacaoDestino.retrabalho &&
         !this.canManageRetrabalho(requester)
@@ -1912,6 +1956,11 @@ export class LeadsService {
         ...(ctx.terminalSlugs.length > 0
           ? { stage: { notIn: ctx.terminalSlugs } }
           : {}),
+        ...excludeVendaOuVgvWhere(
+          [...ctx.etapasBySlug.values()]
+            .filter((etapa) => etapa.papel === FunilEtapaPapel.venda)
+            .map((etapa) => etapa.slug),
+        ),
       },
       select: leadSelect,
       orderBy: { lastMovementAt: 'asc' },
@@ -1964,6 +2013,7 @@ export class LeadsService {
     if (current.corretorId === self.id) {
       throw new ConflictException('Este lead já está na sua carteira.');
     }
+    await this.assertPodeRedistribuir(tenantId, id);
 
     const now = new Date();
     await this.prisma.lead.update({
@@ -2132,14 +2182,45 @@ export class LeadsService {
     }
   }
 
-  private poolAdminWhere(tenantId: string): Prisma.LeadWhereInput {
+  private async poolAdminWhere(
+    tenantId: string,
+  ): Promise<Prisma.LeadWhereInput> {
+    const vendaSlugs = await this.funis.getSlugsByPapel(
+      tenantId,
+      FunilEtapaPapel.venda,
+    );
     return {
       tenantId,
       tipo: ContatoTipo.lead,
       perdidoAt: null,
       corretorId: null,
       equipeId: null,
+      ...excludeVendaOuVgvWhere(vendaSlugs),
     };
+  }
+
+  private async assertPodeRedistribuir(tenantId: string, leadId: string) {
+    const [lead, vendaSlugs, documentacoes] = await Promise.all([
+      this.prisma.lead.findFirst({
+        where: { id: leadId, tenantId },
+        select: { stage: true },
+      }),
+      this.funis.getSlugsByPapel(tenantId, FunilEtapaPapel.venda),
+      this.prisma.documentacao.findMany({
+        where: { tenantId, leadId },
+        select: { vgv: true, status2: true },
+      }),
+    ]);
+    if (!lead) return;
+    if (
+      leadImpedeRedistribuicao({
+        stage: lead.stage,
+        vendaSlugs,
+        documentacoes,
+      })
+    ) {
+      throw new BadRequestException(LEAD_VENDA_OU_VGV_MESSAGE);
+    }
   }
 
   private notifySnapshot(lead: {
@@ -2518,7 +2599,14 @@ export class LeadsService {
     const latest = await this.prisma.documentacao.findFirst({
       where: { tenantId, leadId: fresh.id },
       orderBy: { updatedAt: 'desc' },
-      select: { status1: true, status2: true },
+      select: { status1: true, status2: true, vgv: true },
+    });
+    const vendaSlugs = [...ctx.etapasBySlug.values()]
+      .filter((etapa) => etapa.papel === FunilEtapaPapel.venda)
+      .map((etapa) => etapa.slug);
+    const documentacoes = await this.prisma.documentacao.findMany({
+      where: { tenantId, leadId: fresh.id },
+      select: { vgv: true, status2: true },
     });
     return {
       ...decorated,
@@ -2526,6 +2614,12 @@ export class LeadsService {
         latest?.status1 ?? fresh.documentacoes?.[0]?.status1 ?? null,
       documentacaoStatus2:
         latest?.status2 ?? fresh.documentacoes?.[0]?.status2 ?? null,
+      documentacaoVgv: latest?.vgv ?? fresh.documentacoes?.[0]?.vgv ?? null,
+      podeRedistribuir: !leadImpedeRedistribuicao({
+        stage: fresh.stage,
+        vendaSlugs,
+        documentacoes,
+      }),
     };
   }
 }
