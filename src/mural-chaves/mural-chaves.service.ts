@@ -31,6 +31,7 @@ import {
 } from './dto/mural-chave.dto';
 
 const IDENTIFICADOR_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._/\\-]{0,39}$/u;
+const TIPOS_SUGERIDOS = ['Aluguel', 'Usado'];
 
 const RETIRADA_PROPRIA = new Set<Role>([
   Role.admin,
@@ -77,6 +78,33 @@ const TIPO_LABEL: Record<MuralChaveMovimentoTipo, string> = {
   devolucao: 'Devolução',
   confirmacao: 'Confirmação do corretor',
 };
+
+function parseTipo(raw: string | undefined, obrigatorio: boolean) {
+  const tipo = (raw ?? '').trim().replace(/\s+/g, ' ');
+  if (!tipo) {
+    if (obrigatorio) {
+      throw new BadRequestException('Informe o tipo da chave.');
+    }
+    return '';
+  }
+  if (tipo.length > 40) {
+    throw new BadRequestException('O tipo da chave deve ter no máximo 40 caracteres.');
+  }
+  const sugerido = TIPOS_SUGERIDOS.find(
+    (item) => item.toLocaleLowerCase('pt-BR') === tipo.toLocaleLowerCase('pt-BR'),
+  );
+  return sugerido ?? tipo;
+}
+
+function juntarTipos(usados: string[]) {
+  const vistos = new Set(
+    TIPOS_SUGERIDOS.map((item) => item.toLocaleLowerCase('pt-BR')),
+  );
+  const extras = [...new Set(usados.map((item) => item.trim()).filter(Boolean))]
+    .filter((item) => !vistos.has(item.toLocaleLowerCase('pt-BR')))
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  return [...TIPOS_SUGERIDOS, ...extras];
+}
 
 function parseIdentificador(raw: string) {
   const identificador = raw.trim().replace(/\s+/g, ' ');
@@ -153,6 +181,7 @@ export class MuralChavesService {
                 { unidade: { contains: q, mode: 'insensitive' } },
                 { empreendimento: { nome: { contains: q, mode: 'insensitive' } } },
                 { imovel: { logradouro: { contains: q, mode: 'insensitive' } } },
+                { tipo: { contains: q, mode: 'insensitive' } },
                 { retiradoPor: { name: { contains: q, mode: 'insensitive' } } },
               ],
             }
@@ -172,7 +201,7 @@ export class MuralChavesService {
 
   async opcoes(user: AuthenticatedUser) {
     const tenantId = requireTenantId(user);
-    const [empreendimentos, imoveis, usuarios] = await Promise.all([
+    const [empreendimentos, imoveis, usuarios, tiposUsados] = await Promise.all([
       this.prisma.empreendimento.findMany({
         where: { tenantId, ativo: true },
         select: { id: true, nome: true },
@@ -198,6 +227,11 @@ export class MuralChavesService {
         select: { id: true, name: true, role: true },
         orderBy: { name: 'asc' },
       }),
+      this.prisma.muralChave.findMany({
+        where: { tenantId, tipo: { not: '' } },
+        select: { tipo: true },
+        distinct: ['tipo'],
+      }),
     ]);
     return {
       empreendimentos,
@@ -206,6 +240,7 @@ export class MuralChavesService {
         label: labelImovel(imovel, ''),
       })),
       usuarios,
+      tipos: juntarTipos(tiposUsados.map((item) => item.tipo)),
     };
   }
 
@@ -279,6 +314,7 @@ export class MuralChavesService {
     this.assertGerenciar(user);
     const tenantId = requireTenantId(user);
     const id = parseIdentificador(dto.identificador);
+    const tipo = parseTipo(dto.tipo, true);
     const vinculo = await this.resolveVinculo(tenantId, dto);
     const local = dto.local ?? MuralChaveLocal.imobiliaria;
     this.assertLocalCadastro(local, dto.localDescricao);
@@ -291,6 +327,7 @@ export class MuralChavesService {
             imovelId: vinculo.imovelId,
             empreendimentoId: vinculo.empreendimentoId,
             unidade: vinculo.unidade,
+            tipo,
             local,
             localDescricao:
               local === MuralChaveLocal.outro ? dto.localDescricao?.trim() ?? '' : '',
@@ -361,6 +398,8 @@ export class MuralChavesService {
       identificador: atual.identificador,
       identificadorNorm: atual.identificadorNorm,
     };
+    const tipo =
+      dto.tipo === undefined ? atual.tipo : parseTipo(dto.tipo, true);
 
     try {
       const updated = await this.prisma.$transaction(async (tx) => {
@@ -372,6 +411,7 @@ export class MuralChavesService {
             imovelId: vinculo.imovelId,
             empreendimentoId: vinculo.empreendimentoId,
             unidade: vinculo.unidade,
+            tipo,
             local,
             localDescricao,
             ...(local !== atual.local
@@ -400,6 +440,7 @@ export class MuralChavesService {
           vinculo.imovelId !== atual.imovelId ||
           vinculo.empreendimentoId !== atual.empreendimentoId ||
           vinculo.unidade !== atual.unidade ||
+          tipo !== atual.tipo ||
           local !== atual.local ||
           localDescricao !== atual.localDescricao ||
           (dto.observacoes != null && dto.observacoes.trim() !== atual.observacoes);
@@ -879,6 +920,7 @@ export class MuralChavesService {
     return {
       id: row.id,
       identificador: row.identificador,
+      tipo: row.tipo,
       status: row.status,
       statusLabel:
         row.status === MuralChaveStatus.em_uso ? 'Em uso' : 'Disponível',

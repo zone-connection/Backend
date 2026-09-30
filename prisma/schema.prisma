@@ -2576,6 +2576,8 @@ model MuralChave {
   empreendimento   Empreendimento?  @relation(fields: [empreendimentoId], references: [id], onDelete: SetNull)
   /// Rótulo do imóvel quando não há ficha (ex.: Apartamento 304).
   unidade          String           @default("")
+  /// Aluguel, Usado ou outro nome definido pela imobiliária.
+  tipo             String           @default("")
 
   status          MuralChaveStatus @default(disponivel)
   local           MuralChaveLocal  @default(imobiliaria)

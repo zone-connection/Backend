@@ -30,6 +30,7 @@ function chave(overrides: Record<string, unknown> = {}) {
     imovelId: 'i1',
     empreendimentoId: 'e1',
     unidade: 'Apartamento 304',
+    tipo: '',
     status: MuralChaveStatus.disponivel,
     local: MuralChaveLocal.imobiliaria,
     localDescricao: '',
@@ -82,11 +83,14 @@ describe('MuralChavesService', () => {
         ...vinculo,
         muralChave: {
           create: async (args: {
-            data: { identificador: string; identificadorNorm: string };
+            data: { identificador: string; identificadorNorm: string; tipo: string };
           }) => {
             saved.identificador = args.data.identificador;
             saved.identificadorNorm = args.data.identificadorNorm;
-            return chave({ identificador: args.data.identificador });
+            return chave({
+              identificador: args.data.identificador,
+              tipo: args.data.tipo,
+            });
           },
         },
         muralChaveMovimento: { create: async () => ({}) },
@@ -98,6 +102,7 @@ describe('MuralChavesService', () => {
         imovelId: 'i1',
         empreendimentoId: 'e1',
         unidade: 'Apartamento 304',
+        tipo: 'Aluguel',
       },
       user(),
     );
@@ -105,6 +110,7 @@ describe('MuralChavesService', () => {
     assert.equal(saved.identificadorNorm, 'TORRE-A-304');
     assert.equal(result.identificador, 'torre-a-304');
     assert.equal(result.imovelLabel, 'Apartamento 304');
+    assert.equal(result.tipo, 'Aluguel');
     assert.equal(result.empreendimento?.nome, 'Residencial X');
     assert.equal(result.statusLabel, 'Disponível');
   });

@@ -12,6 +12,10 @@ export class CreateMuralChaveDto {
   @MaxLength(40)
   identificador!: string;
 
+  @IsString()
+  @MaxLength(40)
+  tipo!: string;
+
   @IsOptional()
   @IsUUID()
   empreendimentoId?: string;
@@ -45,6 +49,11 @@ export class UpdateMuralChaveDto {
   @IsString()
   @MaxLength(40)
   identificador?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  tipo?: string;
 
   @IsOptional()
   @IsUUID()
