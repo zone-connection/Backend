@@ -20,19 +20,21 @@ import {
 import { ListasDocumentosService } from './listas-documentos.service';
 
 const GESTORES: Role[] = [Role.admin, Role.gerente, Role.super_admin];
+const LEITORES: Role[] = [...GESTORES, Role.corretor];
 
 @Controller('listas-documentos')
 @UseGuards(RolesGuard)
-@Roles(...GESTORES)
 export class ListasDocumentosController {
   constructor(private readonly listas: ListasDocumentosService) {}
 
   @Get()
+  @Roles(...LEITORES)
   list(@CurrentUser() user: AuthenticatedUser) {
     return this.listas.list(user);
   }
 
   @Post()
+  @Roles(...GESTORES)
   create(
     @Body() dto: CreateListaDocumentoDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -41,6 +43,7 @@ export class ListasDocumentosController {
   }
 
   @Patch(':id')
+  @Roles(...GESTORES)
   update(
     @Param('id') id: string,
     @Body() dto: UpdateListaDocumentoDto,
@@ -50,6 +53,7 @@ export class ListasDocumentosController {
   }
 
   @Delete(':id')
+  @Roles(...GESTORES)
   remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.listas.remove(id, user);
   }
