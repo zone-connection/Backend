@@ -1426,6 +1426,10 @@ model Agendamento {
   /// Etapa do funil no momento da criação (quando originada no quadro).
   funilStage   String?
 
+  /// Follow-up: se vencer sem conclusão, o lead entra em atraso.
+  /// Tarefa registrada fica false: tira o lead do atraso e não gera atraso.
+  contaAtraso  Boolean @default(false)
+
   aprovadoPorId String?
   aprovadoPor   User?     @relation("AgendamentoAprovador", fields: [aprovadoPorId], references: [id], onDelete: SetNull)
   aprovadoAt    DateTime?

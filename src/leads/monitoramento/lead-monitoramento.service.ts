@@ -61,6 +61,7 @@ const PROPOSTA_ALERTA_ANTECEDENCIA_MS = 3 * 86_400_000;
 function overdueTarefaWhere(now: Date): Prisma.AgendamentoWhereInput {
   return {
     tipo: AgendamentoTipo.tarefa,
+    contaAtraso: true,
     status: AgendamentoStatus.agendado,
     OR: [
       { endsAt: { lt: now } },
@@ -276,8 +277,8 @@ export class LeadMonitoramentoService {
   }
 
   /**
-   * Registrar atividade/tarefa encerra follow-ups vencidos para o lead
-   * sair do atraso por tarefa atrasada.
+   * Registrar atividade ou tarefa encerra follow-ups vencidos para o lead
+   * sair do atraso. A tarefa registrada em si não entra nesse filtro.
    */
   async concludeOverdueTarefas(
     tenantId: string,
@@ -1334,14 +1335,14 @@ export class LeadMonitoramentoService {
     const detalhe =
       tasks.length === 1
         ? `"${first.titulo}" venceu em ${first.prazo}.`
-        : `${tasks.length} tarefas atrasadas. A mais antiga: "${first.titulo}" (${first.prazo}).`;
+        : `${tasks.length} follow-ups atrasados. O mais antigo: "${first.titulo}" (${first.prazo}).`;
     const problemas = [
       ...lead.monitoramento.problemas.filter(
         (p) => p.tipo !== 'tarefa_atrasada',
       ),
       {
         tipo: 'tarefa_atrasada' as const,
-        titulo: 'Tarefa atrasada',
+        titulo: 'Follow-up atrasado',
         detalhe,
       },
     ];

@@ -65,6 +65,7 @@ const agendamentoSelect = {
   local: true,
   observacoes: true,
   funilStage: true,
+  contaAtraso: true,
   motivoRecusa: true,
   aprovadoAt: true,
   createdAt: true,
@@ -762,6 +763,7 @@ export class AgendaService {
       local: dto.local?.trim() || null,
       observacoes: dto.observacoes?.trim() || null,
       funilStage: dto.funilStage?.trim() || null,
+      contaAtraso: dto.tipo === 'tarefa' && dto.contaAtraso === true,
       ...(solicitacaoStatus === AgendamentoSolicitacaoStatus.aprovada
         ? {
             aprovadoPorId: requester.id,

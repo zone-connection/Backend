@@ -2,6 +2,7 @@ import {
   ArrayMaxSize,
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsISO8601,
@@ -112,6 +113,14 @@ export class CreateAgendamentoDto {
   @IsString()
   @MaxLength(80)
   funilStage?: string | null;
+
+  /**
+   * true só no follow-up: se vencer sem conclusão, o lead entra em atraso.
+   * Tarefa registrada omite ou manda false.
+   */
+  @IsOptional()
+  @IsBoolean()
+  contaAtraso?: boolean;
 
   /** Recorrência de bloqueio: unica | semanal | mensal. */
   @IsOptional()
