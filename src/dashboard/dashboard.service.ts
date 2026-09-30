@@ -183,7 +183,6 @@ export class DashboardService {
       funil,
       analises,
       documentacoes,
-      vgvVendido,
       agendaHoje,
       comissao,
     ] = await Promise.all([
@@ -216,14 +215,6 @@ export class DashboardService {
         by: ['status2'],
         where: docWhereCorretor,
         _count: { _all: true },
-      }),
-      this.prisma.documentacao.groupBy({
-        by: ['status2'],
-        where: {
-          ...docWhereCorretor,
-          ...documentacaoVendaNoPeriodoWhere(periodoMes),
-        },
-        _sum: { vgv: true },
       }),
       this.agendaService.list(
         {
@@ -284,7 +275,7 @@ export class DashboardService {
         ),
         vendidos: countStatusVendido(documentacoes),
         emAndamento: countStatusAndamento(documentacoes),
-        vgvVendidoMes: sumVgvVendido(vgvVendido),
+        vgvVendidoMes: 0,
       },
       comissao,
       agenda: {
