@@ -1760,6 +1760,7 @@ export class AgendaService {
           local: null,
           observacoes: `Aniversário · ${perfil} (somente leitura).`,
           funilStage: null,
+          contaAtraso: false,
           motivoRecusa: null,
           aprovadoAt: null,
           createdAt: now,
