@@ -146,7 +146,7 @@ describe('aprovado na documentação continua lead', () => {
     assert.equal(calls.length, 0);
   });
 
-  it('a listagem converte cliente aprovado e responde como lead', async () => {
+  it('a listagem tira da carteira quem tem ficha de lançamento', async () => {
     const updates: Array<{ model: string; args: { where: { id?: { in: string[] }; leadId?: { in: string[] } } } }> =
       [];
     const leads = [
@@ -165,6 +165,12 @@ describe('aprovado na documentação continua lead', () => {
       {
         id: 'ja-lead',
         tipo: ContatoTipo.lead,
+        stage: 'perfil',
+        documentacoes: [],
+      },
+      {
+        id: 'carteira',
+        tipo: ContatoTipo.cliente,
         stage: 'perfil',
         documentacoes: [],
       },
@@ -211,9 +217,13 @@ describe('aprovado na documentação continua lead', () => {
     const byId = new Map(result.data.map((lead) => [lead.id, lead.tipo]));
 
     assert.equal(byId.get('aprovado'), ContatoTipo.lead);
-    assert.equal(byId.get('reprovado'), ContatoTipo.cliente);
+    assert.equal(byId.get('reprovado'), ContatoTipo.lead);
     assert.equal(byId.get('ja-lead'), ContatoTipo.lead);
-    assert.deepEqual(updates[0]?.args.where.id?.in, ['aprovado']);
-    assert.deepEqual(updates[1]?.args.where.leadId?.in, ['aprovado']);
+    assert.equal(byId.get('carteira'), ContatoTipo.cliente);
+    assert.deepEqual(updates[0]?.args.where.id?.in, ['aprovado', 'reprovado']);
+    assert.deepEqual(updates[1]?.args.where.leadId?.in, [
+      'aprovado',
+      'reprovado',
+    ]);
   });
 });

@@ -61,7 +61,6 @@ import {
 } from './lead-redistribuicao.util';
 import type { LeadNotifySnapshot } from '../lead-notify/lead-notify.messages';
 import { PresenceService } from '../presence/presence.service';
-import { isStatusAprovado } from '../common/utils/documentacao-status';
 
 /** Dígitos nacionais (DDD + número), ignora DDI 55. */
 function nationalPhoneKey(value: string): string {
@@ -996,17 +995,16 @@ export class LeadsService {
       .filter((etapa) => etapa.papel === FunilEtapaPapel.venda)
       .map((etapa) => etapa.slug);
 
-    const aprovadosQueEramCliente = decorated
+    // Ficha de lançamento é lead. Não permanece na carteira do corretor.
+    const comFichaQueEramCliente = decorated
       .filter(
-        (lead) =>
-          lead.tipo === ContatoTipo.cliente &&
-          isStatusAprovado(latestDoc.get(lead.id)?.status1),
+        (lead) => lead.tipo === ContatoTipo.cliente && latestDoc.has(lead.id),
       )
       .map((lead) => lead.id);
-    if (aprovadosQueEramCliente.length > 0) {
+    if (comFichaQueEramCliente.length > 0) {
       await this.prisma.lead.updateMany({
         where: {
-          id: { in: aprovadosQueEramCliente },
+          id: { in: comFichaQueEramCliente },
           tenantId,
           tipo: ContatoTipo.cliente,
         },
@@ -1015,13 +1013,13 @@ export class LeadsService {
       await this.prisma.documentacao.updateMany({
         where: {
           tenantId,
-          leadId: { in: aprovadosQueEramCliente },
+          leadId: { in: comFichaQueEramCliente },
           tipoContato: ContatoTipo.cliente,
         },
         data: { tipoContato: ContatoTipo.lead },
       });
     }
-    const virouLead = new Set(aprovadosQueEramCliente);
+    const virouLead = new Set(comFichaQueEramCliente);
 
     return {
       data: decorated.map((lead) => {
