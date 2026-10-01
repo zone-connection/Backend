@@ -61,6 +61,7 @@ import {
 } from './lead-redistribuicao.util';
 import type { LeadNotifySnapshot } from '../lead-notify/lead-notify.messages';
 import { PresenceService } from '../presence/presence.service';
+import { isStatusAprovado } from '../common/utils/documentacao-status';
 
 /** Dígitos nacionais (DDD + número), ignora DDI 55. */
 function nationalPhoneKey(value: string): string {
@@ -153,16 +154,6 @@ export class LeadsService {
     requester: AuthenticatedUser,
   ): Promise<LeadEntity> {
     const tenantId = requireTenantId(requester);
-
-    if (
-      requester.role === Role.analista &&
-      dto.tipo !== 'cliente' &&
-      !hasUserAction(requester.role, requester.permissions, 'leads.create')
-    ) {
-      throw new ForbiddenException(
-        'Analistas podem criar somente clientes para documentação.',
-      );
-    }
 
     // Corretor só cria leads para si; admin/gerente atribuem corretor e/ou equipe.
     const assignment = await this.resolveAssignment(
@@ -1005,12 +996,40 @@ export class LeadsService {
       .filter((etapa) => etapa.papel === FunilEtapaPapel.venda)
       .map((etapa) => etapa.slug);
 
+    const aprovadosQueEramCliente = decorated
+      .filter(
+        (lead) =>
+          lead.tipo === ContatoTipo.cliente &&
+          isStatusAprovado(latestDoc.get(lead.id)?.status1),
+      )
+      .map((lead) => lead.id);
+    if (aprovadosQueEramCliente.length > 0) {
+      await this.prisma.lead.updateMany({
+        where: {
+          id: { in: aprovadosQueEramCliente },
+          tenantId,
+          tipo: ContatoTipo.cliente,
+        },
+        data: { tipo: ContatoTipo.lead },
+      });
+      await this.prisma.documentacao.updateMany({
+        where: {
+          tenantId,
+          leadId: { in: aprovadosQueEramCliente },
+          tipoContato: ContatoTipo.cliente,
+        },
+        data: { tipoContato: ContatoTipo.lead },
+      });
+    }
+    const virouLead = new Set(aprovadosQueEramCliente);
+
     return {
       data: decorated.map((lead) => {
         const fromBatch = latestDoc.get(lead.id);
         const fromNested = lead.documentacoes?.[0];
         return {
           ...lead,
+          ...(virouLead.has(lead.id) ? { tipo: ContatoTipo.lead } : {}),
           documentacaoStatus1:
             fromBatch?.status1 ?? fromNested?.status1 ?? null,
           documentacaoStatus2:

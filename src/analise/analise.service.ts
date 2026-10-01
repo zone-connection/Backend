@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import {
   AnaliseStatus,
+  ContatoTipo,
   FunilEtapaPapel,
   Prisma,
   Role,
@@ -421,6 +422,18 @@ export class AnaliseService {
       tenantId,
       FunilEtapaPapel.analise,
     );
+
+    if (analiseStatus === AnaliseStatus.aprovado) {
+      await this.prisma.lead.updateMany({
+        where: { id: leadId, tenantId, tipo: ContatoTipo.cliente },
+        data: { tipo: ContatoTipo.lead },
+      });
+      await this.prisma.documentacao.updateMany({
+        where: { tenantId, leadId, tipoContato: ContatoTipo.cliente },
+        data: { tipoContato: ContatoTipo.lead },
+      });
+    }
+
     if (analiseSlugs.length === 0) return;
 
     const lead = await this.prisma.lead.findFirst({

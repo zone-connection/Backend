@@ -7,6 +7,7 @@ import {
 import {
   AnaliseStatus,
   CatalogType,
+  ContatoTipo,
   FunilEtapaPapel,
   Prisma,
   Role,
@@ -798,6 +799,18 @@ export class DocumentacaoService {
     status1: string,
   ) {
     if (!isStatusParecerFinal(status1)) return;
+
+    // Aprovado na documentação continua no funil de leads, não na carteira.
+    if (isStatusAprovado(status1)) {
+      await this.prisma.lead.updateMany({
+        where: { id: leadId, tenantId, tipo: ContatoTipo.cliente },
+        data: { tipo: ContatoTipo.lead },
+      });
+      await this.prisma.documentacao.updateMany({
+        where: { tenantId, leadId, tipoContato: ContatoTipo.cliente },
+        data: { tipoContato: ContatoTipo.lead },
+      });
+    }
 
     const analiseStatus = isStatusAprovado(status1)
       ? AnaliseStatus.aprovado
