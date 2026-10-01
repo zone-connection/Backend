@@ -8,7 +8,6 @@ import { FunisModule } from '../funis/funis.module';
 import { LeadMonitoramentoModule } from './lead-monitoramento.module';
 import { LeadAtrasoLiberacaoService } from './lead-atraso-liberacao.service';
 import { LeadDistribuicaoAutoService } from './lead-distribuicao-auto.service';
-import { DocumentacaoModule } from '../documentacao/documentacao.module';
 import { LeadNotifyModule } from '../lead-notify/lead-notify.module';
 import { PresenceModule } from '../presence/presence.module';
 
@@ -19,7 +18,6 @@ import { PresenceModule } from '../presence/presence.module';
     AnaliseModule,
     FunisModule,
     LeadMonitoramentoModule,
-    DocumentacaoModule,
     LeadNotifyModule,
     PresenceModule,
   ],

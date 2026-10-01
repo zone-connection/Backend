@@ -3,7 +3,6 @@ import { describe, it } from 'node:test';
 import { AnaliseStatus, ContatoTipo, Role } from '@prisma/client';
 import { AnaliseService } from '../analise/analise.service';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
-import { DocumentacaoService } from '../documentacao/documentacao.service';
 import { LeadsService } from './leads.service';
 
 function user(): AuthenticatedUser {
@@ -42,70 +41,8 @@ function trackedPrisma() {
   return { prisma, calls };
 }
 
-describe('aprovado na documentação continua lead', () => {
-  it('parecer aprovado devolve o cliente ao funil de leads', async () => {
-    const { prisma, calls } = trackedPrisma();
-    const service = new DocumentacaoService(
-      prisma as never,
-      {} as never,
-      { getSlugsByPapel: async () => [] } as never,
-      {} as never,
-      {} as never,
-    );
-
-    await (
-      service as unknown as {
-        applyParecerFromDocumentacao: (
-          tenantId: string,
-          leadId: string,
-          autorId: string,
-          status1: string,
-        ) => Promise<void>;
-      }
-    ).applyParecerFromDocumentacao('t1', 'l1', 'u1', 'Aprovado');
-
-    const lead = calls.find((call) => call.model === 'lead');
-    const doc = calls.find((call) => call.model === 'documentacao');
-    assert.ok(lead);
-    assert.ok(doc);
-    assert.deepEqual((lead.args as { data: { tipo: ContatoTipo } }).data, {
-      tipo: ContatoTipo.lead,
-    });
-    assert.equal(
-      (doc.args as { data: { tipoContato: ContatoTipo } }).data.tipoContato,
-      ContatoTipo.lead,
-    );
-  });
-
-  it('reprovado e aprovado com restrição não mudam o tipo', async () => {
-    for (const status1 of ['Reprovado', 'Aprovado c/ restrição']) {
-      const { prisma, calls } = trackedPrisma();
-      const service = new DocumentacaoService(
-        prisma as never,
-        {} as never,
-        { getSlugsByPapel: async () => [] } as never,
-        {} as never,
-        {} as never,
-      );
-      await (
-        service as unknown as {
-          applyParecerFromDocumentacao: (
-            tenantId: string,
-            leadId: string,
-            autorId: string,
-            status1: string,
-          ) => Promise<void>;
-        }
-      ).applyParecerFromDocumentacao('t1', 'l1', 'u1', status1);
-      assert.equal(
-        calls.some((call) => call.model === 'lead'),
-        false,
-        status1,
-      );
-    }
-  });
-
-  it('análise aprovada devolve o cliente ao funil de leads mesmo sem etapa de análise', async () => {
+describe('ficha de documentação não mexe no funil', () => {
+  it('análise aprovada devolve o cliente ao funil de leads sem alterar a ficha', async () => {
     const { prisma, calls } = trackedPrisma();
     const service = new AnaliseService(
       prisma as never,
@@ -129,7 +66,7 @@ describe('aprovado na documentação continua lead', () => {
     assert.equal(calls.filter((call) => call.model === 'lead').length, 1);
     assert.equal(
       calls.filter((call) => call.model === 'documentacao').length,
-      1,
+      0,
     );
 
     calls.length = 0;
@@ -146,9 +83,8 @@ describe('aprovado na documentação continua lead', () => {
     assert.equal(calls.length, 0);
   });
 
-  it('a listagem tira da carteira quem tem ficha de lançamento', async () => {
-    const updates: Array<{ model: string; args: { where: { id?: { in: string[] }; leadId?: { in: string[] } } } }> =
-      [];
+  it('a listagem mantém o cliente na carteira mesmo com ficha', async () => {
+    const updates: Array<{ model: string }> = [];
     const leads = [
       {
         id: 'aprovado',
@@ -179,8 +115,8 @@ describe('aprovado na documentação continua lead', () => {
       lead: {
         findMany: async () => leads,
         count: async () => leads.length,
-        updateMany: async (args: (typeof updates)[number]['args']) => {
-          updates.push({ model: 'lead', args });
+        updateMany: async () => {
+          updates.push({ model: 'lead' });
           return { count: 1 };
         },
       },
@@ -190,8 +126,8 @@ describe('aprovado na documentação continua lead', () => {
           { leadId: 'reprovado', status1: 'Reprovado', status2: '', vgv: null },
           { leadId: 'ja-lead', status1: 'Aprovado', status2: '', vgv: null },
         ],
-        updateMany: async (args: (typeof updates)[number]['args']) => {
-          updates.push({ model: 'documentacao', args });
+        updateMany: async () => {
+          updates.push({ model: 'documentacao' });
           return { count: 1 };
         },
       },
@@ -210,20 +146,15 @@ describe('aprovado na documentação continua lead', () => {
       } as never,
       {} as never,
       {} as never,
-      {} as never,
     );
 
     const result = await service.findAll({ page: 1, limit: 20 }, user());
     const byId = new Map(result.data.map((lead) => [lead.id, lead.tipo]));
 
-    assert.equal(byId.get('aprovado'), ContatoTipo.lead);
-    assert.equal(byId.get('reprovado'), ContatoTipo.lead);
+    assert.equal(byId.get('aprovado'), ContatoTipo.cliente);
+    assert.equal(byId.get('reprovado'), ContatoTipo.cliente);
     assert.equal(byId.get('ja-lead'), ContatoTipo.lead);
     assert.equal(byId.get('carteira'), ContatoTipo.cliente);
-    assert.deepEqual(updates[0]?.args.where.id?.in, ['aprovado', 'reprovado']);
-    assert.deepEqual(updates[1]?.args.where.leadId?.in, [
-      'aprovado',
-      'reprovado',
-    ]);
+    assert.equal(updates.length, 0);
   });
 });

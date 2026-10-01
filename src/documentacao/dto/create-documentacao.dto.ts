@@ -22,8 +22,11 @@ function toOptionalInt({ value }: { value: unknown }) {
 }
 
 export class CreateDocumentacaoDto {
+  /** Ignorado: a ficha não puxa nem cria card no funil. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID('4', { message: 'Lead/cliente inválido.' })
-  leadId!: string;
+  leadId?: string | null;
 
   @IsString()
   @MinLength(2, { message: 'O nome deve ter ao menos 2 caracteres.' })

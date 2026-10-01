@@ -991,11 +991,11 @@ export class DashboardService {
       const credited =
         doc.corretorId && corretorIdSet.has(doc.corretorId)
           ? doc.corretorId
-          : doc.lead.corretorId && corretorIdSet.has(doc.lead.corretorId)
+          : doc.lead?.corretorId && corretorIdSet.has(doc.lead.corretorId)
             ? doc.lead.corretorId
             : null;
       if (!credited) continue;
-      markSale(doc.leadId, credited);
+      markSale(doc.leadId ?? doc.id, credited);
       addVgv(credited, doc.vgv);
     }
 
@@ -1052,6 +1052,7 @@ export class DashboardService {
         ],
       },
       select: {
+        id: true,
         leadId: true,
         gerenteId: true,
         corretorId: true,
@@ -1064,12 +1065,12 @@ export class DashboardService {
 
     for (const doc of docs) {
       if (!isStatusVendido(doc.status2) || !doc.gerenteId) continue;
-      const corretorId = doc.corretorId ?? doc.lead.corretorId;
+      const corretorId = doc.corretorId ?? doc.lead?.corretorId;
       const excluded = opts?.excludeCorretorIdsByGerente?.get(doc.gerenteId);
       if (corretorId && excluded?.has(corretorId)) continue;
       if (doc.gerente?.name) nomes.set(doc.gerenteId, doc.gerente.name);
 
-      const saleKey = `${doc.gerenteId}:${doc.leadId}`;
+      const saleKey = `${doc.gerenteId}:${doc.leadId ?? doc.id}`;
       if (!countedLeads.has(saleKey)) {
         countedLeads.add(saleKey);
         vendas.set(doc.gerenteId, (vendas.get(doc.gerenteId) ?? 0) + 1);
@@ -1313,7 +1314,7 @@ export class DashboardService {
       const credited =
         row.corretorId && idSet.has(row.corretorId)
           ? row.corretorId
-          : row.lead.corretorId && idSet.has(row.lead.corretorId)
+          : row.lead?.corretorId && idSet.has(row.lead.corretorId)
             ? row.lead.corretorId
             : null;
       if (!credited) continue;
@@ -2134,7 +2135,7 @@ export class DashboardService {
         const construtora =
           item.construtora ??
           item.empreendimento?.construtora ??
-          item.lead.construtora;
+          item.lead?.construtora;
         if (!construtora) return map;
         const current = map.get(construtora.id) ?? {
           construtoraId: construtora.id,
@@ -2274,11 +2275,11 @@ export class DashboardService {
     const items = rows
       .filter((row) => isStatusVendido(row.status2))
       .filter((row) => {
-        const creditedId = row.corretorId ?? row.lead.corretor?.id ?? null;
+        const creditedId = row.corretorId ?? row.lead?.corretor?.id ?? null;
         return creditedId === corretorId;
       })
       .map((row) => {
-        const credited = row.corretor ?? row.lead.corretor;
+        const credited = row.corretor ?? row.lead?.corretor;
         return {
           id: row.id,
           corretorId: credited?.id ?? corretor.id,
@@ -2291,12 +2292,12 @@ export class DashboardService {
           construtora:
             row.construtora?.nome ??
             row.empreendimento?.construtora?.nome ??
-            row.lead.construtora?.nome ??
+            row.lead?.construtora?.nome ??
             null,
           empreendimento: row.empreendimento?.nome ?? null,
           vgv: moneyNumber(row.vgv),
           cliente: row.nome,
-          clienteCpf: row.lead.propostas[0]?.clienteCpf ?? null,
+          clienteCpf: row.lead?.propostas[0]?.clienteCpf ?? null,
           dataVenda: (row.dataVenda ?? row.createdAt).toISOString().slice(0, 10),
         };
       });

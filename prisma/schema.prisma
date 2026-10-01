@@ -1010,13 +1010,13 @@ model Empreendimento {
   @@map("empreendimentos")
 }
 
-/// Ficha de documentação operacional (campos da planilha), vinculada a lead/cliente.
+/// Ficha de documentação operacional. Não depende de um card no funil.
 model Documentacao {
   id       String @id @default(uuid())
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  leadId   String
-  lead     Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId   String?
+  lead     Lead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
   autorId  String
   autor    User   @relation("DocumentacaoAutor", fields: [autorId], references: [id], onDelete: Cascade)
 

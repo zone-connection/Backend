@@ -5,31 +5,22 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  AnaliseStatus,
   CatalogType,
   ContatoTipo,
-  FunilEtapaPapel,
   Prisma,
   Role,
-  TriagemOrigem,
   UserStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
-import { FunisService } from '../funis/funis.service';
-import { AnaliseService } from '../analise/analise.service';
-import { LeadMonitoramentoService } from '../leads/monitoramento/lead-monitoramento.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import {
   documentacaoOperacionalWhere,
   isStatusAnalise,
-  isStatusAprovado,
-  isStatusParecerFinal,
   isStatusVendido,
-  leavesAnaliseOnStatus1,
   documentacaoVinculadaAoCorretorWhere,
 } from '../common/utils/documentacao-status';
-import { PLATFORM_TENANT_ID, requireTenantId } from '../common/utils/tenant';
+import { requireTenantId } from '../common/utils/tenant';
 import { hasUserModule } from '../common/utils/user-permissions';
 import { prismaTableOrderBy } from '../common/utils/table-sort';
 import { CreateDocumentacaoDto } from './dto/create-documentacao.dto';
@@ -115,22 +106,14 @@ export class DocumentacaoService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly teamScope: TeamScopeService,
-    private readonly funis: FunisService,
-    private readonly analiseService: AnaliseService,
-    private readonly monitoramento: LeadMonitoramentoService,
   ) {}
 
   async list(query: QueryDocumentacaoDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    if (tenantId === PLATFORM_TENANT_ID) {
-      await this.syncPlatformVendasFromFunil(tenantId, requester.id);
-    }
     const visibility = await this.buildVisibilityWhere(requester);
 
-    // Evita AND: [{}] — em alguns casos o Prisma devolve lista vazia.
-    const andFilters: Prisma.DocumentacaoWhereInput[] = [
-      { lead: { perdidoAt: null } },
-    ];
+    // A ficha aparece mesmo sem lead e mesmo se o card do funil sumiu.
+    const andFilters: Prisma.DocumentacaoWhereInput[] = [];
     if (!query.incluirComissoes) {
       andFilters.push(documentacaoOperacionalWhere());
     }
@@ -142,65 +125,14 @@ export class DocumentacaoService {
       andFilters.push(documentacaoVinculadaAoCorretorWhere(query.corretorId));
     }
 
-    const docs = await this.prisma.documentacao.findMany({
+    return this.prisma.documentacao.findMany({
       where: {
         tenantId,
-        AND: andFilters,
+        ...(andFilters.length > 0 ? { AND: andFilters } : {}),
       },
       select: docSelect,
       orderBy: prismaTableOrderBy(query.sort, 'nome'),
     });
-
-    // Alinha funil: vendidos → Venda; aprovado → sai de Em análise.
-    // Reprovado permanece na análise até dar perda.
-    const vendidoLeadIds = [
-      ...new Set(
-        docs.filter((d) => isStatusVendido(d.status2)).map((d) => d.leadId),
-      ),
-    ];
-    const parecerLeadIds = [
-      ...new Set(
-        docs
-          .filter(
-            (d) =>
-              !isStatusVendido(d.status2) &&
-              leavesAnaliseOnStatus1(d.status1),
-          )
-          .map((d) => d.leadId),
-      ),
-    ];
-    let healed = false;
-    if (vendidoLeadIds.length > 0) {
-      await this.moveLeadsToVendaStage(
-        tenantId,
-        vendidoLeadIds,
-        requester.id,
-      );
-      healed = true;
-    }
-    for (const leadId of parecerLeadIds) {
-      const doc = docs.find((d) => d.leadId === leadId);
-      if (!doc) continue;
-      await this.applyParecerFromDocumentacao(
-        tenantId,
-        leadId,
-        requester.id,
-        doc.status1,
-      );
-      healed = true;
-    }
-    if (healed) {
-      return this.prisma.documentacao.findMany({
-        where: {
-          tenantId,
-          AND: andFilters,
-        },
-        select: docSelect,
-        orderBy: prismaTableOrderBy(query.sort, 'nome'),
-      });
-    }
-
-    return docs;
   }
 
   async findOne(id: string, requester: AuthenticatedUser) {
@@ -282,11 +214,10 @@ export class DocumentacaoService {
       );
     }
     const tenantId = requireTenantId(requester);
-    const lead = await this.ensureLeadAccessible(dto.leadId, requester);
 
     const corretorId = dto.corretorId
       ? await this.resolveCreditCorretorId(dto.corretorId, tenantId)
-      : lead.corretorId || null;
+      : null;
     let gerenteId = dto.gerenteId ?? null;
     if (!gerenteId && corretorId === requester.id && requester.role === Role.gerente) {
       gerenteId = requester.id;
@@ -321,124 +252,37 @@ export class DocumentacaoService {
     );
     const createdAt = parseOptionalCreatedAt(dto.createdAt);
 
-    // Uma ficha ativa por lead: evita duplicar (comercial + analista).
-    const existingLatest = await this.prisma.documentacao.findFirst({
-      where: { tenantId, leadId: lead.id },
-      select: { id: true, status2: true },
-      orderBy: { createdAt: 'desc' },
-    });
-    const reuseId =
-      existingLatest && !isStatusVendido(existingLatest.status2)
-        ? existingLatest.id
-        : null;
-
-    const payload = {
-      tipoContato: lead.tipo,
-      stageSituacao: lead.stage,
-      nome: dto.nome.trim(),
-      construtoraId: dto.construtoraId || lead.construtoraId || null,
-      empreendimentoId:
-        dto.empreendimentoId || lead.empreendimentoId || null,
-      fonte,
-      status1,
-      status2,
-      corretorId,
-      gerenteId,
-      dataAnalise,
-      dataVenda:
-        parseOptionalDate(dto.dataVenda) ??
-        (isStatusVendido(status2)
-          ? parseOptionalDate(new Date().toISOString().slice(0, 10)) ?? null
-          : null),
-      vgv: dto.vgv ?? null,
-      obs: dto.obs?.trim() || null,
-      temEntrada: dto.temEntrada ?? false,
-      valorEntrada: dto.temEntrada ? (dto.valorEntrada ?? null) : null,
-      temFgts: dto.temFgts ?? false,
-      valorFgts: dto.temFgts ? (dto.valorFgts ?? null) : null,
-      temDependente: dto.temDependente ?? false,
-    };
-
-    const created = reuseId
-      ? await this.prisma.documentacao.update({
-          where: { id: reuseId },
-          data: {
-            tipoContato: payload.tipoContato,
-            stageSituacao: payload.stageSituacao,
-            nome: payload.nome,
-            construtoraId: payload.construtoraId,
-            empreendimentoId: payload.empreendimentoId,
-            fonte: payload.fonte,
-            status1: payload.status1,
-            status2: payload.status2,
-            dataAnalise: payload.dataAnalise,
-            dataVenda: payload.dataVenda,
-            vgv: payload.vgv,
-            obs: payload.obs,
-            temEntrada: payload.temEntrada,
-            valorEntrada: payload.valorEntrada,
-            temFgts: payload.temFgts,
-            valorFgts: payload.valorFgts,
-            temDependente: payload.temDependente,
-            // Completa vínculos; não apaga gerente/corretor já gravados.
-            ...(corretorId ? { corretorId } : {}),
-            ...(gerenteId ? { gerenteId } : {}),
-          },
-          select: docSelect,
-        })
-      : await this.prisma.documentacao.create({
-          data: {
-            tenantId,
-            leadId: lead.id,
-            autorId: requester.id,
-            ...payload,
-            ...(createdAt ? { createdAt } : {}),
-          },
-          select: docSelect,
-        });
-
-    // Garante que o lead fique com o corretor creditado na ficha
-    // (admin pode criar venda já atribuída a outro corretor).
-    if (corretorId && lead.corretorId !== corretorId) {
-      await this.prisma.lead.update({
-        where: { id: lead.id },
-        data: { corretorId },
-      });
-    }
-
-    if (isStatusVendido(status2)) {
-      await this.moveLeadsToVendaStage(tenantId, [lead.id], requester.id);
-    } else {
-      if (isStatusParecerFinal(status1)) {
-        await this.applyParecerFromDocumentacao(
-          tenantId,
-          lead.id,
-          requester.id,
-          status1,
-        );
-      }
-      if (!leavesAnaliseOnStatus1(status1)) {
-        await this.enqueueAnaliseFromDoc({
-          leadId: lead.id,
-          autorId: requester.id,
-          tenantId,
-          status1,
-          requesterRole: requester.role,
-          temEntrada: created.temEntrada,
-          valorEntrada: created.valorEntrada,
-          temFgts: created.temFgts,
-          valorFgts: created.valorFgts,
-          temDependente: created.temDependente,
-        });
-      }
-    }
-
-    // Releitura: etapa do lead pode ter mudado (venda / parecer).
-    const fresh = await this.prisma.documentacao.findFirst({
-      where: { id: created.id, tenantId },
+    return this.prisma.documentacao.create({
+      data: {
+        tenantId,
+        autorId: requester.id,
+        tipoContato: ContatoTipo.lead,
+        stageSituacao: '',
+        nome: dto.nome.trim(),
+        construtoraId: dto.construtoraId || null,
+        empreendimentoId: dto.empreendimentoId || null,
+        fonte,
+        status1,
+        status2,
+        corretorId,
+        gerenteId,
+        dataAnalise,
+        dataVenda:
+          parseOptionalDate(dto.dataVenda) ??
+          (isStatusVendido(status2)
+            ? parseOptionalDate(new Date().toISOString().slice(0, 10)) ?? null
+            : null),
+        vgv: dto.vgv ?? null,
+        obs: dto.obs?.trim() || null,
+        temEntrada: dto.temEntrada ?? false,
+        valorEntrada: dto.temEntrada ? (dto.valorEntrada ?? null) : null,
+        temFgts: dto.temFgts ?? false,
+        valorFgts: dto.temFgts ? (dto.valorFgts ?? null) : null,
+        temDependente: dto.temDependente ?? false,
+        ...(createdAt ? { createdAt } : {}),
+      },
       select: docSelect,
     });
-    return fresh ?? created;
   }
 
   async update(
@@ -451,7 +295,6 @@ export class DocumentacaoService {
       where: { id, tenantId },
       select: {
         id: true,
-        leadId: true,
         dataAnalise: true,
         dataVenda: true,
         corretorId: true,
@@ -582,62 +425,11 @@ export class DocumentacaoService {
       if (createdAt) data.createdAt = createdAt;
     }
 
-    const updated = await this.prisma.documentacao.update({
+    return this.prisma.documentacao.update({
       where: { id },
       data,
       select: docSelect,
     });
-
-    const creditedCorretorId =
-      dto.corretorId !== undefined ? dto.corretorId : updated.corretorId;
-    if (creditedCorretorId) {
-      await this.prisma.lead.updateMany({
-        where: {
-          id: existing.leadId,
-          tenantId,
-          NOT: { corretorId: creditedCorretorId },
-        },
-        data: { corretorId: creditedCorretorId },
-      });
-    }
-
-    if (isStatusVendido(updated.status2)) {
-      await this.moveLeadsToVendaStage(
-        tenantId,
-        [existing.leadId],
-        requester.id,
-      );
-    } else {
-      if (isStatusParecerFinal(updated.status1)) {
-        await this.applyParecerFromDocumentacao(
-          tenantId,
-          existing.leadId,
-          requester.id,
-          updated.status1,
-        );
-      }
-      if (!leavesAnaliseOnStatus1(updated.status1)) {
-        await this.enqueueAnaliseFromDoc({
-          leadId: existing.leadId,
-          autorId: requester.id,
-          tenantId,
-          status1: updated.status1,
-          requesterRole: requester.role,
-          temEntrada: updated.temEntrada,
-          valorEntrada: updated.valorEntrada,
-          temFgts: updated.temFgts,
-          valorFgts: updated.valorFgts,
-          temDependente: updated.temDependente,
-        });
-      }
-    }
-
-    // Releitura: etapa do lead pode ter mudado (venda / parecer).
-    const fresh = await this.prisma.documentacao.findFirst({
-      where: { id, tenantId },
-      select: docSelect,
-    });
-    return fresh ?? updated;
   }
 
   async remove(id: string, requester: AuthenticatedUser) {
@@ -646,7 +438,6 @@ export class DocumentacaoService {
       where: { id, tenantId },
       select: {
         id: true,
-        leadId: true,
       },
     });
     if (!existing) {
@@ -723,177 +514,6 @@ export class DocumentacaoService {
     }
   }
 
-  /**
-   * Coloca o lead na fila do analista quando a ficha é de análise
-   * ou quando gerente/admin/analista sobe a documentação ainda sem parecer.
-   */
-  private async enqueueAnaliseFromDoc(input: {
-    leadId: string;
-    autorId: string;
-    tenantId: string;
-    status1: string;
-    requesterRole: Role;
-    temEntrada: boolean;
-    valorEntrada: number | null;
-    temFgts: boolean;
-    valorFgts: number | null;
-    temDependente: boolean;
-  }) {
-    // Aprovado sai da fila. Reprovado permanece em Em análise até dar perda.
-    if (leavesAnaliseOnStatus1(input.status1)) return;
-
-    const shouldEnqueue =
-      isStatusAnalise(input.status1) ||
-      input.requesterRole === Role.gerente ||
-      input.requesterRole === Role.admin ||
-      input.requesterRole === Role.analista;
-    if (!shouldEnqueue) return;
-
-    const analiseSlug = await this.funis.getSlugByPapel(
-      input.tenantId,
-      FunilEtapaPapel.analise,
-    );
-    if (analiseSlug) {
-      const lead = await this.prisma.lead.findFirst({
-        where: { id: input.leadId, tenantId: input.tenantId },
-        select: { stage: true, perdidoAt: true },
-      });
-      if (lead && !lead.perdidoAt && lead.stage !== analiseSlug) {
-        const timing = await this.monitoramento.stageChangeData(
-          input.tenantId,
-          analiseSlug,
-        );
-        await this.prisma.lead.update({
-          where: { id: input.leadId },
-          data: { stage: analiseSlug, ...timing },
-        });
-        await this.prisma.documentacao.updateMany({
-          where: { tenantId: input.tenantId, leadId: input.leadId },
-          data: { stageSituacao: analiseSlug },
-        });
-      }
-    }
-
-    await this.analiseService.ensureForLead(
-      input.leadId,
-      input.autorId,
-      input.tenantId,
-      {
-        temEntrada: input.temEntrada,
-        valorEntrada: input.valorEntrada,
-        temFgts: input.temFgts,
-        valorFgts: input.valorFgts,
-        temDependente: input.temDependente,
-      },
-    );
-  }
-
-  /**
-   * Espelha o parecer (Aprovado/Reprovado) na ficha de Análise.
-   * Aprovado sai de Em análise. Reprovado permanece até dar perda.
-   */
-  private async applyParecerFromDocumentacao(
-    tenantId: string,
-    leadId: string,
-    autorId: string,
-    status1: string,
-  ) {
-    if (!isStatusParecerFinal(status1)) return;
-
-    // Aprovado na documentação continua no funil de leads, não na carteira.
-    if (isStatusAprovado(status1)) {
-      await this.prisma.lead.updateMany({
-        where: { id: leadId, tenantId, tipo: ContatoTipo.cliente },
-        data: { tipo: ContatoTipo.lead },
-      });
-      await this.prisma.documentacao.updateMany({
-        where: { tenantId, leadId, tipoContato: ContatoTipo.cliente },
-        data: { tipoContato: ContatoTipo.lead },
-      });
-    }
-
-    const analiseStatus = isStatusAprovado(status1)
-      ? AnaliseStatus.aprovado
-      : AnaliseStatus.reprovado;
-
-    await this.prisma.analise.updateMany({
-      where: {
-        tenantId,
-        leadId,
-        status: {
-          in: [AnaliseStatus.pendente, AnaliseStatus.em_analise],
-        },
-      },
-      data: { status: analiseStatus },
-    });
-
-    if (!leavesAnaliseOnStatus1(status1)) return;
-
-    const analiseSlugs = await this.funis.getSlugsByPapel(
-      tenantId,
-      FunilEtapaPapel.analise,
-    );
-    if (analiseSlugs.length === 0) return;
-
-    const lead = await this.prisma.lead.findFirst({
-      where: {
-        id: leadId,
-        tenantId,
-        perdidoAt: null,
-        stage: { in: analiseSlugs },
-      },
-      select: { id: true, stage: true },
-    });
-    if (!lead) return;
-
-    const lastEntry = await this.prisma.triagemEvent.findFirst({
-      where: {
-        leadId,
-        stageNovo: { in: analiseSlugs },
-        stageAnterior: { not: null },
-        NOT: { stageAnterior: { in: analiseSlugs } },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: { stageAnterior: true },
-    });
-
-    let targetStage = lastEntry?.stageAnterior ?? null;
-    if (!targetStage || analiseSlugs.includes(targetStage)) {
-      targetStage = await this.funis.getSlugByPapel(
-        tenantId,
-        FunilEtapaPapel.inicial,
-      );
-    }
-    if (!targetStage || analiseSlugs.includes(targetStage)) return;
-
-    const parecerLabel = isStatusAprovado(status1) ? 'aprovado' : 'reprovado';
-    const now = new Date();
-    const timing = await this.monitoramento.stageChangeData(
-      tenantId,
-      targetStage,
-      now,
-    );
-    await this.prisma.$transaction([
-      this.prisma.lead.update({
-        where: { id: leadId },
-        data: { stage: targetStage, ...timing, lastTriagemAt: now },
-      }),
-      this.prisma.documentacao.updateMany({
-        where: { tenantId, leadId },
-        data: { stageSituacao: targetStage },
-      }),
-      this.prisma.triagemEvent.create({
-        data: {
-          leadId,
-          autorId,
-          texto: `Parecer ${parecerLabel} na documentação — saiu da etapa Em análise.`,
-          stageAnterior: lead.stage,
-          stageNovo: targetStage,
-          origem: TriagemOrigem.funil,
-        },
-      }),
-    ]);
-  }
 
   /** Admin, analista e gerente podem editar (status e demais campos). */
   private canUpdateDocumentacao(requester: AuthenticatedUser): boolean {
@@ -909,163 +529,6 @@ export class DocumentacaoService {
     return requester.role === Role.admin || requester.role === Role.analista;
   }
 
-  /**
-   * Super admin: lead em Ganho/Venda vira venda (ficha vendida), sem VGV.
-   */
-  async ensureVendaFromFunilStage(
-    tenantId: string,
-    leadId: string,
-    autorId: string,
-    stage: string,
-  ) {
-    if (tenantId !== PLATFORM_TENANT_ID) return;
-    const lead = await this.prisma.lead.findFirst({
-      where: { id: leadId, tenantId, perdidoAt: null },
-      select: {
-        nome: true,
-        tipo: true,
-        origem: true,
-        corretorId: true,
-        construtoraId: true,
-        empreendimentoId: true,
-      },
-    });
-    if (!lead) return;
-
-    const existing = await this.prisma.documentacao.findFirst({
-      where: { tenantId, leadId },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true, status2: true, dataVenda: true },
-    });
-    const now = new Date();
-    const status2Vendido = await this.firstCatalogLabel(
-      tenantId,
-      CatalogType.documentacao_status2,
-      ['Vendido'],
-    );
-    if (existing) {
-      await this.prisma.documentacao.update({
-        where: { id: existing.id },
-        data: {
-          stageSituacao: stage,
-          ...(!isStatusVendido(existing.status2)
-            ? { status2: status2Vendido, dataVenda: existing.dataVenda ?? now }
-            : {}),
-        },
-      });
-      return;
-    }
-
-    const fonte = await this.firstCatalogLabel(
-      tenantId,
-      CatalogType.documentacao_fonte,
-      [lead.origem?.trim() || '', 'Outro'],
-    );
-    const status1 = await this.firstCatalogLabel(
-      tenantId,
-      CatalogType.documentacao_status1,
-      ['Aprovado'],
-    );
-
-    await this.prisma.documentacao.create({
-      data: {
-        tenantId,
-        leadId,
-        autorId,
-        tipoContato: lead.tipo,
-        stageSituacao: stage,
-        nome: lead.nome,
-        fonte,
-        status1,
-        status2: status2Vendido,
-        corretorId: lead.corretorId,
-        construtoraId: lead.construtoraId,
-        empreendimentoId: lead.empreendimentoId,
-        dataVenda: now,
-      },
-    });
-  }
-
-  async syncPlatformVendasFromFunil(tenantId: string, autorId: string) {
-    if (tenantId !== PLATFORM_TENANT_ID) return;
-    const vendaSlug = await this.funis.getSlugByPapel(
-      tenantId,
-      FunilEtapaPapel.venda,
-    );
-    if (!vendaSlug) return;
-    const leads = await this.prisma.lead.findMany({
-      where: { tenantId, stage: vendaSlug, perdidoAt: null },
-      select: { id: true, stage: true },
-    });
-    for (const lead of leads) {
-      await this.ensureVendaFromFunilStage(
-        tenantId,
-        lead.id,
-        autorId,
-        lead.stage,
-      );
-    }
-  }
-
-  /**
-   * Documentação vendida deve aparecer na coluna Venda do funil.
-   */
-  private async moveLeadsToVendaStage(
-    tenantId: string,
-    leadIds: string[],
-    autorId: string,
-  ) {
-    const uniqueIds = [...new Set(leadIds.filter(Boolean))];
-    if (uniqueIds.length === 0) return;
-
-    const vendaSlug = await this.funis.getSlugByPapel(
-      tenantId,
-      FunilEtapaPapel.venda,
-    );
-    if (!vendaSlug) return;
-
-    const leads = await this.prisma.lead.findMany({
-      where: {
-        tenantId,
-        id: { in: uniqueIds },
-        perdidoAt: null,
-        NOT: { stage: vendaSlug },
-      },
-      select: { id: true, stage: true },
-    });
-    if (leads.length === 0) return;
-
-    const leadIdsMoved = leads.map((l) => l.id);
-    const now = new Date();
-    const timing = await this.monitoramento.stageChangeData(
-      tenantId,
-      vendaSlug,
-      now,
-    );
-
-    await this.prisma.$transaction([
-      this.prisma.lead.updateMany({
-        where: { id: { in: leadIdsMoved } },
-        data: { stage: vendaSlug, ...timing, lastTriagemAt: now },
-      }),
-      // Mantém o snapshot da ficha alinhado à etapa atual do funil.
-      this.prisma.documentacao.updateMany({
-        where: { tenantId, leadId: { in: leadIdsMoved } },
-        data: { stageSituacao: vendaSlug },
-      }),
-      this.prisma.triagemEvent.createMany({
-        data: leads.map((lead) => ({
-          leadId: lead.id,
-          autorId,
-          texto:
-            'Etapa avançada para venda (documentação marcada como vendido).',
-          stageAnterior: lead.stage,
-          stageNovo: vendaSlug,
-          origem: TriagemOrigem.funil,
-        })),
-      }),
-    ]);
-  }
 
   private async resolveCreditCorretorId(
     corretorId: string | null | undefined,
@@ -1107,36 +570,6 @@ export class DocumentacaoService {
     return corretor?.equipe?.gerenteId ?? null;
   }
 
-  private async firstCatalogLabel(
-    tenantId: string,
-    type:
-      | typeof CatalogType.documentacao_fonte
-      | typeof CatalogType.documentacao_status1
-      | typeof CatalogType.documentacao_status2,
-    preferred: string[],
-  ): Promise<string> {
-    const items = await this.prisma.catalogItem.findMany({
-      where: { tenantId, type, active: true },
-      select: { label: true },
-      orderBy: { sortOrder: 'asc' },
-    });
-    for (const want of preferred) {
-      const key = want.trim().toLowerCase();
-      if (!key) continue;
-      const found = items.find(
-        (item) => item.label.trim().toLowerCase() === key,
-      );
-      if (found) return found.label;
-    }
-    if (items[0]?.label.trim()) return items[0].label.trim();
-    const fallback = preferred.find((item) => item.trim());
-    if (!fallback) {
-      throw new BadRequestException(
-        'Catálogo de documentação vazio. Cadastre fontes e status em Configurações.',
-      );
-    }
-    return fallback.trim();
-  }
 
   private async resolveCatalogLabel(
     tenantId: string,
@@ -1166,39 +599,4 @@ export class DocumentacaoService {
     return found.label;
   }
 
-  private async ensureLeadAccessible(
-    leadId: string,
-    requester: AuthenticatedUser,
-  ) {
-    const tenantId = requireTenantId(requester);
-    const lead = await this.prisma.lead.findFirst({
-      where: { id: leadId, tenantId },
-      select: {
-        id: true,
-        tipo: true,
-        nome: true,
-        stage: true,
-        corretorId: true,
-        equipeId: true,
-        construtoraId: true,
-        empreendimentoId: true,
-        perdidoAt: true,
-      },
-    });
-
-    if (!lead || lead.perdidoAt) {
-      throw new NotFoundException('Lead/cliente não encontrado.');
-    }
-
-    const allowed = await this.teamScope.canAccessCorretor(
-      requester,
-      lead.corretorId,
-      lead.equipeId,
-    );
-    if (!allowed) {
-      throw new NotFoundException('Lead/cliente não encontrado.');
-    }
-
-    return lead;
-  }
 }

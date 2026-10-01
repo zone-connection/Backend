@@ -23,7 +23,6 @@ import { TeamScopeService } from '../../equipes/team-scope.service';
 import { NotificacoesService } from '../../notificacoes/notificacoes.service';
 import { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { requireTenantId } from '../../common/utils/tenant';
-import { isStatusVendido } from '../../common/utils/documentacao-status';
 import { hasUserModule } from '../../common/utils/user-permissions';
 import { resolveEtapaPapel } from '../../funis/funil-etapa-papel.util';
 import { AdiarPrazoDto } from '../dto/adiar-prazo.dto';
@@ -470,27 +469,6 @@ export class LeadMonitoramentoService {
     };
   }
 
-  /** Ficha mais recente com Status 2 no grupo Vendido. */
-  private async idsComStatusVendido(
-    tenantId: string,
-    leadIds: string[],
-  ): Promise<Set<string>> {
-    const sold = new Set<string>();
-    if (leadIds.length === 0) return sold;
-    const docs = await this.prisma.documentacao.findMany({
-      where: { tenantId, leadId: { in: leadIds } },
-      orderBy: { updatedAt: 'desc' },
-      select: { leadId: true, status2: true },
-    });
-    const seen = new Set<string>();
-    for (const doc of docs) {
-      if (seen.has(doc.leadId)) continue;
-      seen.add(doc.leadId);
-      if (isStatusVendido(doc.status2)) sold.add(doc.leadId);
-    }
-    return sold;
-  }
-
   decorateLead<T extends LeadTimingRow>(
     lead: T,
     ctx: FunilCtx,
@@ -526,13 +504,9 @@ export class LeadMonitoramentoService {
       decorated.map((lead) => lead.id),
       now,
     );
-    const vendidos = await this.idsComStatusVendido(
-      tenantId,
-      decorated.map((lead) => lead.id),
-    );
     return decorated.map((lead) => {
       const etapa = ctx.etapasBySlug.get(lead.stage);
-      if (isEtapaTerminal(etapa?.papel) || vendidos.has(lead.id)) {
+      if (isEtapaTerminal(etapa?.papel)) {
         return {
           ...lead,
           monitoramento: this.monitoramentoQuieto(lead.monitoramento),
@@ -1093,12 +1067,7 @@ export class LeadMonitoramentoService {
     });
 
     let created = 0;
-    const vendidos = await this.idsComStatusVendido(
-      tenantId,
-      leads.map((lead) => lead.id),
-    );
     for (const lead of leads) {
-      if (vendidos.has(lead.id)) continue;
       const mon = this.compute(lead, ctx, requester, now);
       const dueAt = mon.prazoDueAt ? new Date(mon.prazoDueAt) : null;
       const enteredAt = new Date(mon.stageEnteredAt ?? lead.createdAt);
@@ -1187,12 +1156,7 @@ export class LeadMonitoramentoService {
     });
 
     let created = 0;
-    const vendidos = await this.idsComStatusVendido(
-      tenantId,
-      leads.map((lead) => lead.id),
-    );
     for (const lead of leads) {
-      if (vendidos.has(lead.id)) continue;
       const mon = this.compute(lead, ctx, requester, now);
       const idle = mon.problemas.find((p) => p.tipo === 'sem_movimentacao');
       if (!idle) continue;
@@ -1501,12 +1465,8 @@ export class LeadMonitoramentoService {
     });
 
     let created = 0;
-    const vendidos = await this.idsComStatusVendido(
-      tenantId,
-      tasks.flatMap((task) => (task.lead ? [task.lead.id] : [])),
-    );
     for (const task of tasks) {
-      if (!task.lead || vendidos.has(task.lead.id)) continue;
+      if (!task.lead) continue;
       const recipients = new Set(
         await this.resolveOverdueRecipients(tenantId, task.lead),
       );

@@ -24,7 +24,6 @@ import { isCorretorLike } from "../common/utils/roles";
 import { corretorTemVendaVinculada } from "../common/utils/corretor-venda";
 import { hasUserModule } from "../common/utils/user-permissions";
 import { DocumentacaoService } from "../documentacao/documentacao.service";
-import { LeadsService } from "../leads/leads.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { calcularEncargosAtraso } from "./titulo-atraso";
 import { BaixarTituloDto } from "./dto/baixar-titulo.dto";
@@ -74,14 +73,6 @@ const MESES_CURTOS = [
 ] as const;
 
 const BRASIL_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
-
-function placeholderClientPhone(seed: string): string {
-  const base = `${Date.now()}${seed}`
-    .replace(/\D/g, "")
-    .slice(-8)
-    .padStart(8, "0");
-  return `(81) 9${base.slice(0, 4)}-${base.slice(4)}`;
-}
 
 function competenciaFromIsoDate(iso: string): string {
   return iso.slice(0, 7);
@@ -308,7 +299,6 @@ type FluxoEvento = {
 export class FinanceiroService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly leadsService: LeadsService,
     private readonly documentacaoService: DocumentacaoService,
   ) {}
 
@@ -1654,7 +1644,7 @@ export class FinanceiroService {
       rows
         .filter((row) => isStatusVendido(row.status2))
         .map((row) => {
-          const corretor = row.corretor ?? row.lead.corretor;
+          const corretor = row.corretor ?? row.lead?.corretor;
           return {
             documentacaoId: row.id,
             cliente: row.nome,
@@ -1723,7 +1713,7 @@ export class FinanceiroService {
     if (!doc || !isStatusVendido(doc.status2) || !doc.vgv || doc.vgv <= 0) {
       throw new BadRequestException("Documentação não é uma venda elegível.");
     }
-    const corretor = doc.corretor ?? doc.lead.corretor;
+    const corretor = doc.corretor ?? doc.lead?.corretor;
     if (!corretor) {
       throw new BadRequestException("A documentação precisa ter um corretor.");
     }
@@ -1773,23 +1763,8 @@ export class FinanceiroService {
   ) {
     this.assertComissaoWrite(requester);
     const clienteNome = dto.clienteNome.trim();
-    const lead = await this.leadsService.create(
-      {
-        tipo: "cliente",
-        nome: clienteNome,
-        telefone: placeholderClientPhone(clienteNome),
-        email: `cliente.${Date.now().toString(36)}@pendente.local`,
-        origem: "Comissão",
-        interesse: "Comprar",
-        cidade: "",
-        bairro: "",
-        corretorId: dto.corretorId,
-      },
-      requester,
-    );
     const doc = await this.documentacaoService.create(
       {
-        leadId: lead.id,
         nome: clienteNome,
         fonte: "Comissão",
         status1: "Aprovado",

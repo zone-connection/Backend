@@ -74,12 +74,12 @@ function isoDateOnly(value: Date | null | undefined) {
 function resolveConstrutoraId(doc: {
   construtoraId: string | null;
   empreendimento: { construtoraId: string | null } | null;
-  lead: { construtoraId: string | null };
+  lead: { construtoraId: string | null } | null;
 }) {
   return (
     doc.construtoraId ??
     doc.empreendimento?.construtoraId ??
-    doc.lead.construtoraId ??
+    doc.lead?.construtoraId ??
     null
   );
 }
@@ -237,7 +237,7 @@ export class ConstrutorasService {
       .filter((row) => isStatusVendido(row.status2))
       .filter((row) => resolveConstrutoraId(row) === id)
       .map((row) => {
-        const corretor = row.corretor ?? row.lead.corretor;
+        const corretor = row.corretor ?? row.lead?.corretor;
         return {
           id: row.id,
           corretorId: corretor?.id ?? null,
@@ -250,7 +250,7 @@ export class ConstrutorasService {
           empreendimento: row.empreendimento?.nome ?? null,
           vgv: row.vgv ?? 0,
           cliente: row.nome,
-          clienteCpf: row.lead.propostas[0]?.clienteCpf ?? null,
+          clienteCpf: row.lead?.propostas[0]?.clienteCpf ?? null,
           dataVenda: isoDateOnly(row.dataVenda ?? row.createdAt),
         };
       })

@@ -19,7 +19,6 @@ import { LeadMonitoramentoService } from '../leads/monitoramento/lead-monitorame
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
-import { canonicalizeStatus1 } from '../common/utils/documentacao-status';
 import { QueryAnaliseDto, UpdateAnaliseDto } from './dto/analise.dto';
 
 const analiseSelect = {
@@ -261,16 +260,6 @@ export class AnaliseService {
       select: analiseSelect,
     });
 
-    // Fichas ainda em pré-análise (legado) passam a Em análise ao assumir.
-    await this.prisma.documentacao.updateMany({
-      where: {
-        tenantId,
-        leadId: existing.leadId,
-        status1: { in: ['Pré-análise', 'Pre-análise', 'Análise', 'Analise'] },
-      },
-      data: { status1: 'Em análise' },
-    });
-
     return updated;
   }
 
@@ -333,12 +322,6 @@ export class AnaliseService {
       (newStatus === AnaliseStatus.aprovado ||
         newStatus === AnaliseStatus.reprovado)
     ) {
-      await this.syncDocumentacaoFromAnalise(
-        tenantId,
-        existing.leadId,
-        newStatus,
-        dto.vgv,
-      );
       if (newStatus === AnaliseStatus.aprovado) {
         await this.leaveAnaliseAfterParecer(
           tenantId,
@@ -381,36 +364,6 @@ export class AnaliseService {
     return updated;
   }
 
-  /**
-   * Espelha o parecer da análise no Status 1 (e VGV, se aprovado)
-   * de todas as fichas de documentação do mesmo lead.
-   */
-  private async syncDocumentacaoFromAnalise(
-    tenantId: string,
-    leadId: string,
-    analiseStatus: typeof AnaliseStatus.aprovado | typeof AnaliseStatus.reprovado,
-    vgv?: number | null,
-  ) {
-    const status1 = canonicalizeStatus1(
-      analiseStatus === AnaliseStatus.aprovado ? 'Aprovado' : 'Reprovado',
-    );
-
-    await this.prisma.documentacao.updateMany({
-      where: {
-        tenantId,
-        leadId,
-      },
-      data: {
-        status1,
-        ...(analiseStatus === AnaliseStatus.aprovado &&
-        vgv !== undefined &&
-        vgv !== null
-          ? { vgv }
-          : {}),
-      },
-    });
-  }
-
   /** Tira o lead da etapa Em análise após parecer aprovado. Reprovado fica até dar perda. */
   private async leaveAnaliseAfterParecer(
     tenantId: string,
@@ -427,10 +380,6 @@ export class AnaliseService {
       await this.prisma.lead.updateMany({
         where: { id: leadId, tenantId, tipo: ContatoTipo.cliente },
         data: { tipo: ContatoTipo.lead },
-      });
-      await this.prisma.documentacao.updateMany({
-        where: { tenantId, leadId, tipoContato: ContatoTipo.cliente },
-        data: { tipoContato: ContatoTipo.lead },
       });
     }
 
@@ -479,10 +428,6 @@ export class AnaliseService {
       this.prisma.lead.update({
         where: { id: leadId },
         data: { stage: targetStage, ...timing, lastTriagemAt: now },
-      }),
-      this.prisma.documentacao.updateMany({
-        where: { tenantId, leadId },
-        data: { stageSituacao: targetStage },
       }),
       this.prisma.triagemEvent.create({
         data: {
@@ -637,92 +582,8 @@ export class AnaliseService {
       }
     }
 
-    // Documentações de gerente/admin (ou status Em análise) sem ficha de análise.
-    const docs = await this.prisma.documentacao.findMany({
-      where: {
-        tenantId,
-        lead: {
-          perdidoAt: null,
-          analise: null,
-          ...(isGlobal ? {} : leadScope),
-        },
-        OR: [
-          { autor: { role: { in: [Role.gerente, Role.admin, Role.analista] } } },
-          {
-            status1: {
-              in: [
-                'Em análise',
-                'Análise',
-                'ANALISE',
-                'Em analise',
-                'em análise',
-                'em analise',
-              ],
-            },
-          },
-        ],
-      },
-      select: {
-        leadId: true,
-        autorId: true,
-        temEntrada: true,
-        valorEntrada: true,
-        temFgts: true,
-        valorFgts: true,
-        temDependente: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-    });
-
-    const financeByLead = new Map<
-      string,
-      {
-        temEntrada?: boolean;
-        valorEntrada?: number | null;
-        temFgts?: boolean;
-        valorFgts?: number | null;
-        temDependente?: boolean;
-      }
-    >();
-
-    for (const doc of docs) {
-      if (!pendingIds.has(doc.leadId)) {
-        pendingIds.set(doc.leadId, doc.autorId);
-      }
-      if (!financeByLead.has(doc.leadId)) {
-        financeByLead.set(doc.leadId, {
-          temEntrada: doc.temEntrada,
-          valorEntrada: doc.valorEntrada,
-          temFgts: doc.temFgts,
-          valorFgts: doc.valorFgts,
-          temDependente: doc.temDependente,
-        });
-      }
-    }
-
-    // Garante etapa de análise no funil para esses leads.
-    const analiseSlug = analiseSlugs[0] ?? null;
-    if (analiseSlug && pendingIds.size > 0) {
-      const leadIds = [...pendingIds.keys()];
-      await this.monitoramento.applyStageToLeads(
-        tenantId,
-        leadIds,
-        analiseSlug,
-      );
-      await this.prisma.documentacao.updateMany({
-        where: { tenantId, leadId: { in: leadIds } },
-        data: { stageSituacao: analiseSlug },
-      });
-    }
-
     for (const [leadId, autorId] of pendingIds) {
-      await this.ensureForLead(
-        leadId,
-        autorId,
-        tenantId,
-        financeByLead.get(leadId),
-      );
+      await this.ensureForLead(leadId, autorId, tenantId);
     }
   }
 

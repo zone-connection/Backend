@@ -19,7 +19,6 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import {
-  PLATFORM_TENANT_ID,
   requireTenantId,
   canViewLostLeads,
 } from '../common/utils/tenant';
@@ -36,7 +35,6 @@ import {
   hopAutoTexto,
 } from '../triagem/stage-hops';
 import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.service';
-import { DocumentacaoService } from '../documentacao/documentacao.service';
 import { leadSelect, LeadEntity } from './lead-select';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
@@ -108,7 +106,6 @@ function withDocumentacaoStatus<T extends LeadEntity>(
   podeRedistribuir: boolean;
 } {
   const latest = lead.documentacoes?.[0];
-  const documentacoes = lead.documentacoes ?? [];
   return {
     ...lead,
     documentacaoStatus1: latest?.status1 ?? null,
@@ -117,7 +114,6 @@ function withDocumentacaoStatus<T extends LeadEntity>(
     podeRedistribuir: !leadImpedeRedistribuicao({
       stage: lead.stage,
       vendaSlugs,
-      documentacoes,
     }),
   };
 }
@@ -143,7 +139,6 @@ export class LeadsService {
     private readonly analiseService: AnaliseService,
     private readonly funis: FunisService,
     private readonly monitoramento: LeadMonitoramentoService,
-    private readonly documentacao: DocumentacaoService,
     private readonly leadNotify: LeadNotifyService,
     private readonly presence: PresenceService,
   ) {}
@@ -975,51 +970,17 @@ export class LeadsService {
       string,
       { status1: string; status2: string; vgv: number | null }
     >();
-    const docsByLead = new Map<
-      string,
-      Array<{ vgv: number | null; status2: string }>
-    >();
     for (const doc of docs) {
-      const list = docsByLead.get(doc.leadId) ?? [];
-      list.push({ vgv: doc.vgv, status2: doc.status2 });
-      docsByLead.set(doc.leadId, list);
-      if (!latestDoc.has(doc.leadId)) {
-        latestDoc.set(doc.leadId, {
-          status1: doc.status1,
-          status2: doc.status2,
-          vgv: doc.vgv,
-        });
-      }
+      if (!doc.leadId || latestDoc.has(doc.leadId)) continue;
+      latestDoc.set(doc.leadId, {
+        status1: doc.status1,
+        status2: doc.status2,
+        vgv: doc.vgv,
+      });
     }
     const vendaSlugs = [...monCtx.etapasBySlug.values()]
       .filter((etapa) => etapa.papel === FunilEtapaPapel.venda)
       .map((etapa) => etapa.slug);
-
-    // Ficha de lançamento é lead. Não permanece na carteira do corretor.
-    const comFichaQueEramCliente = decorated
-      .filter(
-        (lead) => lead.tipo === ContatoTipo.cliente && latestDoc.has(lead.id),
-      )
-      .map((lead) => lead.id);
-    if (comFichaQueEramCliente.length > 0) {
-      await this.prisma.lead.updateMany({
-        where: {
-          id: { in: comFichaQueEramCliente },
-          tenantId,
-          tipo: ContatoTipo.cliente,
-        },
-        data: { tipo: ContatoTipo.lead },
-      });
-      await this.prisma.documentacao.updateMany({
-        where: {
-          tenantId,
-          leadId: { in: comFichaQueEramCliente },
-          tipoContato: ContatoTipo.cliente,
-        },
-        data: { tipoContato: ContatoTipo.lead },
-      });
-    }
-    const virouLead = new Set(comFichaQueEramCliente);
 
     return {
       data: decorated.map((lead) => {
@@ -1027,7 +988,6 @@ export class LeadsService {
         const fromNested = lead.documentacoes?.[0];
         return {
           ...lead,
-          ...(virouLead.has(lead.id) ? { tipo: ContatoTipo.lead } : {}),
           documentacaoStatus1:
             fromBatch?.status1 ?? fromNested?.status1 ?? null,
           documentacaoStatus2:
@@ -1036,7 +996,6 @@ export class LeadsService {
           podeRedistribuir: !leadImpedeRedistribuicao({
             stage: lead.stage,
             vendaSlugs,
-            documentacoes: docsByLead.get(lead.id) ?? lead.documentacoes ?? [],
           }),
         };
       }),
@@ -1516,14 +1475,6 @@ export class LeadsService {
       select: leadSelect,
     });
 
-    // Alinha o snapshot de etapa nas fichas de documentação do lead.
-    if (stageAnterior && stageAnterior !== stage) {
-      await this.prisma.documentacao.updateMany({
-        where: { tenantId, leadId: id },
-        data: { stageSituacao: stage },
-      });
-    }
-
     // Registra na Triagem a mudança de etapa, salvo quando o funil vai
     // consolidar um único evento após o modal de relato.
     if (!dto.omitTriagem && stageAnterior && stageAnterior !== stage) {
@@ -1555,19 +1506,6 @@ export class LeadsService {
         valorFgts: dto.valorFgts,
         temDependente: dto.temDependente,
       });
-    }
-
-    if (
-      tenantId === PLATFORM_TENANT_ID &&
-      stageChanged &&
-      stagePapel === FunilEtapaPapel.venda
-    ) {
-      await this.documentacao.ensureVendaFromFunilStage(
-        tenantId,
-        id,
-        requester.id,
-        stage,
-      );
     }
 
     return this.decorateOne(lead, requester);
@@ -2217,23 +2155,18 @@ export class LeadsService {
   }
 
   private async assertPodeRedistribuir(tenantId: string, leadId: string) {
-    const [lead, vendaSlugs, documentacoes] = await Promise.all([
+    const [lead, vendaSlugs] = await Promise.all([
       this.prisma.lead.findFirst({
         where: { id: leadId, tenantId },
         select: { stage: true },
       }),
       this.funis.getSlugsByPapel(tenantId, FunilEtapaPapel.venda),
-      this.prisma.documentacao.findMany({
-        where: { tenantId, leadId },
-        select: { vgv: true, status2: true },
-      }),
     ]);
     if (!lead) return;
     if (
       leadImpedeRedistribuicao({
         stage: lead.stage,
         vendaSlugs,
-        documentacoes,
       })
     ) {
       throw new BadRequestException(LEAD_VENDA_OU_VGV_MESSAGE);
@@ -2621,10 +2554,6 @@ export class LeadsService {
     const vendaSlugs = [...ctx.etapasBySlug.values()]
       .filter((etapa) => etapa.papel === FunilEtapaPapel.venda)
       .map((etapa) => etapa.slug);
-    const documentacoes = await this.prisma.documentacao.findMany({
-      where: { tenantId, leadId: fresh.id },
-      select: { vgv: true, status2: true },
-    });
     return {
       ...decorated,
       documentacaoStatus1:
@@ -2635,7 +2564,6 @@ export class LeadsService {
       podeRedistribuir: !leadImpedeRedistribuicao({
         stage: fresh.stage,
         vendaSlugs,
-        documentacoes,
       }),
     };
   }
