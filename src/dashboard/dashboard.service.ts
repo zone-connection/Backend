@@ -1018,6 +1018,271 @@ export class DashboardService {
     return { vendas, vgv };
   }
 
+  /**
+   * VGV das vendas em que o usuário é o gerente da documentação.
+   * `excludeCorretorIdsByGerente` tira o que o ranking já somou pela equipe,
+   * para a mesma venda não entrar duas vezes.
+   */
+  private async aggregateVendasPorGerente(
+    tenantId: string,
+    periodo: Periodo,
+    opts?: {
+      origem?: string;
+      excludeCorretorIdsByGerente?: Map<string, Set<string>>;
+    },
+  ): Promise<{
+    vendas: Map<string, number>;
+    vgv: Map<string, number>;
+    nomes: Map<string, string>;
+  }> {
+    const vendas = new Map<string, number>();
+    const vgv = new Map<string, number>();
+    const nomes = new Map<string, string>();
+    const origem = opts?.origem?.trim() || undefined;
+    const countedLeads = new Set<string>();
+
+    const docs = await this.prisma.documentacao.findMany({
+      where: {
+        tenantId,
+        gerenteId: { not: null },
+        AND: [
+          status2VendidoWhere(),
+          documentacaoVendaNoPeriodoWhere(periodo),
+          ...(origem ? [{ lead: { origem } }] : []),
+        ],
+      },
+      select: {
+        leadId: true,
+        gerenteId: true,
+        corretorId: true,
+        vgv: true,
+        status2: true,
+        gerente: { select: { name: true } },
+        lead: { select: { corretorId: true } },
+      },
+    });
+
+    for (const doc of docs) {
+      if (!isStatusVendido(doc.status2) || !doc.gerenteId) continue;
+      const corretorId = doc.corretorId ?? doc.lead.corretorId;
+      const excluded = opts?.excludeCorretorIdsByGerente?.get(doc.gerenteId);
+      if (corretorId && excluded?.has(corretorId)) continue;
+      if (doc.gerente?.name) nomes.set(doc.gerenteId, doc.gerente.name);
+
+      const saleKey = `${doc.gerenteId}:${doc.leadId}`;
+      if (!countedLeads.has(saleKey)) {
+        countedLeads.add(saleKey);
+        vendas.set(doc.gerenteId, (vendas.get(doc.gerenteId) ?? 0) + 1);
+      }
+      const value = moneyNumber(doc.vgv);
+      if (value) {
+        vgv.set(doc.gerenteId, (vgv.get(doc.gerenteId) ?? 0) + value);
+      }
+    }
+
+    return { vendas, vgv, nomes };
+  }
+
+  private async buildRankingGerentes(input: {
+    tenantId: string;
+    equipes: Array<{
+      id: string;
+      name: string;
+      gerente: { id: string; name: string } | null;
+      membros: Array<{ id: string }>;
+    }>;
+    byCorretorMetrics: Map<
+      string,
+      {
+        leads: number;
+        entradas: { valor: number; valorMesAnterior: number };
+        visitas: number;
+        documentacoes: number;
+        vendas: { valor: number; valorMesAnterior: number };
+        vgv: { valor: number; valorMesAnterior: number };
+        perdidos: number;
+      }
+    >;
+    docsAntMap: Map<string, number>;
+    mesAtual: Periodo;
+    mesAnterior: Periodo;
+    origem?: string;
+    taxaConversao: (vendas: number, documentacoes: number) => number;
+  }) {
+    const {
+      tenantId,
+      equipes,
+      byCorretorMetrics,
+      docsAntMap,
+      mesAtual,
+      mesAnterior,
+      origem,
+      taxaConversao,
+    } = input;
+
+    const jaContado = new Map<string, Set<string>>();
+    for (const eq of equipes) {
+      if (!eq.gerente) continue;
+      const ids = new Set<string>();
+      for (const membro of eq.membros) {
+        if (byCorretorMetrics.has(membro.id)) ids.add(membro.id);
+      }
+      jaContado.set(eq.gerente.id, ids);
+    }
+
+    const [gerenteUsers, vendasDiretas, vendasDiretasAnt] = await Promise.all([
+      this.prisma.user.findMany({
+        where: {
+          tenantId,
+          role: Role.gerente,
+          status: UserStatus.ativo,
+        },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.aggregateVendasPorGerente(tenantId, mesAtual, {
+        origem,
+        excludeCorretorIdsByGerente: jaContado,
+      }),
+      this.aggregateVendasPorGerente(tenantId, mesAnterior, {
+        origem,
+        excludeCorretorIdsByGerente: jaContado,
+      }),
+    ]);
+
+    type Acc = {
+      gerenteId: string;
+      nome: string;
+      equipeId: string;
+      equipe: string;
+      corretores: number;
+      leads: number;
+      entradas: number;
+      entradasAnt: number;
+      visitas: number;
+      documentacoes: number;
+      documentacoesAnt: number;
+      vendas: number;
+      vendasAnt: number;
+      vgv: number;
+      vgvAnt: number;
+      perdidos: number;
+    };
+
+    const byGerente = new Map<string, Acc>();
+    const ensure = (
+      gerenteId: string,
+      nome: string,
+      equipeId = '',
+      equipe = 'Sem equipe',
+      corretores = 0,
+    ) => {
+      const current = byGerente.get(gerenteId);
+      if (current) return current;
+      const created: Acc = {
+        gerenteId,
+        nome,
+        equipeId,
+        equipe,
+        corretores,
+        leads: 0,
+        entradas: 0,
+        entradasAnt: 0,
+        visitas: 0,
+        documentacoes: 0,
+        documentacoesAnt: 0,
+        vendas: 0,
+        vendasAnt: 0,
+        vgv: 0,
+        vgvAnt: 0,
+        perdidos: 0,
+      };
+      byGerente.set(gerenteId, created);
+      return created;
+    };
+
+    for (const eq of equipes) {
+      if (!eq.gerente) continue;
+      const row = ensure(
+        eq.gerente.id,
+        eq.gerente.name,
+        eq.id,
+        eq.name,
+        eq.membros.length,
+      );
+      for (const membro of eq.membros) {
+        const metrics = byCorretorMetrics.get(membro.id);
+        if (!metrics) continue;
+        row.leads += metrics.leads;
+        row.entradas += metrics.entradas.valor;
+        row.entradasAnt += metrics.entradas.valorMesAnterior;
+        row.visitas += metrics.visitas;
+        row.documentacoes += metrics.documentacoes;
+        row.documentacoesAnt += docsAntMap.get(membro.id) ?? 0;
+        row.vendas += metrics.vendas.valor;
+        row.vendasAnt += metrics.vendas.valorMesAnterior;
+        row.vgv += metrics.vgv.valor;
+        row.vgvAnt += metrics.vgv.valorMesAnterior;
+        row.perdidos += metrics.perdidos;
+      }
+    }
+
+    for (const gerente of gerenteUsers) {
+      ensure(gerente.id, gerente.name);
+    }
+
+    const aplicarDiretas = (
+      pack: { vendas: Map<string, number>; vgv: Map<string, number>; nomes: Map<string, string> },
+      anterior: boolean,
+    ) => {
+      const ids = new Set([...pack.vendas.keys(), ...pack.vgv.keys()]);
+      for (const gerenteId of ids) {
+        const row = ensure(
+          gerenteId,
+          pack.nomes.get(gerenteId) ?? 'Gerente',
+        );
+        if (anterior) {
+          row.vendasAnt += pack.vendas.get(gerenteId) ?? 0;
+          row.vgvAnt += pack.vgv.get(gerenteId) ?? 0;
+        } else {
+          row.vendas += pack.vendas.get(gerenteId) ?? 0;
+          row.vgv += pack.vgv.get(gerenteId) ?? 0;
+        }
+      }
+    };
+    aplicarDiretas(vendasDiretas, false);
+    aplicarDiretas(vendasDiretasAnt, true);
+
+    return [...byGerente.values()]
+      .sort(
+        (a, b) =>
+          b.vgv - a.vgv ||
+          b.vendas - a.vendas ||
+          b.entradas - a.entradas ||
+          a.nome.localeCompare(b.nome, 'pt-BR'),
+      )
+      .map((row, index) => {
+        const taxa = taxaConversao(row.vendas, row.documentacoes);
+        const taxaAnt = taxaConversao(row.vendasAnt, row.documentacoesAnt);
+        return {
+          posicao: index + 1,
+          gerenteId: row.gerenteId,
+          nome: row.nome,
+          equipeId: row.equipeId,
+          equipe: row.equipe,
+          corretores: row.corretores,
+          leads: row.leads,
+          entradas: metric(row.entradas, row.entradasAnt),
+          visitas: row.visitas,
+          documentacoes: row.documentacoes,
+          vendas: metric(row.vendas, row.vendasAnt),
+          vgv: metric(row.vgv, row.vgvAnt),
+          taxaConversao: metric(taxa, taxaAnt),
+          perdidos: row.perdidos,
+        };
+      });
+  }
+
   private async countDocumentacoesPorCorretor(
     tenantId: string,
     ids: string[],
@@ -1804,63 +2069,21 @@ export class DashboardService {
     );
 
     // Ranking/pódio de gerentes: só admin do tenant (e super_admin no tenant).
+    // A equipe soma o VGV dos corretores. Vendas em que o gerente é o
+    // responsável, mesmo sem equipe, entram no VGV dele sem duplicar.
     const rankingGerentes =
       requester.role !== Role.admin && requester.role !== Role.super_admin
         ? []
-        : equipes
-            .filter((eq) => Boolean(eq.gerente))
-            .map((eq) => {
-              let leads = 0;
-              let entradas = 0;
-              let entradasAnt = 0;
-              let visitas = 0;
-              let documentacoes = 0;
-              let documentacoesAnt = 0;
-              let vendas = 0;
-              let vendasAnt = 0;
-              let vgv = 0;
-              let vgvAnt = 0;
-              let perdidos = 0;
-              for (const m of eq.membros) {
-                const row = byCorretorMetrics.get(m.id);
-                if (!row) continue;
-                leads += row.leads;
-                entradas += row.entradas.valor;
-                entradasAnt += row.entradas.valorMesAnterior;
-                visitas += row.visitas;
-                documentacoes += row.documentacoes;
-                documentacoesAnt += docsAntMap.get(m.id) ?? 0;
-                vendas += row.vendas.valor;
-                vendasAnt += row.vendas.valorMesAnterior;
-                vgv += row.vgv.valor;
-                vgvAnt += row.vgv.valorMesAnterior;
-                perdidos += row.perdidos;
-              }
-              const taxa = taxaConversao(vendas, documentacoes);
-              const taxaAnt = taxaConversao(vendasAnt, documentacoesAnt);
-              return {
-                gerenteId: eq.gerente.id,
-                nome: eq.gerente.name,
-                equipeId: eq.id,
-                equipe: eq.name,
-                corretores: eq.membros.length,
-                leads,
-                entradas: metric(entradas, entradasAnt),
-                visitas,
-                documentacoes,
-                vendas: metric(vendas, vendasAnt),
-                vgv: metric(vgv, vgvAnt),
-                taxaConversao: metric(taxa, taxaAnt),
-                perdidos,
-              };
-            })
-            .sort(
-              (a, b) =>
-                b.vgv.valor - a.vgv.valor ||
-                b.vendas.valor - a.vendas.valor ||
-                b.entradas.valor - a.entradas.valor,
-            )
-            .map((row, index) => ({ posicao: index + 1, ...row }));
+        : await this.buildRankingGerentes({
+            tenantId,
+            equipes,
+            byCorretorMetrics,
+            docsAntMap,
+            mesAtual,
+            mesAnterior,
+            origem,
+            taxaConversao,
+          });
 
     const totais = rankingCorretores.reduce(
       (acc, r) => {
