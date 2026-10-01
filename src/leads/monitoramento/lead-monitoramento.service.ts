@@ -23,7 +23,9 @@ import { TeamScopeService } from '../../equipes/team-scope.service';
 import { NotificacoesService } from '../../notificacoes/notificacoes.service';
 import { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { requireTenantId } from '../../common/utils/tenant';
+import { isStatusVendido } from '../../common/utils/documentacao-status';
 import { hasUserModule } from '../../common/utils/user-permissions';
+import { resolveEtapaPapel } from '../../funis/funil-etapa-papel.util';
 import { AdiarPrazoDto } from '../dto/adiar-prazo.dto';
 import {
   addPrazo,
@@ -76,6 +78,44 @@ function formatTarefaPrazo(startsAt: Date, endsAt: Date | null): string {
     dateStyle: 'short',
     timeStyle: 'short',
   });
+}
+
+function foldEtapaNome(value: string | null | undefined) {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+/** Coluna "Venda"/"Vendido" sem papel gravado também encerra o acompanhamento. */
+function papelPorNome(
+  label: string | null | undefined,
+  slug: string | null | undefined,
+): FunilEtapaPapel | null {
+  const nome = foldEtapaNome(label);
+  const id = foldEtapaNome(slug);
+  if (
+    nome === 'venda' ||
+    nome === 'vendido' ||
+    nome === 'vendida' ||
+    nome === 'ganho / venda' ||
+    id === 'venda' ||
+    id === 'vendido' ||
+    id === 'vendida' ||
+    id === 'ganho-venda'
+  ) {
+    return FunilEtapaPapel.venda;
+  }
+  if (
+    nome === 'perdido' ||
+    nome === 'perdida' ||
+    id === 'perdido' ||
+    id === 'perdida'
+  ) {
+    return FunilEtapaPapel.perdido;
+  }
+  return null;
 }
 
 type EtapaCtx = {
@@ -161,6 +201,7 @@ export class LeadMonitoramentoService {
       etapas: {
         where: { active: true },
         select: {
+          id: true,
           slug: true,
           label: true,
           papel: true,
@@ -191,11 +232,21 @@ export class LeadMonitoramentoService {
         select: funilSelect,
       }));
 
+    const etapas = funil?.etapas ?? [];
     const etapasBySlug = new Map<string, EtapaCtx>();
     const terminalSlugs: string[] = [];
-    for (const e of funil?.etapas ?? []) {
-      etapasBySlug.set(e.slug, e);
-      if (isEtapaTerminal(e.papel)) terminalSlugs.push(e.slug);
+    for (const e of etapas) {
+      const papel = resolveEtapaPapel(e, etapas) ?? papelPorNome(e.label, e.slug);
+      const etapa: EtapaCtx = {
+        slug: e.slug,
+        label: e.label,
+        papel,
+        prazoValor: e.prazoValor,
+        prazoUnidade: e.prazoUnidade,
+        alertaAntecedenciaPercent: e.alertaAntecedenciaPercent,
+      };
+      etapasBySlug.set(e.slug, etapa);
+      if (isEtapaTerminal(papel)) terminalSlugs.push(e.slug);
     }
 
     const inatividadeValor =
@@ -402,6 +453,44 @@ export class LeadMonitoramentoService {
     };
   }
 
+  private monitoramentoQuieto(mon: LeadMonitoramento): LeadMonitoramento {
+    return {
+      ...mon,
+      problemas: [],
+      nivel: 'normal',
+      visual: 'none',
+      tarefasAtrasadas: [],
+      prazoDueAt: null,
+      tempoRestanteMs: null,
+      tempoRestanteLabel: null,
+      tempoAtrasoMs: null,
+      tempoAtrasoLabel: null,
+      prazoConfigurado: null,
+      podeAdiar: false,
+    };
+  }
+
+  /** Ficha mais recente com Status 2 no grupo Vendido. */
+  private async idsComStatusVendido(
+    tenantId: string,
+    leadIds: string[],
+  ): Promise<Set<string>> {
+    const sold = new Set<string>();
+    if (leadIds.length === 0) return sold;
+    const docs = await this.prisma.documentacao.findMany({
+      where: { tenantId, leadId: { in: leadIds } },
+      orderBy: { updatedAt: 'desc' },
+      select: { leadId: true, status2: true },
+    });
+    const seen = new Set<string>();
+    for (const doc of docs) {
+      if (seen.has(doc.leadId)) continue;
+      seen.add(doc.leadId);
+      if (isStatusVendido(doc.status2)) sold.add(doc.leadId);
+    }
+    return sold;
+  }
+
   decorateLead<T extends LeadTimingRow>(
     lead: T,
     ctx: FunilCtx,
@@ -431,23 +520,22 @@ export class LeadMonitoramentoService {
   ): Promise<Array<T & { monitoramento: LeadMonitoramento }>> {
     const decorated = this.decorateLeads(leads, ctx, requester, now);
     if (decorated.length === 0) return decorated;
+    const tenantId = requireTenantId(requester);
     const byLead = await this.loadOverdueTarefas(
-      requireTenantId(requester),
+      tenantId,
       decorated.map((lead) => lead.id),
       now,
     );
+    const vendidos = await this.idsComStatusVendido(
+      tenantId,
+      decorated.map((lead) => lead.id),
+    );
     return decorated.map((lead) => {
       const etapa = ctx.etapasBySlug.get(lead.stage);
-      if (isEtapaTerminal(etapa?.papel)) {
+      if (isEtapaTerminal(etapa?.papel) || vendidos.has(lead.id)) {
         return {
           ...lead,
-          monitoramento: {
-            ...lead.monitoramento,
-            problemas: [],
-            nivel: 'normal' as const,
-            visual: 'none' as const,
-            tarefasAtrasadas: [],
-          },
+          monitoramento: this.monitoramentoQuieto(lead.monitoramento),
         };
       }
       return this.mergeTarefasAtrasadas(lead, byLead.get(lead.id) ?? []);
@@ -1005,7 +1093,12 @@ export class LeadMonitoramentoService {
     });
 
     let created = 0;
+    const vendidos = await this.idsComStatusVendido(
+      tenantId,
+      leads.map((lead) => lead.id),
+    );
     for (const lead of leads) {
+      if (vendidos.has(lead.id)) continue;
       const mon = this.compute(lead, ctx, requester, now);
       const dueAt = mon.prazoDueAt ? new Date(mon.prazoDueAt) : null;
       const enteredAt = new Date(mon.stageEnteredAt ?? lead.createdAt);
@@ -1094,7 +1187,12 @@ export class LeadMonitoramentoService {
     });
 
     let created = 0;
+    const vendidos = await this.idsComStatusVendido(
+      tenantId,
+      leads.map((lead) => lead.id),
+    );
     for (const lead of leads) {
+      if (vendidos.has(lead.id)) continue;
       const mon = this.compute(lead, ctx, requester, now);
       const idle = mon.problemas.find((p) => p.tipo === 'sem_movimentacao');
       if (!idle) continue;
@@ -1403,8 +1501,12 @@ export class LeadMonitoramentoService {
     });
 
     let created = 0;
+    const vendidos = await this.idsComStatusVendido(
+      tenantId,
+      tasks.flatMap((task) => (task.lead ? [task.lead.id] : [])),
+    );
     for (const task of tasks) {
-      if (!task.lead) continue;
+      if (!task.lead || vendidos.has(task.lead.id)) continue;
       const recipients = new Set(
         await this.resolveOverdueRecipients(tenantId, task.lead),
       );

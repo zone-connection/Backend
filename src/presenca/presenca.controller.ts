@@ -25,7 +25,6 @@ import { PresencaService } from './presenca.service';
 const ALL: Role[] = [
   Role.admin,
   Role.gerente,
-  Role.corretor,
   Role.treinee,
   Role.assistente,
   Role.analista,

@@ -283,7 +283,6 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/treinamento',
     '/clientes',
     '/clientes-perdidos',
-    '/presenca',
     '/mural-chaves',
     '/metas',
     '/triagem',
@@ -462,7 +461,9 @@ export function effectivePermissions(
   role: Role,
   stored?: UserPermissions | null,
 ): UserPermissions {
-  return mergePermissions(defaultsFromRole(role), stored);
+  const merged = mergePermissions(defaultsFromRole(role), stored);
+  if (role === Role.corretor) merged.modules.presenca = false;
+  return merged;
 }
 
 export function hasUserAction(
