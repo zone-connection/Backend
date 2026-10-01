@@ -65,7 +65,11 @@ function txPrisma(partial: Record<string, unknown>) {
 
 const vinculo = {
   imovel: {
-    findFirst: async () => chave().imovel,
+    findFirst: async () => ({
+      ...chave().imovel,
+      captacoes: [{ id: 'cap1' }],
+      vendaUsado: { id: 'vu1' },
+    }),
   },
   empreendimento: {
     findFirst: async () => ({ id: 'e1', nome: 'Residencial X' }),
@@ -113,6 +117,45 @@ describe('MuralChavesService', () => {
     assert.equal(result.tipo, 'Aluguel');
     assert.equal(result.empreendimento?.nome, 'Residencial X');
     assert.equal(result.statusLabel, 'Disponível');
+  });
+
+  it('recusa chave sem imóvel de captação ou de usados', async () => {
+    const service = new MuralChavesService(
+      txPrisma({
+        imovel: {
+          findFirst: async () => ({
+            ...chave().imovel,
+            captacoes: [],
+            vendaUsado: null,
+          }),
+        },
+        empreendimento: { findFirst: async () => ({ id: 'e1', nome: 'Residencial X' }) },
+      }) as never,
+    );
+    await assert.rejects(
+      () =>
+        service.create(
+          { identificador: 'CH-1', empreendimentoId: 'e1', tipo: 'Aluguel' },
+          user(),
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof BadRequestException);
+        assert.match(err.message, /captação ou de usados/);
+        return true;
+      },
+    );
+    await assert.rejects(
+      () =>
+        service.create(
+          { identificador: 'CH-1', imovelId: 'i1', tipo: 'Usado' },
+          user(),
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof BadRequestException);
+        assert.match(err.message, /captação ou de usados/);
+        return true;
+      },
+    );
   });
 
   it('alterar o identificador preserva o id e grava o código anterior', async () => {

@@ -41,19 +41,21 @@ const RETIRADA_PROPRIA = new Set<Role>([
   Role.super_admin,
 ]);
 
+const imovelVinculoSelect = {
+  id: true,
+  tipo: true,
+  logradouro: true,
+  numero: true,
+  complemento: true,
+  bairro: true,
+  cidade: true,
+  captacoes: { select: { id: true }, take: 1 },
+  vendaUsado: { select: { id: true } },
+} satisfies Prisma.ImovelSelect;
+
 const chaveInclude = {
   empreendimento: { select: { id: true, nome: true } },
-  imovel: {
-    select: {
-      id: true,
-      tipo: true,
-      logradouro: true,
-      numero: true,
-      complemento: true,
-      bairro: true,
-      cidade: true,
-    },
-  },
+  imovel: { select: imovelVinculoSelect },
   responsavelAtual: { select: { id: true, name: true } },
   retiradoPor: { select: { id: true, name: true } },
   retiradaRegistradaPor: { select: { id: true, name: true } },
@@ -68,6 +70,23 @@ type Vinculo = {
   empreendimentoNome: string;
   imovelLabel: string;
 };
+
+export type MuralImovelOrigem = 'captacao' | 'usado' | 'ambos';
+
+function origemImovel(
+  imovel: {
+    captacoes?: { id: string }[];
+    vendaUsado?: { id: string } | null;
+  } | null,
+): MuralImovelOrigem | null {
+  if (!imovel) return null;
+  const captacao = (imovel.captacoes?.length ?? 0) > 0;
+  const usado = Boolean(imovel.vendaUsado);
+  if (captacao && usado) return 'ambos';
+  if (captacao) return 'captacao';
+  if (usado) return 'usado';
+  return null;
+}
 
 const TIPO_LABEL: Record<MuralChaveMovimentoTipo, string> = {
   cadastro: 'Cadastro',
@@ -209,17 +228,12 @@ export class MuralChavesService {
         take: 500,
       }),
       this.prisma.imovel.findMany({
-        where: { tenantId },
-        select: {
-          id: true,
-          tipo: true,
-          logradouro: true,
-          numero: true,
-          complemento: true,
-          bairro: true,
-          cidade: true,
+        where: {
+          tenantId,
+          OR: [{ captacoes: { some: {} } }, { vendaUsado: { isNot: null } }],
         },
-        orderBy: { createdAt: 'desc' },
+        select: imovelVinculoSelect,
+        orderBy: [{ logradouro: 'asc' }, { numero: 'asc' }],
         take: 500,
       }),
       this.prisma.user.findMany({
@@ -235,10 +249,11 @@ export class MuralChavesService {
     ]);
     return {
       empreendimentos,
-      imoveis: imoveis.map((imovel) => ({
-        id: imovel.id,
-        label: labelImovel(imovel, ''),
-      })),
+      imoveis: imoveis.flatMap((imovel) => {
+        const origem = origemImovel(imovel);
+        if (!origem) return [];
+        return [{ id: imovel.id, label: labelImovel(imovel, ''), origem }];
+      }),
       usuarios,
       tipos: juntarTipos(tiposUsados.map((item) => item.tipo)),
     };
@@ -737,19 +752,22 @@ export class MuralChavesService {
     const imovelId = dto.imovelId?.trim() || null;
     const empreendimentoId = dto.empreendimentoId?.trim() || null;
     const unidade = dto.unidade?.trim() ?? '';
-    if (!imovelId && !empreendimentoId) {
+    if (!imovelId) {
       throw new BadRequestException(
-        'Vincule a chave a um imóvel, a um empreendimento, ou aos dois.',
+        'Vincule a chave a um imóvel de captação ou de usados.',
       );
     }
-    const imovel = imovelId
-      ? await this.prisma.imovel.findFirst({
-          where: { id: imovelId, tenantId },
-          select: chaveInclude.imovel.select,
-        })
-      : null;
-    if (imovelId && !imovel) {
+    const imovel = await this.prisma.imovel.findFirst({
+      where: { id: imovelId, tenantId },
+      select: chaveInclude.imovel.select,
+    });
+    if (!imovel) {
       throw new BadRequestException('Imóvel não encontrado nesta imobiliária.');
+    }
+    if (!origemImovel(imovel)) {
+      throw new BadRequestException(
+        'A chave só pode ser vinculada a um imóvel de captação ou de usados.',
+      );
     }
     const empreendimento = empreendimentoId
       ? await this.prisma.empreendimento.findFirst({
@@ -930,6 +948,7 @@ export class MuralChavesService {
       unidade: row.unidade,
       imovelLabel: labelImovel(row.imovel, row.unidade),
       empreendimento: row.empreendimento,
+      origem: origemImovel(row.imovel),
       imovel: row.imovel
         ? { id: row.imovel.id, label: labelImovel(row.imovel, '') }
         : null,

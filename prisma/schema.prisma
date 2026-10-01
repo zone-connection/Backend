@@ -2570,6 +2570,7 @@ model MuralChave {
   /// Comparação única sem diferenciar maiúsculas (o texto exibido permanece o original).
   identificadorNorm String
 
+  /// Imóvel que está na captação, na venda de usados, ou nos dois.
   imovelId         String?
   imovel           Imovel?          @relation(fields: [imovelId], references: [id], onDelete: SetNull)
   empreendimentoId String?
