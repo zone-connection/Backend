@@ -14,6 +14,7 @@ import {
   AgendamentoStatus,
   AgendamentoTipo,
   CatalogType,
+  MuralChaveStatus,
   NotificacaoTipo,
   Prisma,
   Role,
@@ -66,6 +67,9 @@ const agendamentoSelect = {
   observacoes: true,
   funilStage: true,
   contaAtraso: true,
+  empreendimentoId: true,
+  muralChaveId: true,
+  chaveRetiradaEm: true,
   motivoRecusa: true,
   aprovadoAt: true,
   createdAt: true,
@@ -86,6 +90,8 @@ const agendamentoSelect = {
       corretor: { select: { id: true, name: true } },
     },
   },
+  empreendimento: { select: { id: true, nome: true } },
+  muralChave: { select: { id: true, identificador: true, status: true } },
 } as const;
 
 const ANIVERSARIO_ID_PREFIX = 'aniversario:';
@@ -579,6 +585,129 @@ export class AgendaService {
     return item;
   }
 
+  private chaveWindow(startsAt: Date, endsAt: Date | null) {
+    const end = endsAt ?? new Date(startsAt.getTime() + 60 * 60 * 1000);
+    return { start: startsAt, end };
+  }
+
+  private async assertChaveSemConflito(opts: {
+    tenantId: string;
+    muralChaveId: string;
+    identificador: string;
+    startsAt: Date;
+    endsAt: Date | null;
+    ignoreId?: string;
+  }) {
+    const window = this.chaveWindow(opts.startsAt, opts.endsAt);
+    const candidatos = await this.prisma.agendamento.findMany({
+      where: {
+        tenantId: opts.tenantId,
+        muralChaveId: opts.muralChaveId,
+        status: { not: AgendamentoStatus.cancelado },
+        ...(opts.ignoreId ? { id: { not: opts.ignoreId } } : {}),
+        startsAt: { lt: window.end },
+      },
+      select: { id: true, startsAt: true, endsAt: true },
+    });
+    const conflito = candidatos.find((item) => {
+      const other = this.chaveWindow(item.startsAt, item.endsAt);
+      return other.end > window.start;
+    });
+    if (conflito) {
+      throw new BadRequestException(
+        `A chave ${opts.identificador} já está reservada nesse horário.`,
+      );
+    }
+  }
+
+  private async resolveChaveVinculo(opts: {
+    tenantId: string;
+    tipo: AgendamentoTipo;
+    empreendimentoId?: string | null;
+    muralChaveId?: string | null;
+    startsAt: Date;
+    endsAt: Date | null;
+    ignoreId?: string;
+  }): Promise<{ empreendimentoId: string | null; muralChaveId: string | null }> {
+    const vincula =
+      opts.tipo === AgendamentoTipo.visita ||
+      opts.tipo === AgendamentoTipo.retirada_chave;
+    if (!vincula) {
+      return { empreendimentoId: null, muralChaveId: null };
+    }
+
+    const empreendimentoId = opts.empreendimentoId?.trim() || null;
+    const muralChaveId = opts.muralChaveId?.trim() || null;
+
+    if (opts.tipo === AgendamentoTipo.retirada_chave && !muralChaveId) {
+      throw new BadRequestException('Selecione a chave da retirada.');
+    }
+
+    if (empreendimentoId) {
+      const empreendimento = await this.prisma.empreendimento.findFirst({
+        where: { id: empreendimentoId, tenantId: opts.tenantId },
+        select: { id: true },
+      });
+      if (!empreendimento) {
+        throw new BadRequestException('Empreendimento não encontrado.');
+      }
+    }
+
+    if (!muralChaveId) {
+      return { empreendimentoId, muralChaveId: null };
+    }
+
+    const chave = await this.prisma.muralChave.findFirst({
+      where: { id: muralChaveId, tenantId: opts.tenantId },
+      select: {
+        id: true,
+        status: true,
+        identificador: true,
+        empreendimentoId: true,
+      },
+    });
+    if (!chave) {
+      throw new BadRequestException('Chave não encontrada.');
+    }
+
+    let mesmaReserva = false;
+    if (opts.ignoreId) {
+      const atual = await this.prisma.agendamento.findFirst({
+        where: { id: opts.ignoreId, tenantId: opts.tenantId },
+        select: { muralChaveId: true },
+      });
+      mesmaReserva = atual?.muralChaveId === chave.id;
+    }
+    if (chave.status === MuralChaveStatus.em_uso && !mesmaReserva) {
+      throw new BadRequestException(
+        `A chave ${chave.identificador} está em uso. A reserva fica disponível depois da devolução.`,
+      );
+    }
+    if (
+      empreendimentoId &&
+      chave.empreendimentoId &&
+      chave.empreendimentoId !== empreendimentoId
+    ) {
+      throw new BadRequestException(
+        'Esta chave não pertence ao empreendimento selecionado.',
+      );
+    }
+
+    await this.assertChaveSemConflito({
+      tenantId: opts.tenantId,
+      muralChaveId: chave.id,
+      identificador: chave.identificador,
+      startsAt: opts.startsAt,
+      endsAt: opts.endsAt,
+      ignoreId: opts.ignoreId,
+    });
+
+    return {
+      empreendimentoId: empreendimentoId ?? chave.empreendimentoId,
+      muralChaveId: chave.id,
+    };
+  }
+
   async create(dto: CreateAgendamentoDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
     const isPlatformAgenda = requester.role === Role.super_admin;
@@ -726,6 +855,17 @@ export class AgendaService {
       });
     }
 
+    const vinculo = isBloqueio
+      ? { empreendimentoId: null, muralChaveId: null }
+      : await this.resolveChaveVinculo({
+          tenantId,
+          tipo: dto.tipo as AgendamentoTipo,
+          empreendimentoId: dto.empreendimentoId,
+          muralChaveId: dto.muralChaveId,
+          startsAt,
+          endsAt,
+        });
+
     const needsApproval =
       !isBloqueio &&
       !atribuidoPara &&
@@ -764,6 +904,8 @@ export class AgendaService {
       observacoes: dto.observacoes?.trim() || null,
       funilStage: dto.funilStage?.trim() || null,
       contaAtraso: dto.tipo === 'tarefa' && dto.contaAtraso === true,
+      empreendimentoId: vinculo.empreendimentoId,
+      muralChaveId: vinculo.muralChaveId,
       ...(solicitacaoStatus === AgendamentoSolicitacaoStatus.aprovada
         ? {
             aprovadoPorId: requester.id,
@@ -903,6 +1045,8 @@ export class AgendaService {
         alvoTipo: true,
         alvoEquipeId: true,
         alvoGerenteId: true,
+        empreendimentoId: true,
+        muralChaveId: true,
         autor: { select: { role: true } },
       },
     });
@@ -996,6 +1140,36 @@ export class AgendaService {
     if (dto.local !== undefined) data.local = dto.local?.trim() || null;
     if (dto.observacoes !== undefined) {
       data.observacoes = dto.observacoes?.trim() || null;
+    }
+
+    if (
+      dto.empreendimentoId !== undefined ||
+      dto.muralChaveId !== undefined ||
+      dto.tipo !== undefined ||
+      dto.startsAt !== undefined ||
+      dto.endsAt !== undefined
+    ) {
+      const vinculo = await this.resolveChaveVinculo({
+        tenantId,
+        tipo: nextTipo,
+        empreendimentoId:
+          dto.empreendimentoId !== undefined
+            ? dto.empreendimentoId
+            : existing.empreendimentoId,
+        muralChaveId:
+          dto.muralChaveId !== undefined
+            ? dto.muralChaveId
+            : existing.muralChaveId,
+        startsAt,
+        endsAt,
+        ignoreId: existing.id,
+      });
+      data.empreendimento = vinculo.empreendimentoId
+        ? { connect: { id: vinculo.empreendimentoId } }
+        : { disconnect: true };
+      data.muralChave = vinculo.muralChaveId
+        ? { connect: { id: vinculo.muralChaveId } }
+        : { disconnect: true };
     }
 
     if (
@@ -1761,6 +1935,9 @@ export class AgendaService {
           observacoes: `Aniversário · ${perfil} (somente leitura).`,
           funilStage: null,
           contaAtraso: false,
+          empreendimentoId: null,
+          muralChaveId: null,
+          chaveRetiradaEm: null,
           motivoRecusa: null,
           aprovadoAt: null,
           createdAt: now,
@@ -1777,6 +1954,8 @@ export class AgendaService {
             : null,
           alvoGerente: null,
           lead: null,
+          empreendimento: null,
+          muralChave: null,
           isAniversario: true,
         });
       }

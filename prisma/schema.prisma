@@ -990,6 +990,7 @@ model Empreendimento {
   documentacoes Documentacao[]
   cadastroVendas CadastroVenda[]
   muralChaves    MuralChave[]
+  agendamentos  Agendamento[]
   propostas     Proposta[]
   propostaVinculos PropostaVinculo[]
   leads         Lead[]
@@ -1338,6 +1339,8 @@ enum AgendamentoTipo {
   outro
   /// Horário travado (admin/gerente) — impede novos agendamentos sobrepostos.
   bloqueio
+  /// Reserva de chave no mural, sem visita.
+  retirada_chave
 }
 
 /// Frequência de materialização de bloqueios recorrentes.
@@ -1430,6 +1433,14 @@ model Agendamento {
   /// Tarefa registrada fica false: tira o lead do atraso e não gera atraso.
   contaAtraso  Boolean @default(false)
 
+  /// Visita de empreendimento e/ou reserva de chave. Agendar não tira a chave do gancho.
+  empreendimentoId String?
+  empreendimento   Empreendimento? @relation(fields: [empreendimentoId], references: [id], onDelete: SetNull)
+  muralChaveId     String?
+  muralChave       MuralChave?     @relation(fields: [muralChaveId], references: [id], onDelete: SetNull)
+  /// Preenchido quando a retirada no mural confirma a reserva.
+  chaveRetiradaEm  DateTime?
+
   aprovadoPorId String?
   aprovadoPor   User?     @relation("AgendamentoAprovador", fields: [aprovadoPorId], references: [id], onDelete: SetNull)
   aprovadoAt    DateTime?
@@ -1453,6 +1464,8 @@ model Agendamento {
   @@index([alvoTipo])
   @@index([alvoEquipeId])
   @@index([alvoGerenteId])
+  @@index([empreendimentoId])
+  @@index([muralChaveId])
   @@map("agendamentos")
 }
 
@@ -2597,6 +2610,7 @@ model MuralChave {
   observacoes String @default("")
 
   movimentos MuralChaveMovimento[]
+  agendamentos Agendamento[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

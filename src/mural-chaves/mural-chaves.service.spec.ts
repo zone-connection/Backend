@@ -229,6 +229,7 @@ describe('MuralChavesService', () => {
         muralChaveMovimento: { create: async () => ({}) },
         user: { findMany: async () => [{ id: 'u1', role: Role.admin, permissions: null }] },
         notificacao: { createMany: async () => ({ count: 1 }) },
+        agendamento: { findMany: async () => [], update: async () => ({}) },
       }) as never,
     );
     const result = await service.retirar(
@@ -239,6 +240,50 @@ describe('MuralChavesService', () => {
     assert.equal(status, MuralChaveStatus.em_uso);
     assert.equal(result.statusLabel, 'Em uso');
     assert.equal(result.comQuem, 'Corretor João');
+  });
+
+  it('retirada confirma a reserva da agenda sem criar outro compromisso', async () => {
+    const confirmados: string[] = [];
+    const service = new MuralChavesService(
+      txPrisma({
+        muralChave: {
+          findFirst: async () => chave(),
+          update: async () =>
+            chave({
+              status: MuralChaveStatus.em_uso,
+              retiradoPor: { id: 'c1', name: 'João' },
+              retiradaRegistradaPor: { id: 'c1', name: 'João' },
+            }),
+        },
+        muralChaveMovimento: { create: async () => ({}) },
+        user: { findMany: async () => [] },
+        notificacao: { createMany: async () => ({ count: 0 }) },
+        agendamento: {
+          findMany: async () => [
+            {
+              id: 'ag-fora',
+              startsAt: new Date('2026-09-30T15:00:00.000Z'),
+              endsAt: new Date('2026-09-30T16:00:00.000Z'),
+              autorId: 'c1',
+              atribuidoParaId: null,
+            },
+            {
+              id: 'ag-no-horario',
+              startsAt: new Date(Date.now() - 10 * 60 * 1000),
+              endsAt: new Date(Date.now() + 50 * 60 * 1000),
+              autorId: 'c1',
+              atribuidoParaId: null,
+            },
+          ],
+          update: async (args: { where: { id: string } }) => {
+            confirmados.push(args.where.id);
+            return {};
+          },
+        },
+      }) as never,
+    );
+    await service.retirar('k1', {}, user({ id: 'c1', role: Role.corretor, name: 'João' }));
+    assert.deepEqual(confirmados, ['ag-no-horario']);
   });
 
   it('não retira uma chave que já está em uso', async () => {
@@ -381,6 +426,7 @@ describe('MuralChavesService', () => {
           },
         },
         notificacao: { createMany: async () => ({ count: 1 }) },
+        agendamento: { findMany: async () => [], update: async () => ({}) },
       }) as never,
     );
     const result = await service.retiradaManual(

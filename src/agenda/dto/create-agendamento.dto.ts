@@ -23,6 +23,7 @@ export const AGENDAMENTO_TIPOS = [
   'tarefa',
   'outro',
   'bloqueio',
+  'retirada_chave',
 ] as const;
 
 export const AGENDAMENTO_STATUS = [
@@ -143,4 +144,14 @@ export class CreateAgendamentoDto {
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsISO8601({}, { message: 'Data final da recorrência inválida.' })
   recurrenceUntil?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Empreendimento inválido.' })
+  empreendimentoId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Chave inválida.' })
+  muralChaveId?: string | null;
 }

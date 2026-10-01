@@ -521,6 +521,12 @@ export class MuralChavesService {
         eventoChave: `retirada:${chave.id}:${retiradaEm.toISOString()}`,
         empreendimentoId: chave.empreendimentoId,
       });
+      await this.confirmarReservaAgenda(tx, {
+        tenantId,
+        chaveId: chave.id,
+        retiradaEm,
+        userId: user.id,
+      });
       return chave;
     });
     return this.expose(updated);
@@ -572,9 +578,58 @@ export class MuralChavesService {
         eventoChave: `retirada-manual:${chave.id}:${retiradaEm.toISOString()}`,
         empreendimentoId: chave.empreendimentoId,
       });
+      await this.confirmarReservaAgenda(tx, {
+        tenantId,
+        chaveId: chave.id,
+        retiradaEm,
+        userId: corretor.id,
+      });
       return chave;
     });
     return this.expose(updated);
+  }
+
+  /** A retirada confirma a reserva da agenda. Não cria outro compromisso. */
+  private async confirmarReservaAgenda(
+    tx: Prisma.TransactionClient,
+    opts: {
+      tenantId: string;
+      chaveId: string;
+      retiradaEm: Date;
+      userId: string;
+    },
+  ) {
+    const candidatos = await tx.agendamento.findMany({
+      where: {
+        tenantId: opts.tenantId,
+        muralChaveId: opts.chaveId,
+        status: 'agendado',
+        chaveRetiradaEm: null,
+      },
+      select: {
+        id: true,
+        startsAt: true,
+        endsAt: true,
+        autorId: true,
+        atribuidoParaId: true,
+      },
+    });
+    const noHorario = candidatos.filter((item) => {
+      const inicio = new Date(item.startsAt.getTime() - 30 * 60 * 1000);
+      const fim =
+        item.endsAt ?? new Date(item.startsAt.getTime() + 2 * 60 * 60 * 1000);
+      return opts.retiradaEm >= inicio && opts.retiradaEm <= fim;
+    });
+    const escolhido =
+      noHorario.find(
+        (item) =>
+          item.atribuidoParaId === opts.userId || item.autorId === opts.userId,
+      ) ?? noHorario[0];
+    if (!escolhido) return;
+    await tx.agendamento.update({
+      where: { id: escolhido.id },
+      data: { chaveRetiradaEm: opts.retiradaEm },
+    });
   }
 
   async devolver(id: string, dto: DevolverMuralChaveDto, user: AuthenticatedUser) {
