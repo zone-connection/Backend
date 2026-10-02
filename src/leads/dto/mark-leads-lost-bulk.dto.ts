@@ -29,7 +29,7 @@ export class MarkLeadsLostBulkDto {
   motivo!: string;
 }
 
-/** Exclusão definitiva em lote (só leads já perdidos). */
+/** Exclusão definitiva em lote (admin). */
 export class RemoveLeadsBulkDto {
   @IsArray()
   @ArrayMinSize(1, { message: 'Selecione ao menos 1 registro.' })

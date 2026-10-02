@@ -1665,7 +1665,8 @@ export class LeadsService {
 
   async remove(id: string, requester: AuthenticatedUser): Promise<void> {
     const tenantId = requireTenantId(requester);
-    // Hard delete só para admin/super_admin, e apenas de leads já perdidos.
+    // Hard delete só para admin/super_admin.
+    // Lead ativo pode sair direto. Cliente só depois de marcado como perdido.
     if (!canViewLostLeads(requester)) {
       throw new ForbiddenException(
         'Para remover um lead da operação, informe o motivo — ele irá para Leads Perdidos.',
@@ -1673,14 +1674,14 @@ export class LeadsService {
     }
     const lead = await this.prisma.lead.findFirst({
       where: { id, tenantId },
-      select: { id: true, perdidoAt: true },
+      select: { id: true, perdidoAt: true, tipo: true },
     });
     if (!lead) {
       throw new NotFoundException('Lead não encontrado.');
     }
-    if (!lead.perdidoAt) {
+    if (!lead.perdidoAt && lead.tipo !== ContatoTipo.lead) {
       throw new BadRequestException(
-        'Marque o lead como perdido antes de excluí-lo definitivamente.',
+        'Marque o registro como perdido antes de excluí-lo definitivamente.',
       );
     }
 
@@ -1728,7 +1729,7 @@ export class LeadsService {
       where: {
         tenantId,
         id: { in: unique },
-        perdidoAt: { not: null },
+        OR: [{ perdidoAt: { not: null } }, { tipo: ContatoTipo.lead }],
       },
       select: { id: true },
     });

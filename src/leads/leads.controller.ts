@@ -102,7 +102,7 @@ export class LeadsController {
     return this.leadsService.markLostMany(dto.ids, dto.motivo, requester);
   }
 
-  /** Exclusão definitiva em lote — só admin, leads já perdidos. */
+  /** Exclusão definitiva em lote — só admin. */
   @Post('perdidos/excluir')
   @UseGuards(RolesGuard)
   @Roles(Role.admin, Role.super_admin)
@@ -243,7 +243,7 @@ export class LeadsController {
     return this.leadsService.listPrazoAdiamentos(id, requester);
   }
 
-  /** Exclusão definitiva — só admin, e só de leads já perdidos. */
+  /** Exclusão definitiva — só admin. */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(RolesGuard)
