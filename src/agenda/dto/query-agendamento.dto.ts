@@ -32,4 +32,14 @@ export class QueryAgendamentoDto {
   @IsOptional()
   @IsISO8601({}, { message: 'Data final inválida.' })
   to?: string;
+
+  /** Mostra na agenda principal as visitas deste empreendimento. */
+  @IsOptional()
+  @IsUUID('4', { message: 'Empreendimento inválido.' })
+  empreendimentoId?: string;
+
+  /** Mostra na agenda principal as visitas deste imóvel. */
+  @IsOptional()
+  @IsUUID('4', { message: 'Imóvel inválido.' })
+  imovelId?: string;
 }

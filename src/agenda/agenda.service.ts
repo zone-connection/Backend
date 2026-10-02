@@ -146,6 +146,9 @@ export class AgendaService {
     requester: AuthenticatedUser,
   ): Promise<AgendamentoListItem[]> {
     const tenantId = requireTenantId(requester);
+    const visitasDoRecurso = await this.listarVisitasDoRecurso(tenantId, query);
+    if (visitasDoRecurso) return visitasDoRecurso;
+
     if (requester.role === Role.super_admin) {
       const where: Prisma.AgendamentoWhereInput = {
         tenantId,
@@ -273,6 +276,40 @@ export class AgendaService {
       (a, b) =>
         new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );
+  }
+
+  /** Visitas de um imóvel ou empreendimento, na mesma agenda do calendário. */
+  private async listarVisitasDoRecurso(
+    tenantId: string,
+    query: QueryAgendamentoDto,
+  ): Promise<AgendamentoListItem[] | null> {
+    const empreendimentoId = query.empreendimentoId?.trim() || null;
+    const imovelId = query.imovelId?.trim() || null;
+    if (!empreendimentoId && !imovelId) return null;
+
+    const where: Prisma.AgendamentoWhereInput = {
+      tenantId,
+      tipo: AgendamentoTipo.visita,
+      status: query.status ?? { not: AgendamentoStatus.cancelado },
+      ...(imovelId && empreendimentoId
+        ? {
+            OR: [{ imovelId }, { empreendimentoId, imovelId: null }],
+          }
+        : empreendimentoId
+          ? { empreendimentoId }
+          : { imovelId }),
+    };
+    if (query.from || query.to) {
+      where.startsAt = {};
+      if (query.from) where.startsAt.gte = new Date(query.from);
+      if (query.to) where.startsAt.lte = new Date(query.to);
+    }
+
+    return this.prisma.agendamento.findMany({
+      where,
+      select: agendamentoSelect,
+      orderBy: { startsAt: 'asc' },
+    });
   }
 
   /** Solicitações pendentes: gerente aprova da equipe; corretor acompanha as próprias. Admin não recebe. */
