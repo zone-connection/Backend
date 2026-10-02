@@ -397,6 +397,8 @@ model User {
   // Tarefas atribuídas a este corretor por gerente/admin.
   agendamentosAtribuidos Agendamento[] @relation("AgendamentoAtribuido")
 
+  agendamentosHistorico AgendamentoHistorico[] @relation("AgendamentoHistoricoAutor")
+
   // Notificações in-app destinadas a este usuário.
   notificacoes Notificacao[] @relation("NotificacaoDestinatario")
 
@@ -1436,6 +1438,13 @@ model Agendamento {
   /// Visita de empreendimento e/ou reserva de chave. Agendar não tira a chave do gancho.
   empreendimentoId String?
   empreendimento   Empreendimento? @relation(fields: [empreendimentoId], references: [id], onDelete: SetNull)
+  /// Imóvel usado. A visita ocupa este imóvel ou, sem ele, o empreendimento inteiro.
+  imovelId         String?
+  imovel           Imovel?         @relation(fields: [imovelId], references: [id], onDelete: SetNull)
+  /// Quando ativa, a visita ocupa o recurso por 2 horas a partir do início.
+  toleranciaAtiva  Boolean         @default(false)
+  /// Fim do período em que o imóvel/empreendimento fica indisponível.
+  bloqueadoAte     DateTime?
   muralChaveId     String?
   muralChave       MuralChave?     @relation(fields: [muralChaveId], references: [id], onDelete: SetNull)
   /// Preenchido quando a retirada no mural confirma a reserva.
@@ -1450,6 +1459,7 @@ model Agendamento {
   updatedAt DateTime @updatedAt
 
   googleCalendarEvents UserGoogleCalendarEvent[]
+  historico            AgendamentoHistorico[]
 
   @@index([tenantId])
   @@index([leadId])
@@ -1465,8 +1475,34 @@ model Agendamento {
   @@index([alvoEquipeId])
   @@index([alvoGerenteId])
   @@index([empreendimentoId])
+  @@index([imovelId])
   @@index([muralChaveId])
   @@map("agendamentos")
+}
+
+enum AgendamentoHistoricoAcao {
+  criado
+  alterado
+  cancelado
+  concluido
+  excluido
+}
+
+/// Registro de criação, mudança e cancelamento de uma visita.
+model AgendamentoHistorico {
+  id            String                     @id @default(uuid())
+  tenantId      String
+  agendamentoId String?
+  agendamento   Agendamento?               @relation(fields: [agendamentoId], references: [id], onDelete: SetNull)
+  autorId       String
+  autor         User                       @relation("AgendamentoHistoricoAutor", fields: [autorId], references: [id], onDelete: Cascade)
+  acao          AgendamentoHistoricoAcao
+  detalhe       String                     @default("")
+  createdAt     DateTime                   @default(now())
+
+  @@index([tenantId])
+  @@index([agendamentoId, createdAt])
+  @@map("agendamento_historicos")
 }
 
 /// Conexão OAuth do Google Calendar — um refresh token por usuário CRM.
@@ -1941,6 +1977,7 @@ model Imovel {
   chaves     ImovelChave[]
   muralChaves MuralChave[]
   posVendas  VendaUsadoPosVenda[]
+  agendamentos Agendamento[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

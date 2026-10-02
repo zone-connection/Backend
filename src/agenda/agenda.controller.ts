@@ -18,6 +18,7 @@ import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { CreateAgendamentoDto } from './dto/create-agendamento.dto';
 import { UpdateAgendamentoDto } from './dto/update-agendamento.dto';
 import { QueryAgendamentoDto } from './dto/query-agendamento.dto';
+import { QueryDisponibilidadeDto } from './dto/query-disponibilidade.dto';
 import { RecusarAgendamentoDto } from './dto/recusar-agendamento.dto';
 import { AgendaService } from './agenda.service';
 
@@ -51,6 +52,14 @@ export class AgendaController {
     return this.agendaService.syncLembretes(requester);
   }
 
+  @Get('disponibilidade')
+  disponibilidade(
+    @Query() query: QueryDisponibilidadeDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.agendaService.disponibilidadeVisitas(query, requester);
+  }
+
   @Get('kpis')
   kpis(
     @Query() query: QueryAgendamentoDto,
@@ -60,6 +69,14 @@ export class AgendaController {
       corretorId: query.corretorId,
       equipeId: query.equipeId,
     });
+  }
+
+  @Get(':id/historico')
+  historico(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.agendaService.historicoVisita(id, requester);
   }
 
   @Get(':id')

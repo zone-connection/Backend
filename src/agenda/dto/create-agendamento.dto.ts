@@ -152,6 +152,16 @@ export class CreateAgendamentoDto {
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Imóvel inválido.' })
+  imovelId?: string | null;
+
+  /** Ocupa o imóvel/empreendimento por 2 horas a partir do início. */
+  @IsOptional()
+  @IsBoolean()
+  toleranciaAtiva?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID('4', { message: 'Chave inválida.' })
   muralChaveId?: string | null;
 }

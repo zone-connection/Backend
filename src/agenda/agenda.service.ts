@@ -9,6 +9,7 @@ import { randomUUID } from 'crypto';
 import {
   AgendamentoAlvo,
   AgendamentoEscopo,
+  AgendamentoHistoricoAcao,
   AgendamentoRecurrenceFreq,
   AgendamentoSolicitacaoStatus,
   AgendamentoStatus,
@@ -32,6 +33,12 @@ import { isCorretorLike } from '../common/utils/roles';
 import { CreateAgendamentoDto } from './dto/create-agendamento.dto';
 import { UpdateAgendamentoDto } from './dto/update-agendamento.dto';
 import { QueryAgendamentoDto } from './dto/query-agendamento.dto';
+import { QueryDisponibilidadeDto } from './dto/query-disponibilidade.dto';
+import {
+  janelaVisita,
+  janelasConflitam,
+  mesmoRecursoVisita,
+} from './visita-disponibilidade';
 
 const MAX_RECURRENCE_OCCURRENCES = 366;
 
@@ -68,6 +75,9 @@ const agendamentoSelect = {
   funilStage: true,
   contaAtraso: true,
   empreendimentoId: true,
+  imovelId: true,
+  toleranciaAtiva: true,
+  bloqueadoAte: true,
   muralChaveId: true,
   chaveRetiradaEm: true,
   motivoRecusa: true,
@@ -91,6 +101,15 @@ const agendamentoSelect = {
     },
   },
   empreendimento: { select: { id: true, nome: true } },
+  imovel: {
+    select: {
+      id: true,
+      logradouro: true,
+      numero: true,
+      bairro: true,
+      cidade: true,
+    },
+  },
   muralChave: { select: { id: true, identificador: true, status: true } },
 } as const;
 
@@ -620,6 +639,274 @@ export class AgendaService {
     }
   }
 
+  private horaAgenda(value: Date) {
+    return value.toLocaleString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  private imovelResumo(imovel: {
+    logradouro: string;
+    numero: string;
+    bairro: string;
+    cidade: string;
+  } | null) {
+    if (!imovel) return null;
+    const endereco = [imovel.logradouro, imovel.numero].filter(Boolean).join(', ');
+    const lugar = [imovel.bairro, imovel.cidade].filter(Boolean).join(' · ');
+    return [endereco, lugar].filter(Boolean).join(' — ') || 'Imóvel';
+  }
+
+  private async resolveImovelId(tenantId: string, imovelId?: string | null) {
+    const id = imovelId?.trim() || null;
+    if (!id) return null;
+    const imovel = await this.prisma.imovel.findFirst({
+      where: { id, tenantId },
+      select: { id: true },
+    });
+    if (!imovel) throw new BadRequestException('Imóvel não encontrado.');
+    return imovel.id;
+  }
+
+  private async assertVisitaDisponivel(opts: {
+    tenantId: string;
+    tipo: AgendamentoTipo;
+    empreendimentoId: string | null;
+    imovelId: string | null;
+    startsAt: Date;
+    endsAt: Date | null;
+    toleranciaAtiva: boolean;
+    ignoreId?: string;
+  }): Promise<{ bloqueadoAte: Date | null; toleranciaAtiva: boolean; imovelId: string | null }> {
+    if (opts.tipo !== AgendamentoTipo.visita) {
+      return { bloqueadoAte: null, toleranciaAtiva: false, imovelId: null };
+    }
+    const janela = janelaVisita({
+      startsAt: opts.startsAt,
+      endsAt: opts.endsAt,
+      toleranciaAtiva: opts.toleranciaAtiva,
+    });
+    if (!opts.imovelId && !opts.empreendimentoId) {
+      return {
+        bloqueadoAte: janela.end,
+        toleranciaAtiva: opts.toleranciaAtiva,
+        imovelId: null,
+      };
+    }
+
+    const or: Prisma.AgendamentoWhereInput[] = [];
+    if (opts.imovelId) or.push({ imovelId: opts.imovelId });
+    if (opts.empreendimentoId) or.push({ empreendimentoId: opts.empreendimentoId });
+
+    const candidatos = await this.prisma.agendamento.findMany({
+      where: {
+        tenantId: opts.tenantId,
+        tipo: AgendamentoTipo.visita,
+        status: AgendamentoStatus.agendado,
+        ...(opts.ignoreId ? { id: { not: opts.ignoreId } } : {}),
+        OR: or,
+        startsAt: { lt: janela.end },
+      },
+      select: {
+        id: true,
+        titulo: true,
+        startsAt: true,
+        endsAt: true,
+        bloqueadoAte: true,
+        toleranciaAtiva: true,
+        imovelId: true,
+        empreendimentoId: true,
+        autor: { select: { name: true } },
+        atribuidoPara: { select: { name: true } },
+      },
+    });
+
+    const recurso = {
+      imovelId: opts.imovelId,
+      empreendimentoId: opts.empreendimentoId,
+    };
+    const conflito = candidatos.find((item) => {
+      if (
+        !mesmoRecursoVisita(recurso, {
+          imovelId: item.imovelId,
+          empreendimentoId: item.empreendimentoId,
+        })
+      ) {
+        return false;
+      }
+      const outra = janelaVisita({
+        startsAt: item.startsAt,
+        endsAt: item.bloqueadoAte ?? item.endsAt,
+        toleranciaAtiva: item.bloqueadoAte ? false : item.toleranciaAtiva,
+      });
+      const fim = item.bloqueadoAte ?? outra.end;
+      return janelasConflitam(janela, { start: item.startsAt, end: fim });
+    });
+
+    if (conflito) {
+      const fim = conflito.bloqueadoAte
+        ?? janelaVisita({
+          startsAt: conflito.startsAt,
+          endsAt: conflito.endsAt,
+          toleranciaAtiva: conflito.toleranciaAtiva,
+        }).end;
+      const corretor = conflito.atribuidoPara?.name ?? conflito.autor.name;
+      throw new BadRequestException(
+        `Horário indisponível. A visita "${conflito.titulo}" de ${corretor} ocupa este imóvel/empreendimento de ${this.horaAgenda(conflito.startsAt)} até ${this.horaAgenda(fim)}.`,
+      );
+    }
+
+    return {
+      bloqueadoAte: janela.end,
+      toleranciaAtiva: opts.toleranciaAtiva,
+      imovelId: opts.imovelId,
+    };
+  }
+
+  private detalheVisita(input: {
+    titulo: string;
+    startsAt: Date;
+    bloqueadoAte: Date | null;
+    toleranciaAtiva: boolean;
+    corretorNome: string;
+    empreendimentoNome?: string | null;
+    imovelLabel?: string | null;
+  }) {
+    const onde =
+      [input.empreendimentoNome, input.imovelLabel].filter(Boolean).join(' · ') ||
+      'sem imóvel informado';
+    const fim = input.bloqueadoAte
+      ? this.horaAgenda(input.bloqueadoAte)
+      : this.horaAgenda(input.startsAt);
+    const tolerancia = input.toleranciaAtiva
+      ? 'Tolerância de 2 horas ativada.'
+      : 'Sem tolerância de 2 horas.';
+    return `${input.titulo}. ${onde}. Corretor ${input.corretorNome}. Horário informado ${this.horaAgenda(input.startsAt)}. Período bloqueado até ${fim}. ${tolerancia}`;
+  }
+
+  private async registrarHistoricoVisita(input: {
+    tenantId: string;
+    agendamentoId: string;
+    autorId: string;
+    acao: AgendamentoHistoricoAcao;
+    detalhe: string;
+  }) {
+    await this.prisma.agendamentoHistorico.create({
+      data: {
+        tenantId: input.tenantId,
+        agendamentoId: input.agendamentoId,
+        autorId: input.autorId,
+        acao: input.acao,
+        detalhe: input.detalhe,
+      },
+    });
+  }
+
+  async disponibilidadeVisitas(
+    query: QueryDisponibilidadeDto,
+    requester: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(requester);
+    const empreendimentoId = query.empreendimentoId?.trim() || null;
+    const imovelId = query.imovelId?.trim() || null;
+    if (!empreendimentoId && !imovelId) {
+      throw new BadRequestException(
+        'Selecione o empreendimento ou o imóvel para ver a agenda.',
+      );
+    }
+    const from = new Date(query.from);
+    const to = new Date(query.to);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+      throw new BadRequestException('Período da agenda inválido.');
+    }
+
+    const visitas = await this.prisma.agendamento.findMany({
+      where: {
+        tenantId,
+        tipo: AgendamentoTipo.visita,
+        status: AgendamentoStatus.agendado,
+        ...(imovelId && empreendimentoId
+          ? {
+              OR: [
+                { imovelId },
+                { empreendimentoId, imovelId: null },
+              ],
+            }
+          : empreendimentoId
+            ? { empreendimentoId }
+            : { imovelId: imovelId! }),
+        AND: [
+          { startsAt: { lt: to } },
+          {
+            OR: [
+              { startsAt: { gte: from } },
+              { bloqueadoAte: { gt: from } },
+              { endsAt: { gt: from } },
+            ],
+          },
+        ],
+      },
+      select: agendamentoSelect,
+      orderBy: { startsAt: 'asc' },
+    });
+
+    const doDia = visitas.filter((item) => {
+      const fim = item.bloqueadoAte ?? item.endsAt ?? item.startsAt;
+      return fim > from;
+    });
+
+    return {
+      total: doDia.length,
+      visitas: doDia.map((item) => ({
+        id: item.id,
+        titulo: item.titulo,
+        startsAt: item.startsAt,
+        endsAt: item.endsAt,
+        bloqueadoAte: item.bloqueadoAte,
+        toleranciaAtiva: item.toleranciaAtiva,
+        corretorNome: item.atribuidoPara?.name ?? item.autor.name,
+        empreendimentoId: item.empreendimentoId,
+        empreendimentoNome: item.empreendimento?.nome ?? null,
+        imovelId: item.imovelId,
+        imovelLabel: this.imovelResumo(item.imovel),
+      })),
+    };
+  }
+
+  async historicoVisita(id: string, requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    const item = await this.prisma.agendamento.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        leadId: true,
+        autorId: true,
+        atribuidoParaId: true,
+        tipo: true,
+        alvoTipo: true,
+        alvoEquipeId: true,
+        alvoGerenteId: true,
+      },
+    });
+    if (!item) throw new NotFoundException('Agendamento não encontrado.');
+    await this.ensureAgendamentoAccessible(item, requester);
+    return this.prisma.agendamentoHistorico.findMany({
+      where: { tenantId, agendamentoId: id },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        acao: true,
+        detalhe: true,
+        createdAt: true,
+        autor: { select: { id: true, name: true } },
+      },
+    });
+  }
+
   private async resolveChaveVinculo(opts: {
     tenantId: string;
     tipo: AgendamentoTipo;
@@ -866,6 +1153,22 @@ export class AgendaService {
           endsAt,
         });
 
+    const imovelId = isBloqueio
+      ? null
+      : await this.resolveImovelId(
+          tenantId,
+          dto.tipo === 'visita' ? dto.imovelId : null,
+        );
+    const ocupacao = await this.assertVisitaDisponivel({
+      tenantId,
+      tipo: isBloqueio ? AgendamentoTipo.bloqueio : (dto.tipo as AgendamentoTipo),
+      empreendimentoId: vinculo.empreendimentoId,
+      imovelId,
+      startsAt,
+      endsAt,
+      toleranciaAtiva: dto.tipo === 'visita' && dto.toleranciaAtiva === true,
+    });
+
     const needsApproval =
       !isBloqueio &&
       !atribuidoPara &&
@@ -905,6 +1208,9 @@ export class AgendaService {
       funilStage: dto.funilStage?.trim() || null,
       contaAtraso: dto.tipo === 'tarefa' && dto.contaAtraso === true,
       empreendimentoId: vinculo.empreendimentoId,
+      imovelId: ocupacao.imovelId,
+      toleranciaAtiva: ocupacao.toleranciaAtiva,
+      bloqueadoAte: ocupacao.bloqueadoAte,
       muralChaveId: vinculo.muralChaveId,
       ...(solicitacaoStatus === AgendamentoSolicitacaoStatus.aprovada
         ? {
@@ -941,6 +1247,24 @@ export class AgendaService {
         },
         select: agendamentoSelect,
         orderBy: { startsAt: 'asc' },
+      });
+    }
+
+    if (created.tipo === AgendamentoTipo.visita) {
+      await this.registrarHistoricoVisita({
+        tenantId,
+        agendamentoId: created.id,
+        autorId: requester.id,
+        acao: AgendamentoHistoricoAcao.criado,
+        detalhe: this.detalheVisita({
+          titulo: created.titulo,
+          startsAt: created.startsAt,
+          bloqueadoAte: created.bloqueadoAte,
+          toleranciaAtiva: created.toleranciaAtiva,
+          corretorNome: created.atribuidoPara?.name ?? created.autor.name,
+          empreendimentoNome: created.empreendimento?.nome,
+          imovelLabel: this.imovelResumo(created.imovel),
+        }),
       });
     }
 
@@ -1038,6 +1362,7 @@ export class AgendaService {
         autorId: true,
         atribuidoParaId: true,
         tipo: true,
+        status: true,
         startsAt: true,
         endsAt: true,
         solicitacaoStatus: true,
@@ -1046,8 +1371,12 @@ export class AgendaService {
         alvoEquipeId: true,
         alvoGerenteId: true,
         empreendimentoId: true,
+        imovelId: true,
+        toleranciaAtiva: true,
+        bloqueadoAte: true,
         muralChaveId: true,
-        autor: { select: { role: true } },
+        titulo: true,
+        autor: { select: { role: true, name: true } },
       },
     });
     if (!existing) {
@@ -1142,20 +1471,36 @@ export class AgendaService {
       data.observacoes = dto.observacoes?.trim() || null;
     }
 
+    const nextEmpreendimentoId =
+      dto.empreendimentoId !== undefined
+        ? dto.empreendimentoId
+        : existing.empreendimentoId;
+    const nextImovelId =
+      nextTipo === AgendamentoTipo.visita
+        ? dto.imovelId !== undefined
+          ? await this.resolveImovelId(tenantId, dto.imovelId)
+          : existing.imovelId
+        : null;
+    const nextTolerancia =
+      nextTipo === AgendamentoTipo.visita &&
+      (dto.toleranciaAtiva !== undefined
+        ? dto.toleranciaAtiva === true
+        : existing.toleranciaAtiva);
+
     if (
       dto.empreendimentoId !== undefined ||
       dto.muralChaveId !== undefined ||
+      dto.imovelId !== undefined ||
+      dto.toleranciaAtiva !== undefined ||
       dto.tipo !== undefined ||
       dto.startsAt !== undefined ||
-      dto.endsAt !== undefined
+      dto.endsAt !== undefined ||
+      dto.status !== undefined
     ) {
       const vinculo = await this.resolveChaveVinculo({
         tenantId,
         tipo: nextTipo,
-        empreendimentoId:
-          dto.empreendimentoId !== undefined
-            ? dto.empreendimentoId
-            : existing.empreendimentoId,
+        empreendimentoId: nextEmpreendimentoId,
         muralChaveId:
           dto.muralChaveId !== undefined
             ? dto.muralChaveId
@@ -1164,9 +1509,36 @@ export class AgendaService {
         endsAt,
         ignoreId: existing.id,
       });
+      const statusBloqueia =
+        (dto.status as AgendamentoStatus | undefined) ?? existing.status;
+      const ocupacao =
+        statusBloqueia === AgendamentoStatus.agendado
+          ? await this.assertVisitaDisponivel({
+              tenantId,
+              tipo: nextTipo,
+              empreendimentoId: vinculo.empreendimentoId,
+              imovelId: nextImovelId,
+              startsAt,
+              endsAt,
+              toleranciaAtiva: nextTolerancia,
+              ignoreId: existing.id,
+            })
+          : {
+              bloqueadoAte:
+                statusBloqueia === AgendamentoStatus.cancelado
+                  ? null
+                  : existing.bloqueadoAte,
+              toleranciaAtiva: nextTolerancia,
+              imovelId: nextImovelId,
+            };
       data.empreendimento = vinculo.empreendimentoId
         ? { connect: { id: vinculo.empreendimentoId } }
         : { disconnect: true };
+      data.imovel = ocupacao.imovelId
+        ? { connect: { id: ocupacao.imovelId } }
+        : { disconnect: true };
+      data.toleranciaAtiva = ocupacao.toleranciaAtiva;
+      data.bloqueadoAte = ocupacao.bloqueadoAte;
       data.muralChave = vinculo.muralChaveId
         ? { connect: { id: vinculo.muralChaveId } }
         : { disconnect: true };
@@ -1192,6 +1564,32 @@ export class AgendaService {
       data,
       select: agendamentoSelect,
     });
+    if (
+      updated.tipo === AgendamentoTipo.visita ||
+      existing.tipo === AgendamentoTipo.visita
+    ) {
+      const acao =
+        updated.status === AgendamentoStatus.cancelado
+          ? AgendamentoHistoricoAcao.cancelado
+          : updated.status === AgendamentoStatus.concluido
+            ? AgendamentoHistoricoAcao.concluido
+            : AgendamentoHistoricoAcao.alterado;
+      await this.registrarHistoricoVisita({
+        tenantId,
+        agendamentoId: updated.id,
+        autorId: requester.id,
+        acao,
+        detalhe: this.detalheVisita({
+          titulo: updated.titulo,
+          startsAt: updated.startsAt,
+          bloqueadoAte: updated.bloqueadoAte,
+          toleranciaAtiva: updated.toleranciaAtiva,
+          corretorNome: updated.atribuidoPara?.name ?? updated.autor.name,
+          empreendimentoNome: updated.empreendimento?.nome,
+          imovelLabel: this.imovelResumo(updated.imovel),
+        }),
+      });
+    }
     await this.queueGoogleSync(updated);
     return updated;
   }
@@ -1306,6 +1704,24 @@ export class AgendaService {
       select: agendamentoSelect,
     });
 
+    if (updated.tipo === AgendamentoTipo.visita) {
+      await this.registrarHistoricoVisita({
+        tenantId,
+        agendamentoId: updated.id,
+        autorId: requester.id,
+        acao: AgendamentoHistoricoAcao.cancelado,
+        detalhe: this.detalheVisita({
+          titulo: updated.titulo,
+          startsAt: updated.startsAt,
+          bloqueadoAte: null,
+          toleranciaAtiva: updated.toleranciaAtiva,
+          corretorNome: updated.atribuidoPara?.name ?? updated.autor.name,
+          empreendimentoNome: updated.empreendimento?.nome,
+          imovelLabel: this.imovelResumo(updated.imovel),
+        }),
+      });
+    }
+
     await this.notificacoes.createAgendaResposta({
       userId: existing.autorId,
       agendamentoId: existing.id,
@@ -1360,6 +1776,30 @@ export class AgendaService {
       throw new ForbiddenException(
         'Você só pode excluir agendamentos que criou.',
       );
+    }
+
+    if (existing.tipo === AgendamentoTipo.visita) {
+      const completo = await this.prisma.agendamento.findFirst({
+        where: { id: existing.id, tenantId },
+        select: agendamentoSelect,
+      });
+      if (completo) {
+        await this.registrarHistoricoVisita({
+          tenantId,
+          agendamentoId: completo.id,
+          autorId: requester.id,
+          acao: AgendamentoHistoricoAcao.excluido,
+          detalhe: this.detalheVisita({
+            titulo: completo.titulo,
+            startsAt: completo.startsAt,
+            bloqueadoAte: completo.bloqueadoAte,
+            toleranciaAtiva: completo.toleranciaAtiva,
+            corretorNome: completo.atribuidoPara?.name ?? completo.autor.name,
+            empreendimentoNome: completo.empreendimento?.nome,
+            imovelLabel: this.imovelResumo(completo.imovel),
+          }),
+        });
+      }
     }
 
     if (
@@ -1936,6 +2376,9 @@ export class AgendaService {
           funilStage: null,
           contaAtraso: false,
           empreendimentoId: null,
+          imovelId: null,
+          toleranciaAtiva: false,
+          bloqueadoAte: null,
           muralChaveId: null,
           chaveRetiradaEm: null,
           motivoRecusa: null,
@@ -1955,6 +2398,7 @@ export class AgendaService {
           alvoGerente: null,
           lead: null,
           empreendimento: null,
+          imovel: null,
           muralChave: null,
           isAniversario: true,
         });
