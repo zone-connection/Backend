@@ -1685,19 +1685,13 @@ export class LeadsService {
       );
     }
 
-    // Comissão aponta para Documentacao com onDelete: Restrict — limpar antes do cascade.
+    // A ficha de documentação fica. Só solta o vínculo com o lead.
     try {
       await this.prisma.$transaction(async (tx) => {
-        const docs = await tx.documentacao.findMany({
+        await tx.documentacao.updateMany({
           where: { tenantId, leadId: id },
-          select: { id: true },
+          data: { leadId: null },
         });
-        const docIds = docs.map((d) => d.id);
-        if (docIds.length > 0) {
-          await tx.financeiroComissao.deleteMany({
-            where: { tenantId, documentacaoId: { in: docIds } },
-          });
-        }
         await tx.lead.delete({ where: { id } });
       });
     } catch (err) {
@@ -1745,18 +1739,12 @@ export class LeadsService {
     const pending = [...allowed];
     while (pending.length > 0) {
       const chunk = pending.splice(0, CHUNK);
-      const docs = await this.prisma.documentacao.findMany({
-        where: { tenantId, leadId: { in: chunk } },
-        select: { id: true },
-      });
-      const docIds = docs.map((d) => d.id);
       try {
         await this.prisma.$transaction(async (tx) => {
-          if (docIds.length > 0) {
-            await tx.financeiroComissao.deleteMany({
-              where: { tenantId, documentacaoId: { in: docIds } },
-            });
-          }
+          await tx.documentacao.updateMany({
+            where: { tenantId, leadId: { in: chunk } },
+            data: { leadId: null },
+          });
           await tx.lead.deleteMany({
             where: { tenantId, id: { in: chunk } },
           });

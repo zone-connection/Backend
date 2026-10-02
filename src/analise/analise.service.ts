@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 import {
   AnaliseStatus,
-  ContatoTipo,
   FunilEtapaPapel,
   Prisma,
   Role,
@@ -376,13 +375,6 @@ export class AnaliseService {
       FunilEtapaPapel.analise,
     );
 
-    if (analiseStatus === AnaliseStatus.aprovado) {
-      await this.prisma.lead.updateMany({
-        where: { id: leadId, tenantId, tipo: ContatoTipo.cliente },
-        data: { tipo: ContatoTipo.lead },
-      });
-    }
-
     if (analiseSlugs.length === 0) return;
 
     const lead = await this.prisma.lead.findFirst({
@@ -407,13 +399,8 @@ export class AnaliseService {
       select: { stageAnterior: true },
     });
 
-    let targetStage = lastEntry?.stageAnterior ?? null;
-    if (!targetStage || analiseSlugs.includes(targetStage)) {
-      targetStage = await this.funis.getSlugByPapel(
-        tenantId,
-        FunilEtapaPapel.inicial,
-      );
-    }
+    const targetStage = lastEntry?.stageAnterior ?? null;
+    // Sem etapa anterior, não empurra o card para a primeira coluna do funil.
     if (!targetStage || analiseSlugs.includes(targetStage)) return;
 
     const parecerLabel =
