@@ -27,6 +27,7 @@ export function validateEnv(config: Record<string, unknown>) {
   const accessSecret = String(config.JWT_ACCESS_SECRET ?? '');
   const refreshSecret = String(config.JWT_REFRESH_SECRET ?? '');
   const ozapWebhookSecret = String(config.OZAP_WEBHOOK_SECRET ?? '');
+  const grupoZapSecret = String(config.GRUPOZAP_SECRET_KEY ?? '');
   const metaAppSecret = String(config.META_APP_SECRET ?? '');
   const metaVerifyToken = String(config.META_VERIFY_TOKEN ?? '');
 
@@ -59,6 +60,12 @@ export function validateEnv(config: Record<string, unknown>) {
     );
   }
 
+  if (grupoZapSecret && grupoZapSecret.length < 16) {
+    errors.push(
+      'GRUPOZAP_SECRET_KEY deve ter ao menos 16 caracteres.',
+    );
+  }
+
   if (metaAppSecret && metaAppSecret.length < 16) {
     errors.push('META_APP_SECRET parece inválido (muito curto).');
   }
@@ -80,6 +87,18 @@ export function validateEnv(config: Record<string, unknown>) {
         );
       }
     }
+  }
+
+  const cloudinaryName = String(config.CLOUDINARY_CLOUD_NAME ?? '').trim();
+  const cloudinaryKey = String(config.CLOUDINARY_API_KEY ?? '').trim();
+  const cloudinarySecret = String(config.CLOUDINARY_API_SECRET ?? '').trim();
+  const cloudinaryPartial =
+    Boolean(cloudinaryName || cloudinaryKey || cloudinarySecret) &&
+    !(cloudinaryName && cloudinaryKey && cloudinarySecret);
+  if (cloudinaryPartial) {
+    errors.push(
+      'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY e CLOUDINARY_API_SECRET devem ser definidos juntos.',
+    );
   }
 
   if (isProd && !config.FRONTEND_URL) {

@@ -1,6 +1,7 @@
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsNumber,
@@ -13,7 +14,10 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { FinanceiroTituloTipo } from '@prisma/client';
+import {
+  FinanceiroDespesaNatureza,
+  FinanceiroTituloTipo,
+} from '@prisma/client';
 
 export class ParcelaItemDto {
   @IsDateString({}, { message: 'Vencimento da parcela inválido.' })
@@ -58,4 +62,18 @@ export class CreateTitulosParceladoDto {
   @ValidateNested({ each: true })
   @Type(() => ParcelaItemDto)
   parcelas!: ParcelaItemDto[];
+
+  @IsOptional()
+  @IsUUID('4')
+  platformContratoId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  indeterminado?: boolean;
+
+  @IsOptional()
+  @IsEnum(FinanceiroDespesaNatureza, {
+    message: 'Natureza inválida. Use fixa ou variavel.',
+  })
+  natureza?: FinanceiroDespesaNatureza;
 }

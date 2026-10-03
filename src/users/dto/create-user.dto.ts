@@ -1,8 +1,11 @@
-import { Role, UserStatus } from '@prisma/client';
+import { CreciProcessoStatus, Role, UserStatus } from '@prisma/client';
 import {
+  IsBoolean,
+  IsDateString,
   IsEmail,
   IsEnum,
   IsIn,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -25,6 +28,12 @@ export class CreateUserDto {
   @MaxLength(255)
   email!: string;
 
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
+  @IsEmail({}, { message: 'Informe um e-mail de avisos válido.' })
+  @MaxLength(255)
+  notifyEmail?: string | null;
+
   @IsString()
   @MaxLength(72, { message: 'A senha deve ter no máximo 72 caracteres.' })
   @Matches(PASSWORD_REGEX, { message: PASSWORD_RULE_MESSAGE })
@@ -41,9 +50,43 @@ export class CreateUserDto {
   whatsapp?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
+  @IsDateString({}, { message: 'Data de nascimento inválida.' })
+  dataNascimento?: string | null;
+
+  @IsOptional()
   @IsString()
   @MaxLength(80)
   cargo?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  creci?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  cpf?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  rg?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  endereco?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(12)
+  cep?: string;
+
+  @IsOptional()
+  @IsEnum(CreciProcessoStatus, { message: 'Andamento do CRECI inválido.' })
+  creciStatus?: CreciProcessoStatus;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== '')
@@ -53,10 +96,44 @@ export class CreateUserDto {
   })
   cor?: string | null;
 
-  @IsIn([Role.admin, Role.gerente, Role.corretor, Role.analista], {
-    message: 'Perfil inválido.',
-  })
+  @IsIn(
+    [
+      Role.admin,
+      Role.gerente,
+      Role.corretor,
+      Role.analista,
+      Role.treinee,
+      Role.financeiro,
+      Role.assistente,
+    ],
+    {
+      message: 'Perfil inválido.',
+    },
+  )
   role!: Role;
+
+  @IsOptional()
+  @IsBoolean()
+  financeiroCanView?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  financeiroCanCreate?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  financeiroCanEdit?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  financeiroCanDelete?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  permissions?: {
+    modules?: Record<string, boolean>;
+    actions?: Record<string, boolean>;
+  };
 
   @IsOptional()
   @IsEnum(UserStatus, { message: 'Status inválido.' })

@@ -1,18 +1,30 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, Role } from '@prisma/client';
+import { AtrasoLiberacaoDestino, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import { isCorretorLike } from '../common/utils/roles';
+import { GERENTE_VER_LEADS_GERAIS_KEY } from '../tenants/tenant-plan';
+import { whereNotRetrabalho } from './lead-retrabalho.where';
 
 /**
  * Escopo de dados por equipe, sempre aninhado ao tenant do requester:
  * - admin / analista → todos do tenant
- * - gerente → só corretores da equipe que lidera
- * - corretor → só o próprio
+ * - gerente (opção off) → só a própria equipe e carteira
+ * - gerente (opção on) → todas as equipes + pool geral
+ * - corretor → só o próprio (nunca retrabalho)
+ * - retrabalho (desvinculado) → admin e gerente do tenant
  */
 @Injectable()
 export class TeamScopeService {
   constructor(private readonly prisma: PrismaService) {}
+
+  gerenteSeesSharedLeads(requester: AuthenticatedUser): boolean {
+    return (
+      requester.role === Role.gerente &&
+      requester.tenantModules?.[GERENTE_VER_LEADS_GERAIS_KEY] === true
+    );
+  }
 
   /** IDs dos corretores visíveis para o requester (null = sem filtro de corretor / admin|analista). */
   async getVisibleCorretorIds(
@@ -20,53 +32,82 @@ export class TeamScopeService {
   ): Promise<string[] | null> {
     const tenantId = requireTenantId(requester);
 
-    if (requester.role === Role.admin || requester.role === Role.analista) {
+    if (
+      requester.role === Role.admin ||
+      requester.role === Role.super_admin ||
+      requester.role === Role.analista ||
+      this.gerenteSeesSharedLeads(requester)
+    ) {
       return null;
     }
 
-    if (requester.role === Role.corretor) {
+    if (isCorretorLike(requester.role)) {
       return [requester.id];
     }
 
-    // gerente
-    const equipe = await this.prisma.equipe.findFirst({
+    // gerente restrito → corretores das próprias equipes + o próprio
+    const equipes = await this.prisma.equipe.findMany({
       where: { gerenteId: requester.id, tenantId },
       select: {
         membros: {
-          where: { role: Role.corretor, tenantId },
+          where: { role: { in: [Role.corretor, Role.treinee] }, tenantId },
           select: { id: true },
         },
       },
     });
 
-    return equipe?.membros.map((m) => m.id) ?? [];
+    const membroIds = equipes.flatMap((e) => e.membros.map((m) => m.id));
+    return [...new Set([requester.id, ...membroIds])];
   }
 
-  /** Filtro Prisma para leads/documentação baseado na equipe + tenant. */
+  /**
+   * Filtro Prisma para leads/documentação baseado na equipe + tenant.
+   * Com a opção do admin ligada, o gerente vê o tenant inteiro (outras equipes
+   * e pool geral). Desligada, só a própria equipe — sem leads gerais.
+   */
   async leadScope(
     requester: AuthenticatedUser,
+    options?: { includeAdminPool?: boolean },
   ): Promise<Prisma.LeadWhereInput> {
     const tenantId = requireTenantId(requester);
     const ids = await this.getVisibleCorretorIds(requester);
-    if (ids === null) return { tenantId };
+    if (ids === null) {
+      if (requester.role === Role.analista) {
+        return {
+          tenantId,
+          AND: [whereNotRetrabalho],
+        };
+      }
+      return { tenantId };
+    }
 
     if (requester.role === Role.gerente) {
-      const equipe = await this.prisma.equipe.findFirst({
+      const equipes = await this.prisma.equipe.findMany({
         where: { gerenteId: requester.id, tenantId },
         select: { id: true },
       });
+      const includeAdminPool =
+        options?.includeAdminPool ?? this.gerenteSeesSharedLeads(requester);
       return {
         tenantId,
         OR: [
           { corretorId: { in: ids } },
-          ...(equipe
-            ? [{ equipeId: equipe.id, corretorId: null as null }]
+          ...equipes.map((equipe) => ({
+            equipeId: equipe.id,
+            corretorId: null as null,
+          })),
+          { origemAtrasoLiberacao: AtrasoLiberacaoDestino.retrabalho },
+          ...(includeAdminPool
+            ? [{ equipeId: null as null, corretorId: null as null }]
             : []),
         ],
       };
     }
 
-    return { tenantId, corretorId: { in: ids } };
+    return {
+      tenantId,
+      AND: [{ corretorId: { in: ids } }, whereNotRetrabalho],
+    };
   }
 
   /** true se o corretor está no escopo do requester. */
@@ -74,14 +115,27 @@ export class TeamScopeService {
     requester: AuthenticatedUser,
     corretorId: string | null | undefined,
     equipeId?: string | null,
+    origemAtrasoLiberacao?: AtrasoLiberacaoDestino | null,
   ): Promise<boolean> {
     requireTenantId(requester);
+    if (origemAtrasoLiberacao === AtrasoLiberacaoDestino.retrabalho) {
+      return (
+        requester.role === Role.admin ||
+        requester.role === Role.super_admin ||
+        requester.role === Role.gerente
+      );
+    }
     if (!corretorId) {
-      if (requester.role === Role.admin || requester.role === Role.analista) {
+      if (
+        requester.role === Role.admin ||
+        requester.role === Role.super_admin ||
+        requester.role === Role.analista ||
+        this.gerenteSeesSharedLeads(requester)
+      ) {
         return true;
       }
-      // Gerente vê pool da própria equipe (sem corretor ainda).
-      if (requester.role === Role.gerente && equipeId) {
+      if (requester.role === Role.gerente) {
+        if (!equipeId) return false;
         const equipe = await this.prisma.equipe.findFirst({
           where: {
             id: equipeId,
@@ -93,6 +147,14 @@ export class TeamScopeService {
         return Boolean(equipe);
       }
       return false;
+    }
+    if (
+      (requester.role === Role.admin ||
+        requester.role === Role.super_admin ||
+        requester.role === Role.gerente) &&
+      corretorId === requester.id
+    ) {
+      return true;
     }
     const ids = await this.getVisibleCorretorIds(requester);
     if (ids === null) return true;

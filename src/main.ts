@@ -2,11 +2,16 @@ import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import type { NextFunction, Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { ValidationError } from 'class-validator';
 import { AppModule } from './app.module';
-import { CSRF_HEADER } from './common/utils/auth-cookies';
+import {
+  AUTH_COOKIE_NAMES,
+  CSRF_HEADER,
+} from './common/utils/auth-cookies';
+import { applyLastWinsCookies } from './common/utils/last-cookie.util';
 
 function flattenValidationErrors(errors: ValidationError[]): string[] {
   const out: string[] = [];
@@ -57,6 +62,10 @@ async function bootstrap() {
   app.set('trust proxy', 1);
 
   app.use(cookieParser());
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    applyLastWinsCookies(req.cookies, req.headers.cookie, AUTH_COOKIE_NAMES);
+    next();
+  });
 
   // Limita o corpo da requisição: bloqueia DoS por payload gigante.
   app.useBodyParser('json', { limit: '100kb' });

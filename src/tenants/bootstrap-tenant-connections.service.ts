@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { DEFAULT_TENANT_ID } from '../common/utils/tenant';
+import { encryptSecret, metaTokenKey } from '../meta/meta-token.crypto';
 
 /**
  * Migra conexões Meta/OZap do .env para o tenant default (uma vez),
@@ -50,7 +51,10 @@ export class BootstrapTenantConnectionsService implements OnModuleInit {
         id: randomUUID(),
         tenantId,
         pageId,
-        pageAccessToken,
+        pageAccessToken: encryptSecret(
+          pageAccessToken,
+          metaTokenKey(this.config),
+        ),
         ativo: true,
       },
     });
