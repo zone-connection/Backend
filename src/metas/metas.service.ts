@@ -77,7 +77,50 @@ export class MetasService {
       ],
     });
 
-    return Promise.all(metas.map((meta) => this.withProgress(meta, tenantId)));
+    const comProgresso = await Promise.all(
+      metas.map((meta) => this.withProgress(meta, tenantId)),
+    );
+    const chave = (meta: {
+      escopo: string;
+      origem: string;
+      tipo: string;
+      periodo: string;
+      corretorId: string | null;
+      gerenteId: string | null;
+    }) =>
+      [
+        meta.escopo,
+        meta.origem,
+        meta.tipo,
+        meta.periodo,
+        meta.corretorId ?? '',
+        meta.gerenteId ?? '',
+      ].join('|');
+    const ehAtual = (inicio: Date, fim: Date) =>
+      inicio.getTime() <= agora.getTime() && fim.getTime() > agora.getTime();
+    const anteriores = new Map(
+      comProgresso
+        .filter((meta) => !ehAtual(meta.inicio, meta.fim))
+        .map((meta) => [chave(meta), meta]),
+    );
+
+    return comProgresso.map((meta) => {
+      const atual = ehAtual(meta.inicio, meta.fim);
+      const anterior = atual ? anteriores.get(chave(meta)) : undefined;
+      return {
+        ...meta,
+        ciclo: atual ? ('atual' as const) : ('anterior' as const),
+        anterior: anterior
+          ? {
+              valor: anterior.valor,
+              atual: anterior.atual,
+              percentual: anterior.percentual,
+              inicio: anterior.inicio,
+              fim: anterior.fim,
+            }
+          : null,
+      };
+    });
   }
 
   async create(dto: CreateMetaDto, requester: AuthenticatedUser) {
@@ -136,10 +179,29 @@ export class MetasService {
     agora: Date,
   ): Promise<Prisma.MetaWhereInput> {
     const tenantId = requireTenantId(requester);
+    const janelasAnteriores = [
+      MetaPeriodo.diaria,
+      MetaPeriodo.semanal,
+      MetaPeriodo.mensal,
+      MetaPeriodo.trimestral,
+      MetaPeriodo.semestral,
+      MetaPeriodo.anual,
+    ].map((periodo) => ({
+      periodo,
+      ...this.getDefinicaoPeriodo(periodo, -1),
+    }));
     const base: Prisma.MetaWhereInput = {
       tenantId,
-      inicio: { lte: agora },
-      fim: { gt: agora },
+      OR: [
+        { inicio: { lte: agora }, fim: { gt: agora } },
+        {
+          OR: janelasAnteriores.map((janela) => ({
+            periodo: janela.periodo,
+            inicio: janela.inicio,
+            fim: janela.fim,
+          })),
+        },
+      ],
     };
 
     if (isPlatformAdmin(requester)) {
@@ -383,8 +445,23 @@ export class MetasService {
     return meta;
   }
 
-  private getDefinicaoPeriodo(periodo: string) {
+  private getDefinicaoPeriodo(periodo: string, offset = 0) {
     const dataBrasil = new Date(Date.now() - BRASIL_UTC_OFFSET_MS);
+    if (offset !== 0) {
+      if (periodo === MetaPeriodo.diaria) {
+        dataBrasil.setUTCDate(dataBrasil.getUTCDate() + offset);
+      } else if (periodo === MetaPeriodo.semanal) {
+        dataBrasil.setUTCDate(dataBrasil.getUTCDate() + offset * 7);
+      } else if (periodo === MetaPeriodo.trimestral) {
+        dataBrasil.setUTCMonth(dataBrasil.getUTCMonth() + offset * 3);
+      } else if (periodo === MetaPeriodo.semestral) {
+        dataBrasil.setUTCMonth(dataBrasil.getUTCMonth() + offset * 6);
+      } else if (periodo === MetaPeriodo.anual) {
+        dataBrasil.setUTCFullYear(dataBrasil.getUTCFullYear() + offset);
+      } else {
+        dataBrasil.setUTCMonth(dataBrasil.getUTCMonth() + offset);
+      }
+    }
     const ano = dataBrasil.getUTCFullYear();
     const mes = dataBrasil.getUTCMonth();
     const dia = dataBrasil.getUTCDate();
