@@ -212,6 +212,7 @@ model Tenant {
   presencaTipos                  PresencaTipo[]
   presencaLancamentos            PresencaLancamento[]
   listasDocumento                ListaDocumento[]
+  contratoDocumentos             ContratoDocumento[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -360,6 +361,8 @@ model User {
 
   // Fichas de documentação criadas por este usuário.
   documentacoes Documentacao[] @relation("DocumentacaoAutor")
+
+  contratoDocumentos ContratoDocumento[] @relation("ContratoDocumentoAutor")
 
   // Documentações em que este usuário é o corretor responsável.
   documentacoesComoCorretor Documentacao[] @relation("DocumentacaoCorretor")
@@ -3496,4 +3499,30 @@ model ListaDocumentoItem {
 
   @@index([listaId, sortOrder])
   @@map("lista_documento_itens")
+}
+
+enum ContratoDocumentoStatus {
+  rascunho
+  baixado
+}
+
+/// Rascunho ou histórico de contrato preenchido na tela Contratos.
+model ContratoDocumento {
+  id         String                  @id @default(uuid())
+  tenantId   String
+  tenant     Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  autorId    String
+  autor      User                    @relation("ContratoDocumentoAutor", fields: [autorId], references: [id], onDelete: Cascade)
+  templateId String
+  titulo     String
+  values     Json
+  status     ContratoDocumentoStatus @default(rascunho)
+  baixadoAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status, updatedAt])
+  @@index([autorId])
+  @@map("contrato_documentos")
 }
