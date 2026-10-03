@@ -15,6 +15,7 @@ import {
   TriagemOrigem,
   UserStatus,
   AtrasoLiberacaoDestino,
+  InteresseEmpreendimentoStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
@@ -38,6 +39,10 @@ import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.ser
 import { leadSelect, LeadEntity } from './lead-select';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
+import {
+  CreateLeadInteresseDto,
+  UpdateLeadInteresseDto,
+} from './dto/lead-interesse.dto';
 import { QueryLeadsDto } from './dto/query-leads.dto';
 import { CheckImportLeadsDto, ImportLeadsDto } from './dto/import-leads.dto';
 import { AdiarPrazoDto } from './dto/adiar-prazo.dto';
@@ -209,6 +214,12 @@ export class LeadsService {
       },
       select: leadSelect,
     });
+    await this.seedInteresses(
+      created.id,
+      tenantId,
+      dto.empreendimentoIds,
+      assignment.corretorId,
+    );
     void this.leadNotify.notifyNewLead({
       tenantId,
       lead: this.notifySnapshot(created),
@@ -1480,6 +1491,14 @@ export class LeadsService {
       },
       select: leadSelect,
     });
+    if (isAnalise && dto.empreendimentoId) {
+      await this.upsertInteresseAtivo(
+        id,
+        tenantId,
+        dto.empreendimentoId,
+        lead.corretorId,
+      );
+    }
 
     // Registra na Triagem a mudança de etapa, salvo quando o funil vai
     // consolidar um único evento após o modal de relato.
@@ -1515,6 +1534,142 @@ export class LeadsService {
     }
 
     return this.decorateOne(lead, requester);
+  }
+
+  async addInteresse(
+    leadId: string,
+    dto: CreateLeadInteresseDto,
+    requester: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(requester);
+    await this.ensureExistsAndAccessible(leadId, requester);
+    await this.assertEmpreendimentoNoTenant(tenantId, dto.empreendimentoId);
+    const now = new Date();
+    const dataInteresse = dto.dataInteresse
+      ? new Date(dto.dataInteresse)
+      : now;
+    const status = this.parseInteresseStatus(dto.status, 'ativo');
+    const existing = await this.prisma.leadEmpreendimentoInteresse.findUnique({
+      where: {
+        leadId_empreendimentoId: {
+          leadId,
+          empreendimentoId: dto.empreendimentoId,
+        },
+      },
+    });
+    const leadRow = await this.prisma.lead.findFirst({
+      where: { id: leadId, tenantId },
+      select: { corretorId: true },
+    });
+    const corretorId =
+      dto.corretorId === undefined
+        ? (leadRow?.corretorId ?? requester.id)
+        : dto.corretorId;
+    if (existing) {
+      await this.prisma.leadEmpreendimentoInteresse.update({
+        where: { id: existing.id },
+        data: {
+          status: existing.removidoEm
+            ? InteresseEmpreendimentoStatus.ativo
+            : status,
+          observacoes: dto.observacoes?.trim() ?? existing.observacoes,
+          corretorId,
+          dataInteresse: existing.removidoEm
+            ? dataInteresse
+            : existing.dataInteresse,
+          ultimaInteracao: now,
+          removidoEm: null,
+        },
+      });
+    } else {
+      await this.prisma.leadEmpreendimentoInteresse.create({
+        data: {
+          tenantId,
+          leadId,
+          empreendimentoId: dto.empreendimentoId,
+          status,
+          observacoes: dto.observacoes?.trim() ?? '',
+          corretorId,
+          dataInteresse,
+          ultimaInteracao: now,
+        },
+      });
+    }
+    await this.syncLeadEmpreendimentoPrincipal(leadId, tenantId);
+    const updated = await this.prisma.lead.findFirstOrThrow({
+      where: { id: leadId, tenantId },
+      select: leadSelect,
+    });
+    return this.decorateOne(updated, requester);
+  }
+
+  async updateInteresse(
+    leadId: string,
+    interesseId: string,
+    dto: UpdateLeadInteresseDto,
+    requester: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(requester);
+    await this.ensureExistsAndAccessible(leadId, requester);
+    const row = await this.prisma.leadEmpreendimentoInteresse.findFirst({
+      where: { id: interesseId, leadId, tenantId },
+    });
+    if (!row) throw new NotFoundException('Interesse não encontrado.');
+    const status = dto.status
+      ? this.parseInteresseStatus(dto.status, row.status)
+      : undefined;
+    await this.prisma.leadEmpreendimentoInteresse.update({
+      where: { id: row.id },
+      data: {
+        ...(status ? { status } : {}),
+        ...(dto.observacoes !== undefined
+          ? { observacoes: dto.observacoes.trim() }
+          : {}),
+        ...(dto.corretorId !== undefined ? { corretorId: dto.corretorId } : {}),
+        ...(dto.dataInteresse
+          ? { dataInteresse: new Date(dto.dataInteresse) }
+          : {}),
+        ultimaInteracao: new Date(),
+        ...(status === InteresseEmpreendimentoStatus.descartado
+          ? { removidoEm: row.removidoEm ?? new Date() }
+          : status
+            ? { removidoEm: null }
+            : {}),
+      },
+    });
+    await this.syncLeadEmpreendimentoPrincipal(leadId, tenantId);
+    const updated = await this.prisma.lead.findFirstOrThrow({
+      where: { id: leadId, tenantId },
+      select: leadSelect,
+    });
+    return this.decorateOne(updated, requester);
+  }
+
+  async removeInteresse(
+    leadId: string,
+    interesseId: string,
+    requester: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(requester);
+    await this.ensureExistsAndAccessible(leadId, requester);
+    const row = await this.prisma.leadEmpreendimentoInteresse.findFirst({
+      where: { id: interesseId, leadId, tenantId },
+    });
+    if (!row) throw new NotFoundException('Interesse não encontrado.');
+    await this.prisma.leadEmpreendimentoInteresse.update({
+      where: { id: row.id },
+      data: {
+        status: InteresseEmpreendimentoStatus.descartado,
+        removidoEm: row.removidoEm ?? new Date(),
+        ultimaInteracao: new Date(),
+      },
+    });
+    await this.syncLeadEmpreendimentoPrincipal(leadId, tenantId);
+    const updated = await this.prisma.lead.findFirstOrThrow({
+      where: { id: leadId, tenantId },
+      select: leadSelect,
+    });
+    return this.decorateOne(updated, requester);
   }
 
   /**
@@ -2562,6 +2717,124 @@ export class LeadsService {
       }
     }
     return { phone, email };
+  }
+
+  private parseInteresseStatus(
+    raw: string | undefined,
+    fallback: InteresseEmpreendimentoStatus | 'ativo',
+  ): InteresseEmpreendimentoStatus {
+    if (raw === 'pausado') return InteresseEmpreendimentoStatus.pausado;
+    if (raw === 'convertido') return InteresseEmpreendimentoStatus.convertido;
+    if (raw === 'descartado') return InteresseEmpreendimentoStatus.descartado;
+    if (raw === 'ativo') return InteresseEmpreendimentoStatus.ativo;
+    return fallback === 'ativo'
+      ? InteresseEmpreendimentoStatus.ativo
+      : fallback;
+  }
+
+  private async assertEmpreendimentoNoTenant(
+    tenantId: string,
+    empreendimentoId: string,
+  ) {
+    const emp = await this.prisma.empreendimento.findFirst({
+      where: { id: empreendimentoId, tenantId },
+      select: { id: true },
+    });
+    if (!emp) {
+      throw new BadRequestException('Empreendimento não encontrado.');
+    }
+  }
+
+  private async seedInteresses(
+    leadId: string,
+    tenantId: string,
+    ids: string[] | undefined,
+    corretorId: string | null,
+  ) {
+    const unique = [...new Set((ids ?? []).filter(Boolean))];
+    if (!unique.length) return;
+    const found = await this.prisma.empreendimento.findMany({
+      where: { id: { in: unique }, tenantId },
+      select: { id: true },
+    });
+    if (found.length !== unique.length) {
+      throw new BadRequestException('Um ou mais empreendimentos são inválidos.');
+    }
+    const now = new Date();
+    await this.prisma.leadEmpreendimentoInteresse.createMany({
+      data: unique.map((empreendimentoId) => ({
+        tenantId,
+        leadId,
+        empreendimentoId,
+        status: InteresseEmpreendimentoStatus.ativo,
+        corretorId,
+        dataInteresse: now,
+        ultimaInteracao: now,
+      })),
+      skipDuplicates: true,
+    });
+    await this.syncLeadEmpreendimentoPrincipal(leadId, tenantId);
+  }
+
+  private async upsertInteresseAtivo(
+    leadId: string,
+    tenantId: string,
+    empreendimentoId: string,
+    corretorId: string | null,
+  ) {
+    const now = new Date();
+    await this.prisma.leadEmpreendimentoInteresse.upsert({
+      where: {
+        leadId_empreendimentoId: { leadId, empreendimentoId },
+      },
+      create: {
+        tenantId,
+        leadId,
+        empreendimentoId,
+        status: InteresseEmpreendimentoStatus.ativo,
+        corretorId,
+        dataInteresse: now,
+        ultimaInteracao: now,
+      },
+      update: {
+        status: InteresseEmpreendimentoStatus.ativo,
+        removidoEm: null,
+        ultimaInteracao: now,
+        corretorId: corretorId ?? undefined,
+      },
+    });
+  }
+
+  private async syncLeadEmpreendimentoPrincipal(
+    leadId: string,
+    tenantId: string,
+  ) {
+    const current = await this.prisma.lead.findFirst({
+      where: { id: leadId, tenantId },
+      select: { empreendimentoId: true },
+    });
+    const ativo = await this.prisma.leadEmpreendimentoInteresse.findFirst({
+      where: {
+        leadId,
+        tenantId,
+        removidoEm: null,
+        status: {
+          in: [
+            InteresseEmpreendimentoStatus.ativo,
+            InteresseEmpreendimentoStatus.pausado,
+            InteresseEmpreendimentoStatus.convertido,
+          ],
+        },
+      },
+      orderBy: { dataInteresse: 'desc' },
+      select: { empreendimentoId: true },
+    });
+    const nextId = ativo?.empreendimentoId ?? null;
+    if (current?.empreendimentoId === nextId) return;
+    await this.prisma.lead.update({
+      where: { id: leadId },
+      data: { empreendimentoId: nextId },
+    });
   }
 
   private async decorateOne(

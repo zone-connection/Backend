@@ -46,6 +46,23 @@ export const leadSelect = {
   construtora: { select: { id: true, nome: true, cor: true } },
   empreendimentoId: true,
   empreendimento: { select: { id: true, nome: true, cidade: true } },
+  interessesEmpreendimento: {
+    orderBy: [{ removidoEm: 'asc' }, { dataInteresse: 'desc' }],
+    select: {
+      id: true,
+      empreendimentoId: true,
+      status: true,
+      observacoes: true,
+      corretorId: true,
+      dataInteresse: true,
+      ultimaInteracao: true,
+      removidoEm: true,
+      createdAt: true,
+      updatedAt: true,
+      corretor: { select: { id: true, name: true } },
+      empreendimento: { select: { id: true, nome: true, cidade: true } },
+    },
+  },
   analise: {
     select: {
       id: true,

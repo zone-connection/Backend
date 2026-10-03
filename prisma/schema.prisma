@@ -87,6 +87,14 @@ enum ContatoTipo {
   cliente
 }
 
+/// Status do interesse em um empreendimento (histórico permanece se descartado).
+enum InteresseEmpreendimentoStatus {
+  ativo
+  pausado
+  convertido
+  descartado
+}
+
 /// Unidade de prazo de permanência na etapa ou de inatividade do lead.
 enum PrazoUnidade {
   minutos
@@ -150,6 +158,7 @@ model Tenant {
   users             User[]
   equipes           Equipe[]
   leads             Lead[]
+  interessesEmpreendimento LeadEmpreendimentoInteresse[]
   construtoras      Construtora[]
   empreendimentos   Empreendimento[]
   localidades       Localidade[]
@@ -352,6 +361,8 @@ model User {
 
   // Carteira de leads/clientes atribuídos a este corretor.
   leads Lead[] @relation("LeadCorretor")
+
+  interessesEmpreendimento LeadEmpreendimentoInteresse[] @relation("LeadInteresseCorretor")
 
   // Leads que este usuário marcou como perdidos.
   leadsPerdidosPor Lead[] @relation("LeadPerdidoPor")
@@ -629,6 +640,7 @@ model Lead {
   metaLink      LeadMetaLink?
   grupoZapLink  LeadGrupoZapLink?
   participacoesParceria ParceriaParticipacao[]
+  interessesEmpreendimento LeadEmpreendimentoInteresse[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -651,6 +663,40 @@ model Lead {
   @@index([perdidoAt])
   @@index([tenantId, origemAtrasoLiberacao])
   @@map("leads")
+}
+
+/// Empreendimentos de interesse do contato. Remover da lista ativa não apaga o registro.
+model LeadEmpreendimentoInteresse {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  leadId String
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  empreendimentoId String
+  empreendimento   Empreendimento @relation(fields: [empreendimentoId], references: [id], onDelete: Restrict)
+
+  status      InteresseEmpreendimentoStatus @default(ativo)
+  observacoes String                        @default("")
+
+  corretorId String?
+  corretor   User?   @relation("LeadInteresseCorretor", fields: [corretorId], references: [id], onDelete: SetNull)
+
+  dataInteresse    DateTime  @default(now())
+  ultimaInteracao  DateTime?
+  /// Preenchido quando o empreendimento sai da lista ativa; o histórico permanece.
+  removidoEm       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([leadId, empreendimentoId])
+  @@index([tenantId])
+  @@index([leadId, removidoEm])
+  @@index([empreendimentoId])
+  @@index([corretorId])
+  @@map("lead_empreendimentos_interesse")
 }
 
 /// Histórico de adiamentos do prazo de permanência na etapa.
@@ -999,6 +1045,7 @@ model Empreendimento {
   propostas     Proposta[]
   propostaVinculos PropostaVinculo[]
   leads         Lead[]
+  interessesLead LeadEmpreendimentoInteresse[]
   notificacoes  Notificacao[]
   /// Unidade de captação que originou este cadastro, quando for o mesmo imóvel.
   imovel        Imovel?

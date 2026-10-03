@@ -255,6 +255,10 @@ export class MatchingService {
         corretor: { select: { id: true, name: true } },
         construtoraId: true,
         empreendimentoId: true,
+        interessesEmpreendimento: {
+          where: { removidoEm: null },
+          select: { empreendimentoId: true, status: true },
+        },
       },
       take: 2000,
     });
@@ -294,6 +298,10 @@ export class MatchingService {
       corretor: { id: string; name: string } | null;
       construtoraId: string | null;
       empreendimentoId: string | null;
+      interessesEmpreendimento?: Array<{
+        empreendimentoId: string;
+        status: string;
+      }>;
     },
   ): EmpreendimentoMatch | null {
     const motivos: MatchMotivo[] = [];
@@ -357,8 +365,14 @@ export class MatchingService {
       motivos.push('tags');
     }
 
+    const interesseIds = new Set(
+      (lead.interessesEmpreendimento ?? [])
+        .filter((row) => row.status !== 'descartado')
+        .map((row) => row.empreendimentoId),
+    );
     const interessePrevio =
       lead.empreendimentoId === emp.id ||
+      interesseIds.has(emp.id) ||
       (lead.construtoraId != null &&
         emp.construtoraId != null &&
         lead.construtoraId === emp.construtoraId);

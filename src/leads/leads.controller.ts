@@ -30,6 +30,10 @@ import {
 import { CheckImportLeadsDto, ImportLeadsDto } from './dto/import-leads.dto';
 import { AdiarPrazoDto } from './dto/adiar-prazo.dto';
 import {
+  CreateLeadInteresseDto,
+  UpdateLeadInteresseDto,
+} from './dto/lead-interesse.dto';
+import {
   DistribuirCorretoresDto,
   DistribuirEquipesDto,
 } from './dto/distribuir-leads.dto';
@@ -212,6 +216,34 @@ export class LeadsController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.leadsService.updateStage(id, dto, requester);
+  }
+
+  @Post(':id/interesses')
+  addInteresse(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateLeadInteresseDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.addInteresse(id, dto, requester);
+  }
+
+  @Patch(':id/interesses/:interesseId')
+  updateInteresse(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('interesseId', ParseUUIDPipe) interesseId: string,
+    @Body() dto: UpdateLeadInteresseDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.updateInteresse(id, interesseId, dto, requester);
+  }
+
+  @Delete(':id/interesses/:interesseId')
+  removeInteresse(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('interesseId', ParseUUIDPipe) interesseId: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.removeInteresse(id, interesseId, requester);
   }
 
   /** Soft-delete operacional: lead vai para Leads Perdidos. */

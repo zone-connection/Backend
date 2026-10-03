@@ -187,4 +187,11 @@ export class CreateLeadDto {
   @ValidateNested()
   @Type(() => LeadProspeccaoDto)
   prospeccao?: LeadProspeccaoDto | null;
+
+  /** Empreendimentos de interesse no cadastro (um ou vários). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(40)
+  @IsUUID('4', { each: true, message: 'Empreendimento inválido.' })
+  empreendimentoIds?: string[];
 }
