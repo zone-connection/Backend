@@ -1000,6 +1000,8 @@ model Empreendimento {
   propostaVinculos PropostaVinculo[]
   leads         Lead[]
   notificacoes  Notificacao[]
+  /// Unidade de captação que originou este cadastro, quando for o mesmo imóvel.
+  imovel        Imovel?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1981,6 +1983,9 @@ model Imovel {
   muralChaves MuralChave[]
   posVendas  VendaUsadoPosVenda[]
   agendamentos Agendamento[]
+  /// Mesmo imóvel no catálogo de empreendimentos.
+  empreendimentoId String?         @unique
+  empreendimento   Empreendimento? @relation(fields: [empreendimentoId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

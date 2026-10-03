@@ -34,8 +34,21 @@ function prismaMock(extra: Record<string, unknown> = {}) {
         proprietario: { id: 'p1', nome: 'João' },
         captacoes: [],
       }),
+      update: async (args: { data: unknown }) => args.data,
       delete: async () => ({}),
       count: async () => 0,
+    },
+    empreendimento: {
+      findFirst: async () => null,
+      create: async (args: { data: unknown }) => ({
+        id: 'e1',
+        ...(args.data as object),
+      }),
+      update: async (args: { data: unknown }) => args.data,
+      delete: async () => ({}),
+    },
+    imovelFoto: {
+      findMany: async () => [],
     },
     captacao: {
       findMany: async () => [],
@@ -219,6 +232,7 @@ describe('CaptacaoService — isolamento e validações', () => {
           },
           findFirst: async () => ({
             id: 'c1',
+            createdAt: new Date(),
             valorPretendido: null,
             valorAvaliacao: null,
             historicos: [],
@@ -278,18 +292,57 @@ describe('CaptacaoService — isolamento e validações', () => {
 describe('CaptacaoService — ficha do imóvel', () => {
   it('grava descrição e comodidades na criação', async () => {
     const saved: { data?: Record<string, unknown> } = {};
+    const catalogo: { data?: Record<string, unknown> } = {};
+    let row: Record<string, unknown> | null = null;
     const service = new CaptacaoService(
       prismaMock({
         proprietario: { findFirst: async () => ({ id: 'p1', tenantId: 't1' }) },
         imovel: {
           create: async (args: { data: Record<string, unknown> }) => {
             saved.data = args.data;
-            return {
+            row = {
+              id: 'i1',
+              tenantId: 't1',
+              empreendimentoId: null,
+              complemento: '',
+              descricao: '',
+              observacoes: '',
+              fotoUrl: null,
+              fotoPublicId: null,
+              logradouro: 'Rua A',
+              numero: '10',
+              bairro: '',
+              cidade: 'Recife',
+              quartos: null,
+              banheiros: null,
+              area: null,
+              fotos: [],
+              tipo: 'apartamento',
               ...args.data,
               proprietario: { id: 'p1', nome: 'João' },
               captacoes: [],
             };
+            return row;
           },
+          findFirst: async () => row,
+          update: async (args: { data: Record<string, unknown> }) => {
+            row = {
+              ...(row ?? {}),
+              ...args.data,
+              fotos: [],
+              proprietario: { id: 'p1', nome: 'João' },
+              captacoes: [],
+            };
+            return row;
+          },
+        },
+        empreendimento: {
+          create: async (args: { data: Record<string, unknown> }) => {
+            catalogo.data = args.data;
+            return { id: 'e1', ...args.data };
+          },
+          findFirst: async () => null,
+          update: async () => ({}),
         },
       }) as never,
     );
@@ -297,6 +350,8 @@ describe('CaptacaoService — ficha do imóvel', () => {
       {
         proprietarioId: 'p1',
         tipo: 'apartamento',
+        logradouro: 'Rua A',
+        cidade: 'Recife',
         descricao: 'Excelente apartamento em Muro Alto.',
         comodidadesUnidade: ['Rooftop', 'Piscina privativa'],
         comodidadesCondominio: ['Academia', 'Portaria 24h'],
@@ -312,6 +367,10 @@ describe('CaptacaoService — ficha do imóvel', () => {
     ]);
     assert.equal(saved.data?.suites, 1);
     assert.equal(saved.data?.vagas, 2);
+    assert.equal(catalogo.data?.externalKey, 'captacao-imovel-i1');
+    assert.equal(catalogo.data?.vagas, 2);
+    assert.equal(catalogo.data?.cidade, 'Recife');
+    assert.deepEqual(catalogo.data?.tags, ['Captação']);
   });
 });
 

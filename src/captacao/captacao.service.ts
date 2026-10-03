@@ -18,7 +18,11 @@ import { FunilResolverService } from '../funis/funil-resolver.service';
 import { MediaService } from '../media/media.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
-import { IMOVEL_MAX_FOTOS, imovelTitulo } from './captacao.constants';
+import {
+  CAPTACAO_IMOVEL_TIPO_LABEL,
+  IMOVEL_MAX_FOTOS,
+  imovelTitulo,
+} from './captacao.constants';
 import {
   moneyEqual,
   pickFirstActiveEtapa,
@@ -325,7 +329,8 @@ export class CaptacaoService {
       },
       include: imovelInclude,
     });
-    return this.exposeImovel(created);
+    const ligado = await this.espelharNoCatalogo(created);
+    return this.exposeImovel(ligado);
   }
 
   async updateImovel(id: string, dto: UpdateImovelDto, user: AuthenticatedUser) {
@@ -386,7 +391,8 @@ export class CaptacaoService {
       },
       include: imovelInclude,
     });
-    return this.exposeImovel(updated);
+    const ligado = await this.espelharNoCatalogo(updated);
+    return this.exposeImovel(ligado);
   }
 
   async deleteImovel(id: string, user: AuthenticatedUser) {
@@ -396,6 +402,7 @@ export class CaptacaoService {
       select: {
         id: true,
         fotoPublicId: true,
+        empreendimentoId: true,
         vendaUsado: { select: { id: true } },
         _count: { select: { captacoes: true, posVendas: true } },
       },
@@ -418,6 +425,34 @@ export class CaptacaoService {
     await this.prisma.$transaction(async (tx) => {
       await tx.captacao.deleteMany({ where: { imovelId: id, tenantId } });
       await tx.imovel.delete({ where: { id } });
+      if (!item.empreendimentoId) return;
+      const espelho = await tx.empreendimento.findFirst({
+        where: {
+          id: item.empreendimentoId,
+          tenantId,
+          externalKey: `captacao-imovel-${id}`,
+        },
+        select: {
+          id: true,
+          _count: {
+            select: {
+              documentacoes: true,
+              propostas: true,
+              propostaVinculos: true,
+              agendamentos: true,
+              leads: true,
+              muralChaves: true,
+              cadastroVendas: true,
+            },
+          },
+        },
+      });
+      if (!espelho) return;
+      const uso = espelho._count;
+      const emUso = Object.values(uso).some((total) => total > 0);
+      if (!emUso) {
+        await tx.empreendimento.delete({ where: { id: espelho.id } });
+      }
     });
     for (const foto of fotos) {
       await this.media?.destroy(foto.publicId);
@@ -510,7 +545,127 @@ export class CaptacaoService {
       },
       include: imovelInclude,
     });
-    return this.exposeImovel(updated);
+    const ligado = await this.espelharNoCatalogo(updated);
+    return this.exposeImovel(ligado);
+  }
+
+  private dadosEmpreendimento(imovel: {
+    tipo: Prisma.ImovelGetPayload<object>['tipo'];
+    logradouro: string;
+    numero: string;
+    complemento: string;
+    bairro: string;
+    cidade: string;
+    quartos: number | null;
+    banheiros: number | null;
+    vagas: number | null;
+    area: Prisma.Decimal | number | null;
+    descricao: string;
+    observacoes: string;
+    fotoUrl: string | null;
+    fotoPublicId: string | null;
+    fotos?: Array<{ url: string; publicId: string; sortOrder: number }>;
+  }) {
+    const endereco = [
+      imovel.logradouro,
+      imovel.numero,
+      imovel.complemento,
+      imovel.bairro,
+    ]
+      .map((parte) => parte.trim())
+      .filter(Boolean)
+      .join(', ');
+    const area = imovel.area == null ? null : Number(imovel.area);
+    const fotos = [...(imovel.fotos ?? [])].sort(
+      (a, b) => a.sortOrder - b.sortOrder,
+    );
+    const imagens =
+      fotos.length > 0
+        ? fotos.map((foto) => ({
+            url: foto.url,
+            publicId: foto.publicId,
+          }))
+        : imovel.fotoUrl
+          ? [{ url: imovel.fotoUrl, publicId: imovel.fotoPublicId ?? '' }]
+          : [];
+    return {
+      nome: (imovelTitulo(imovel) || 'Imóvel').slice(0, 180),
+      cidade: imovel.cidade.trim() || null,
+      endereco: endereco || null,
+      tipo: CAPTACAO_IMOVEL_TIPO_LABEL[imovel.tipo] ?? null,
+      quartos: imovel.quartos,
+      banheiros: imovel.banheiros,
+      vagas: imovel.vagas,
+      areaM2: area != null && Number.isFinite(area) ? area : null,
+      observacao:
+        imovel.descricao.trim() || imovel.observacoes.trim() || null,
+      imagemUrl: imagens[0]?.url ?? imovel.fotoUrl,
+      imagens,
+    };
+  }
+
+  private async espelharNoCatalogo<T extends { id: string; tenantId: string; empreendimentoId?: string | null }>(
+    imovel: T,
+  ): Promise<T> {
+    const completo = await this.prisma.imovel.findFirst({
+      where: { id: imovel.id, tenantId: imovel.tenantId },
+      include: { ...imovelInclude, fotos: { orderBy: { sortOrder: 'asc' } } },
+    });
+    if (!completo) return imovel;
+    const dados = this.dadosEmpreendimento(completo);
+    if (completo.empreendimentoId) {
+      const atual = await this.prisma.empreendimento.findFirst({
+        where: { id: completo.empreendimentoId, tenantId: completo.tenantId },
+        select: { id: true, imagens: true },
+      });
+      if (atual) {
+        const imagensAtuais = Array.isArray(atual.imagens) ? atual.imagens : [];
+        await this.prisma.empreendimento.update({
+          where: { id: atual.id },
+          data: {
+            nome: dados.nome,
+            cidade: dados.cidade,
+            endereco: dados.endereco,
+            tipo: dados.tipo,
+            quartos: dados.quartos,
+            banheiros: dados.banheiros,
+            vagas: dados.vagas,
+            areaM2: dados.areaM2,
+            observacao: dados.observacao,
+            imagemUrl: dados.imagemUrl,
+            ...(imagensAtuais.length <= 1
+              ? { imagens: dados.imagens }
+              : {}),
+          },
+        });
+      }
+      return completo as unknown as T;
+    }
+    const criado = await this.prisma.empreendimento.create({
+      data: {
+        tenantId: completo.tenantId,
+        externalKey: `captacao-imovel-${completo.id}`,
+        tags: ['Captação'],
+        ativo: true,
+        nome: dados.nome,
+        cidade: dados.cidade,
+        endereco: dados.endereco,
+        tipo: dados.tipo,
+        quartos: dados.quartos,
+        banheiros: dados.banheiros,
+        vagas: dados.vagas,
+        areaM2: dados.areaM2,
+        observacao: dados.observacao,
+        imagemUrl: dados.imagemUrl,
+        imagens: dados.imagens,
+      },
+    });
+    const ligado = await this.prisma.imovel.update({
+      where: { id: completo.id },
+      data: { empreendimentoId: criado.id },
+      include: imovelInclude,
+    });
+    return ligado as unknown as T;
   }
 
   async listCaptacoes(query: QueryCaptacoesDto, user: AuthenticatedUser) {

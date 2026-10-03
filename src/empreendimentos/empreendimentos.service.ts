@@ -84,6 +84,7 @@ const empreendimentoSelect = {
   updatedAt: true,
   construtora: { select: { id: true, nome: true, cor: true } },
   localidade: { select: { id: true, nome: true } },
+  imovel: { select: { id: true } },
 } as const;
 
 type EmpreendimentoRow = Prisma.EmpreendimentoGetPayload<{
@@ -383,6 +384,23 @@ export class EmpreendimentosService {
       },
       select: empreendimentoSelect,
     });
+    if (updated.imovel?.id) {
+      await this.prisma.imovel.update({
+        where: { id: updated.imovel.id },
+        data: {
+          ...(dto.cidade !== undefined
+            ? { cidade: dto.cidade?.trim() ?? "" }
+            : {}),
+          ...(dto.quartos !== undefined ? { quartos: dto.quartos } : {}),
+          ...(dto.banheiros !== undefined ? { banheiros: dto.banheiros } : {}),
+          ...(dto.vagas !== undefined ? { vagas: dto.vagas } : {}),
+          ...(dto.areaM2 !== undefined ? { area: dto.areaM2 } : {}),
+          ...(dto.observacao !== undefined
+            ? { observacoes: dto.observacao?.trim() ?? "" }
+            : {}),
+        },
+      });
+    }
     if (shouldRematch && updated.ativo) {
       void this.matching
         .runAfterEmpreendimentoChange(updated.id, row.tenantId)
@@ -526,11 +544,12 @@ export class EmpreendimentosService {
     opts: { capaOnly?: boolean } = {},
   ) {
     const stored = resolveEmpreendimentoImages(item);
-    const { tenantId: _tenantId, previsaoEntrega, vitrine, ...rest } = item;
+    const { tenantId: _tenantId, previsaoEntrega, vitrine, imovel, ...rest } = item;
     const capa = stored[0]?.url ?? null;
     const imagens = stored.map((image) => image.largeUrl || image.url);
     return {
       ...rest,
+      imovelId: imovel?.id ?? null,
       vitrine: normalizeEmpreendimentoVitrine(vitrine),
       previsaoEntrega: previsaoEntrega
         ? previsaoEntrega.toISOString().slice(0, 10)
