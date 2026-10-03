@@ -659,14 +659,16 @@ export class DashboardService {
         ? 0
         : Number(((vendas / documentacoes) * 100).toFixed(1));
 
-    const docsMes = documentacaoStatusMes.reduce(
-      (total, row) => total + row._count._all,
-      0,
-    );
-    const docsMesAnt = documentacaoStatusMesAnt.reduce(
-      (total, row) => total + row._count._all,
-      0,
-    );
+      const docsMes = documentacaoStatusMes.reduce(
+        (total, row) => total + row._count._all,
+        0,
+      );
+      const docsMesAnt = documentacaoStatusMesAnt.reduce(
+        (total, row) => total + row._count._all,
+        0,
+      );
+      const aprovacoesMes = pipelineCounts(documentacaoStatusMes).aprovadas;
+      const aprovacoesMesAnt = pipelineCounts(documentacaoStatusMesAnt).aprovadas;
     const vendasDocsMes = countStatusVendido(vgvMes);
     const vendasDocsMesAnt = countStatusVendido(vgvMesAnt);
     const [cadastroMes, cadastroMesAnt] = await Promise.all([
@@ -695,6 +697,11 @@ export class DashboardService {
       vendasDocsMesAnt + (cadastroMesAnt._count._all ?? 0);
     const taxaMes = taxaConversao(vendasMesTotal, docsMes);
     const taxaMesAnt = taxaConversao(vendasMesAntTotal, docsMesAnt);
+    const taxaAprovMes = taxaConversao(vendasMesTotal, aprovacoesMes);
+    const taxaAprovMesAnt = taxaConversao(
+      vendasMesAntTotal,
+      aprovacoesMesAnt,
+    );
 
     const brasilAgora = new Date(windows.agora.getTime() - BRASIL_UTC_OFFSET_MS);
     const ehMesCorrente =
@@ -766,8 +773,10 @@ export class DashboardService {
       conversao: {
         entradas: metric(entradasMes, entradasMesAnt),
         documentacoes: metric(docsMes, docsMesAnt),
+        aprovacoes: metric(aprovacoesMes, aprovacoesMesAnt),
         vendas: metric(vendasMesTotal, vendasMesAntTotal),
         taxa: metric(taxaMes, taxaMesAnt),
+        taxaAprovacao: metric(taxaAprovMes, taxaAprovMesAnt),
         vgv: metric(vgvMesTotal, vgvMesAntTotal),
       },
       documentacaoPipeline: {
@@ -1099,6 +1108,8 @@ export class DashboardService {
         entradas: { valor: number; valorMesAnterior: number };
         visitas: number;
         documentacoes: number;
+        aprovacoes: number;
+        aprovacoesAnt: number;
         vendas: { valor: number; valorMesAnterior: number };
         vgv: { valor: number; valorMesAnterior: number };
         perdidos: number;
@@ -1163,6 +1174,8 @@ export class DashboardService {
       visitas: number;
       documentacoes: number;
       documentacoesAnt: number;
+      aprovacoes: number;
+      aprovacoesAnt: number;
       vendas: number;
       vendasAnt: number;
       vgv: number;
@@ -1192,6 +1205,8 @@ export class DashboardService {
         visitas: 0,
         documentacoes: 0,
         documentacoesAnt: 0,
+        aprovacoes: 0,
+        aprovacoesAnt: 0,
         vendas: 0,
         vendasAnt: 0,
         vgv: 0,
@@ -1220,6 +1235,8 @@ export class DashboardService {
         row.visitas += metrics.visitas;
         row.documentacoes += metrics.documentacoes;
         row.documentacoesAnt += docsAntMap.get(membro.id) ?? 0;
+        row.aprovacoes += metrics.aprovacoes ?? 0;
+        row.aprovacoesAnt += metrics.aprovacoesAnt ?? 0;
         row.vendas += metrics.vendas.valor;
         row.vendasAnt += metrics.vendas.valorMesAnterior;
         row.vgv += metrics.vgv.valor;
@@ -1265,6 +1282,11 @@ export class DashboardService {
       .map((row, index) => {
         const taxa = taxaConversao(row.vendas, row.documentacoes);
         const taxaAnt = taxaConversao(row.vendasAnt, row.documentacoesAnt);
+        const taxaAprovacao = taxaConversao(row.vendas, row.aprovacoes);
+        const taxaAprovacaoAnt = taxaConversao(
+          row.vendasAnt,
+          row.aprovacoesAnt,
+        );
         return {
           posicao: index + 1,
           gerenteId: row.gerenteId,
@@ -1276,9 +1298,11 @@ export class DashboardService {
           entradas: metric(row.entradas, row.entradasAnt),
           visitas: row.visitas,
           documentacoes: row.documentacoes,
+          aprovacoes: row.aprovacoes,
           vendas: metric(row.vendas, row.vendasAnt),
           vgv: metric(row.vgv, row.vgvAnt),
           taxaConversao: metric(taxa, taxaAnt),
+          taxaAprovacao: metric(taxaAprovacao, taxaAprovacaoAnt),
           perdidos: row.perdidos,
         };
       });
@@ -1290,9 +1314,11 @@ export class DashboardService {
     periodo: Periodo,
     origem?: string,
   ) {
-    if (ids.length === 0) {
-      return [] as Array<{ corretorId: string; _count: { _all: number } }>;
-    }
+    const empty = {
+      totais: new Map<string, number>(),
+      aprovacoes: new Map<string, number>(),
+    };
+    if (ids.length === 0) return empty;
     const rows = await this.prisma.documentacao.findMany({
       where: {
         tenantId,
@@ -1305,10 +1331,12 @@ export class DashboardService {
       },
       select: {
         corretorId: true,
+        status1: true,
         lead: { select: { corretorId: true } },
       },
     });
-    const counts = new Map<string, number>();
+    const totais = new Map<string, number>();
+    const aprovacoes = new Map<string, number>();
     const idSet = new Set(ids);
     for (const row of rows) {
       const credited =
@@ -1318,12 +1346,12 @@ export class DashboardService {
             ? row.lead.corretorId
             : null;
       if (!credited) continue;
-      counts.set(credited, (counts.get(credited) ?? 0) + 1);
+      totais.set(credited, (totais.get(credited) ?? 0) + 1);
+      if (documentacaoPipelineStatusKey(row.status1) === 'aprovadas') {
+        aprovacoes.set(credited, (aprovacoes.get(credited) ?? 0) + 1);
+      }
     }
-    return [...counts.entries()].map(([corretorId, _all]) => ({
-      corretorId,
-      _count: { _all },
-    }));
+    return { totais, aprovacoes };
   }
 
   private async buildRanking(
@@ -1963,17 +1991,13 @@ export class DashboardService {
             },
             _count: { _all: true },
           }),
-      ids.length === 0
-        ? emptyGroup
-        : this.countDocumentacoesPorCorretor(tenantId, ids, mesAtual, origem),
-      ids.length === 0
-        ? emptyGroup
-        : this.countDocumentacoesPorCorretor(
-            tenantId,
-            ids,
-            mesAnterior,
-            origem,
-          ),
+      this.countDocumentacoesPorCorretor(tenantId, ids, mesAtual, origem),
+      this.countDocumentacoesPorCorretor(
+        tenantId,
+        ids,
+        mesAnterior,
+        origem,
+      ),
       this.aggregateVendasPorCorretor(tenantId, ids, mesAtual, {
         origem,
       }),
@@ -2008,8 +2032,10 @@ export class DashboardService {
     const visitasMap = new Map(
       visitasMes.map((r) => [r.autorId!, r._count._all]),
     );
-    const docsMap = toMap(docsMes);
-    const docsAntMap = toMap(docsMesAnt);
+    const docsMap = docsMes.totais;
+    const docsAntMap = docsMesAnt.totais;
+    const aprovMap = docsMes.aprovacoes;
+    const aprovAntMap = docsMesAnt.aprovacoes;
     const vendasMap = vendasAtualAgg.vendas;
     const vendasAntMap = vendasAnteriorAgg.vendas;
     const vgvMap = vendasAtualAgg.vgv;
@@ -2036,8 +2062,12 @@ export class DashboardService {
         const entradasAnt = entradasAntMap.get(c.id) ?? 0;
         const documentacoes = docsMap.get(c.id) ?? 0;
         const documentacoesAnt = docsAntMap.get(c.id) ?? 0;
+        const aprovacoes = aprovMap.get(c.id) ?? 0;
+        const aprovacoesAnt = aprovAntMap.get(c.id) ?? 0;
         const taxa = taxaConversao(vendas, documentacoes);
         const taxaAnt = taxaConversao(vendasAnt, documentacoesAnt);
+        const taxaAprovacao = taxaConversao(vendas, aprovacoes);
+        const taxaAprovacaoAnt = taxaConversao(vendasAnt, aprovacoesAnt);
         return {
           corretorId: c.id,
           nome: c.name,
@@ -2049,9 +2079,12 @@ export class DashboardService {
           entradas: metric(entradas, entradasAnt),
           visitas: visitasMap.get(c.id) ?? 0,
           documentacoes,
+          aprovacoes,
+          aprovacoesAnt,
           vendas: metric(vendas, vendasAnt),
           vgv: metric(vgvMap.get(c.id) ?? 0, vgvAntMap.get(c.id) ?? 0),
           taxaConversao: metric(taxa, taxaAnt),
+          taxaAprovacao: metric(taxaAprovacao, taxaAprovacaoAnt),
           perdidos: perdidosMap.get(c.id) ?? 0,
           meta: metaByCorretor.get(c.id) ?? null,
         };
@@ -2090,6 +2123,7 @@ export class DashboardService {
       (acc, r) => {
         acc.entradas += r.entradas.valor || 0;
         acc.documentacoes += r.documentacoes || 0;
+        acc.aprovacoes += r.aprovacoes || 0;
         acc.vendas += r.vendas.valor || 0;
         acc.vgv += r.vgv.valor || 0;
         acc.visitas += r.visitas || 0;
@@ -2099,6 +2133,7 @@ export class DashboardService {
       {
         entradas: 0,
         documentacoes: 0,
+        aprovacoes: 0,
         vendas: 0,
         vgv: 0,
         visitas: 0,
@@ -2172,6 +2207,7 @@ export class DashboardService {
       totais: {
         ...totais,
         taxaConversao: taxaConversao(totais.vendas, totais.documentacoes),
+        taxaAprovacao: taxaConversao(totais.vendas, totais.aprovacoes),
         corretores: rankingCorretores.length,
         gerentes: rankingGerentes.length,
       },
