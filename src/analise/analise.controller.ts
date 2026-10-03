@@ -32,8 +32,11 @@ export class AnaliseController {
   }
 
   @Get('resumo')
-  resumo(@CurrentUser() requester: AuthenticatedUser) {
-    return this.analiseService.resumo(requester);
+  resumo(
+    @Query() query: QueryAnaliseDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.analiseService.resumo(query, requester);
   }
 
   @Get(':id')

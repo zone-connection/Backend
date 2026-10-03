@@ -20,6 +20,8 @@ import { requireTenantId } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
 import { QueryAnaliseDto, UpdateAnaliseDto } from './dto/analise.dto';
 
+const BRASIL_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
+
 const analiseSelect = {
   id: true,
   leadId: true,
@@ -88,49 +90,20 @@ export class AnaliseService {
   async list(query: QueryAnaliseDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
     await this.backfillMissing(requester);
-
-    // Admin/analista: visão global (inclui carteira de gerente/admin).
-    const isGlobal =
-      requester.role === Role.admin || requester.role === Role.analista;
-
-    const leadFilter: Prisma.LeadWhereInput = {
-      perdidoAt: null,
-      ...(isGlobal ? {} : await this.teamScope.leadScope(requester)),
-    };
-
-    if (query.corretorId) {
-      const allowed = await this.teamScope.canAccessCorretor(
-        requester,
-        query.corretorId,
-      );
-      if (!allowed) {
-        return [];
-      }
-      leadFilter.corretorId = query.corretorId;
-    }
+    const where = await this.buildListWhere(query, requester, tenantId);
 
     return this.prisma.analise.findMany({
-      where: {
-        tenantId,
-        lead: leadFilter,
-        ...(query.status ? { status: query.status as AnaliseStatus } : {}),
-      },
+      where,
       select: analiseSelect,
       orderBy: { createdAt: 'desc' },
     });
   }
 
   /** Totais e ranking por corretor a partir das fichas reais de análise. */
-  async resumo(requester: AuthenticatedUser) {
+  async resumo(query: QueryAnaliseDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
     await this.backfillMissing(requester);
-
-    const isGlobal =
-      requester.role === Role.admin || requester.role === Role.analista;
-    const leadFilter: Prisma.LeadWhereInput = {
-      perdidoAt: null,
-      ...(isGlobal ? {} : await this.teamScope.leadScope(requester)),
-    };
+    const where = await this.buildListWhere(query, requester, tenantId);
 
     const vendaSlugs = await this.funis.getSlugsByPapel(
       tenantId,
@@ -139,7 +112,7 @@ export class AnaliseService {
     const vendaSet = new Set(vendaSlugs);
 
     const rows = await this.prisma.analise.findMany({
-      where: { tenantId, lead: leadFilter },
+      where,
       select: {
         status: true,
         stageSituacao: true,
@@ -217,6 +190,82 @@ export class AnaliseService {
     );
 
     return { totais, ranking, vendaSlugs };
+  }
+
+  private async buildListWhere(
+    query: QueryAnaliseDto,
+    requester: AuthenticatedUser,
+    tenantId: string,
+  ): Promise<Prisma.AnaliseWhereInput> {
+    const isGlobal =
+      requester.role === Role.admin || requester.role === Role.analista;
+
+    const leadFilter: Prisma.LeadWhereInput = {
+      perdidoAt: null,
+      ...(isGlobal ? {} : await this.teamScope.leadScope(requester)),
+    };
+
+    if (query.corretorId) {
+      const allowed = await this.teamScope.canAccessCorretor(
+        requester,
+        query.corretorId,
+      );
+      if (!allowed) {
+        return { id: '__none__' };
+      }
+      leadFilter.corretorId = query.corretorId;
+    }
+
+    const mesRange = this.mesRange(query.mes);
+    const mesAtual = this.mesAtualBrasil();
+    const mesEhAtual = Boolean(query.mes && query.mes === mesAtual);
+
+    const mesWhere: Prisma.AnaliseWhereInput | undefined = mesRange
+      ? {
+          OR: [
+            {
+              status: { in: [AnaliseStatus.aprovado, AnaliseStatus.reprovado] },
+              updatedAt: { gte: mesRange.gte, lt: mesRange.lt },
+            },
+            mesEhAtual
+              ? {
+                  status: {
+                    in: [AnaliseStatus.pendente, AnaliseStatus.em_analise],
+                  },
+                }
+              : {
+                  status: {
+                    in: [AnaliseStatus.pendente, AnaliseStatus.em_analise],
+                  },
+                  createdAt: { gte: mesRange.gte, lt: mesRange.lt },
+                },
+          ],
+        }
+      : undefined;
+
+    return {
+      tenantId,
+      lead: leadFilter,
+      ...(query.status ? { status: query.status as AnaliseStatus } : {}),
+      ...(mesWhere ?? {}),
+    };
+  }
+
+  private mesAtualBrasil(): string {
+    const dataBrasil = new Date(Date.now() - BRASIL_UTC_OFFSET_MS);
+    const mes = String(dataBrasil.getUTCMonth() + 1).padStart(2, '0');
+    return `${dataBrasil.getUTCFullYear()}-${mes}`;
+  }
+
+  private mesRange(mes?: string): { gte: Date; lt: Date } | null {
+    if (!mes || !/^\d{4}-\d{2}$/.test(mes)) return null;
+    const [ano, mesNum] = mes.split('-').map(Number);
+    const inicioLocal = new Date(Date.UTC(ano, mesNum - 1, 1));
+    const fimLocal = new Date(Date.UTC(ano, mesNum, 1));
+    return {
+      gte: new Date(inicioLocal.getTime() + BRASIL_UTC_OFFSET_MS),
+      lt: new Date(fimLocal.getTime() + BRASIL_UTC_OFFSET_MS),
+    };
   }
 
   async findOne(id: string, requester: AuthenticatedUser) {

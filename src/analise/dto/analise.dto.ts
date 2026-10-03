@@ -4,6 +4,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
   ValidateIf,
@@ -30,6 +31,11 @@ export class QueryAnaliseDto {
     message: 'Status inválido.',
   })
   status?: 'pendente' | 'em_analise' | 'aprovado' | 'reprovado';
+
+  /** Recorte YYYY-MM (fuso Brasil). Vazio = todo o período. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}$/, { message: 'Mês inválido.' })
+  mes?: string;
 }
 
 const ANALISE_STATUSES = [
