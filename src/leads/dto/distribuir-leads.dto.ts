@@ -1,6 +1,8 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
+  ArrayUnique,
   IsArray,
   IsIn,
   IsInt,
@@ -10,6 +12,8 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+
+const LEAD_IDS_MAX = 500;
 
 export class DistribuirEquipeItemDto {
   @IsUUID('4')
@@ -44,13 +48,22 @@ export class DistribuirCorretorItemDto {
 }
 
 /**
- * Admin/gerente: envia leads do pool do admin aos corretores.
+ * Admin/gerente: envia leads aos corretores.
+ * - `leadIds`: só esses leads (marcados na lista). Sem isso, usa o pool do admin.
  * - `alocacoes`: quantidades por corretor (preferido)
  * - `porCorretor`: round-robin legado entre todos os ativos
  */
 export class DistribuirCorretoresDto {
   @IsIn(['corretores'])
   modo!: 'corretores';
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(LEAD_IDS_MAX)
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  leadIds?: string[];
 
   @IsOptional()
   @IsArray()

@@ -576,12 +576,18 @@ export class LeadsService {
     }
     const tenantId = requireTenantId(requester);
     const leadWhere = await this.poolAdminWhere(tenantId);
+    const selecionados = [...new Set(dto.leadIds ?? [])];
 
     if (dto.alocacoes?.length) {
       const totalPedido = dto.alocacoes.reduce((s, a) => s + a.quantidade, 0);
       if (totalPedido <= 0) {
         throw new BadRequestException(
           'Informe ao menos 1 lead para distribuir.',
+        );
+      }
+      if (selecionados.length > 0 && selecionados.length !== totalPedido) {
+        throw new BadRequestException(
+          `Selecione ${totalPedido} lead(s) ou ajuste as quantidades dos corretores.`,
         );
       }
 
@@ -601,12 +607,12 @@ export class LeadsService {
         );
       }
 
-      const leads = await this.prisma.lead.findMany({
-        where: leadWhere,
-        select: { id: true, origemAtrasoLiberacao: true },
-        orderBy: { createdAt: 'asc' },
-        take: totalPedido,
-      });
+      const leads = await this.leadsParaDistribuir(
+        tenantId,
+        leadWhere,
+        selecionados,
+        totalPedido,
+      );
       if (leads.length < totalPedido) {
         throw new BadRequestException(
           `Há apenas ${leads.length} lead(s) disponíveis para distribuir (pedido: ${totalPedido}).`,
@@ -695,11 +701,11 @@ export class LeadsService {
       );
     }
 
-    const leads = await this.prisma.lead.findMany({
-      where: leadWhere,
-      select: { id: true, origemAtrasoLiberacao: true },
-      orderBy: { createdAt: 'asc' },
-    });
+    const leads = await this.leadsParaDistribuir(
+      tenantId,
+      leadWhere,
+      selecionados,
+    );
 
     if (leads.length === 0) {
       throw new BadRequestException(
@@ -2141,6 +2147,45 @@ export class LeadsService {
       equipeId: null,
       ...excludeVendaOuVgvWhere(vendaSlugs),
     };
+  }
+
+  /** Pool do admin, ou só os IDs marcados na lista (na ordem da seleção). */
+  private async leadsParaDistribuir(
+    tenantId: string,
+    poolWhere: Prisma.LeadWhereInput,
+    leadIds: string[],
+    take?: number,
+  ): Promise<Array<{ id: string; origemAtrasoLiberacao: AtrasoLiberacaoDestino | null }>> {
+    if (leadIds.length > 0) {
+      const vendaSlugs = await this.funis.getSlugsByPapel(
+        tenantId,
+        FunilEtapaPapel.venda,
+      );
+      const found = await this.prisma.lead.findMany({
+        where: {
+          tenantId,
+          id: { in: leadIds },
+          tipo: ContatoTipo.lead,
+          perdidoAt: null,
+          ...excludeVendaOuVgvWhere(vendaSlugs),
+        },
+        select: { id: true, origemAtrasoLiberacao: true },
+      });
+      if (found.length !== leadIds.length) {
+        throw new BadRequestException(
+          'Um ou mais leads selecionados não existem, já foram perdidos ou não podem ser redistribuídos.',
+        );
+      }
+      const byId = new Map(found.map((lead) => [lead.id, lead]));
+      return leadIds.map((id) => byId.get(id)!);
+    }
+
+    return this.prisma.lead.findMany({
+      where: poolWhere,
+      select: { id: true, origemAtrasoLiberacao: true },
+      orderBy: { createdAt: 'asc' },
+      ...(take != null ? { take } : {}),
+    });
   }
 
   private async assertPodeRedistribuir(tenantId: string, leadId: string) {
