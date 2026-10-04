@@ -32,15 +32,27 @@ import {
   PessoaTipo,
   PresencaNatureza,
   Prisma,
+  ParceriaParticipacaoStatus,
+  ParceriaRepasseStatus,
+  ParceriaStatus,
   ProprietarioPortalStatus,
   PropostaStatus,
   Role,
   TenantPlano,
   TriagemOrigem,
   UserStatus,
+  VendaUsadoContratoStatus,
+  VendaUsadoDocumentoCategoria,
+  VendaUsadoDocumentoFornecedor,
+  VendaUsadoDocumentoStatus,
+  VendaUsadoDocumentoTipo,
+  VendaUsadoFechamentoStatus,
   VendaUsadoHistoricoTipo,
+  VendaUsadoNegociacaoOrigem,
+  VendaUsadoNegociacaoStatus,
   VendaUsadoPropostaStatus,
   VendaUsadoStatus,
+  VendaUsadoVisitaInteresse,
   VendaUsadoVisitaStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -65,6 +77,7 @@ import { isStatusVendido } from '../common/utils/documentacao-status';
 import {
   DEMO_CAPTATION_IMOVEIS,
   DEMO_CATALOG,
+  DEMO_CORRETORES_PARCEIROS,
   DEMO_INTERESSADOS_USADOS,
   DEMO_CONSTRUTORAS,
   DEMO_CONSTRUTORAS_BASE,
@@ -125,6 +138,8 @@ export type DemoDataCounts = {
   presencas: number;
   muralChaves: number;
   vinculosProposta: number;
+  corretoresParceiros: number;
+  parcerias: number;
 };
 
 type DemoDocumentacaoResumo = {
@@ -242,6 +257,8 @@ export class TenantDemoDataService {
       presencas: 0,
       muralChaves: 0,
       vinculosProposta: 0,
+      corretoresParceiros: 0,
+      parcerias: 0,
     };
 
     counts.catalogItems = await this.seedCatalogAndFunil(tenantId);
@@ -342,6 +359,13 @@ export class TenantDemoDataService {
       tenantId,
       userIdByKey,
     );
+    const parceiros = await this.seedCorretoresParceiros(
+      tenantId,
+      tenant.slug,
+      userIdByKey,
+    );
+    counts.corretoresParceiros = parceiros.corretores;
+    counts.parcerias = parceiros.parcerias;
     counts.presencas = await this.seedPresencas(tenantId, userIdByKey);
 
     return {
@@ -425,7 +449,21 @@ export class TenantDemoDataService {
         await tx.interessadoUsado.deleteMany({ where: { tenantId } });
         await tx.captacaoHistorico.deleteMany({ where: { tenantId } });
         await tx.captacao.deleteMany({ where: { tenantId } });
+        await tx.parceriaInteresse.deleteMany({
+          where: { parceria: { tenantId } },
+        });
+        await tx.parceriaParticipacao.deleteMany({
+          where: { parceria: { tenantId } },
+        });
+        await tx.parceriaRepasse.deleteMany({
+          where: { parceria: { tenantId } },
+        });
+        await tx.parceriaEvento.deleteMany({
+          where: { parceria: { tenantId } },
+        });
+        await tx.parceria.deleteMany({ where: { tenantId } });
         await tx.proprietarioPortalAcesso.deleteMany({ where: { tenantId } });
+        await tx.imovelFoto.deleteMany({ where: { tenantId } });
         await tx.imovel.deleteMany({ where: { tenantId } });
         await tx.proprietario.deleteMany({ where: { tenantId } });
 
@@ -799,7 +837,7 @@ export class TenantDemoDataService {
       });
       counts.proprietarios += 1;
 
-      if (def.portal) {
+      if (def.portal || def.sugestaoPortal) {
         await this.prisma.proprietarioPortalAcesso.create({
           data: {
             tenantId,
@@ -828,6 +866,7 @@ export class TenantDemoDataService {
           banheiros: def.banheiros ?? null,
           vagas: def.vagas ?? null,
           descricao: def.descricao,
+          liberadoParaParceria: def.parceria === true,
           fotoUrl: capaUrl,
           fotoPublicId: 'demo-capa',
           fotos: {
@@ -849,7 +888,11 @@ export class TenantDemoDataService {
           proprietarioId: proprietario.id,
           imovelId: imovel.id,
           responsavelId,
-          origem: def.origem,
+          origem: def.sugestaoPortal
+            ? 'Portal do proprietário'
+            : def.origem,
+          sugestaoProprietario: def.sugestaoPortal === true,
+          canceladoPeloProprietario: def.canceladoPortal === true,
           exclusividade: def.exclusivo === true,
           valorPretendido: def.pretendido,
           valorAvaliacao: def.avaliacao,
@@ -884,6 +927,37 @@ export class TenantDemoDataService {
             tipo: CaptacaoHistoricoTipo.exclusividade,
             texto: 'Exclusividade registrada na captação de demonstração.',
             autorId: responsavelId,
+          },
+        });
+      }
+      if (def.sugestaoPortal) {
+        await this.prisma.captacaoHistorico.create({
+          data: {
+            tenantId,
+            captacaoId: captacaoRow.id,
+            tipo: CaptacaoHistoricoTipo.criacao,
+            texto: 'O proprietário sugeriu este imóvel pelo portal.',
+            autorId: responsavelId,
+          },
+        });
+      }
+      if (def.canceladoPortal) {
+        await this.prisma.captacaoHistorico.create({
+          data: {
+            tenantId,
+            captacaoId: captacaoRow.id,
+            tipo: CaptacaoHistoricoTipo.cancelamento,
+            texto: 'O proprietário cancelou o anúncio pelo portal.',
+          },
+        });
+      }
+      if (def.portal || def.sugestaoPortal) {
+        await this.prisma.captacaoHistorico.create({
+          data: {
+            tenantId,
+            captacaoId: captacaoRow.id,
+            tipo: CaptacaoHistoricoTipo.portal_acao,
+            texto: 'O proprietário pediu para falar com o corretor.',
           },
         });
       }
@@ -994,21 +1068,134 @@ export class TenantDemoDataService {
           dataHora: new Date(Date.now() + (i - 2) * DAY_MS + 15 * HOUR_MS),
           status: visitaStatus[i % visitaStatus.length]!,
           observacoes: 'Visita de demonstração vinculada ao imóvel.',
+          ...(visitaStatus[i % visitaStatus.length] ===
+          VendaUsadoVisitaStatus.realizada
+            ? {
+                feedbackAvaliacao: 4,
+                feedbackInteresse: VendaUsadoVisitaInteresse.interessado,
+                feedbackComentarios: 'Visitante gostou da planta e da vista.',
+                feedbackAt: new Date(),
+              }
+            : {}),
         },
       });
       if (i % 2 === 0) {
-        await this.prisma.vendaUsadoProposta.create({
+        const proposta = await this.prisma.vendaUsadoProposta.create({
           data: {
             tenantId,
             vendaUsadoId: venda.id,
             interessadoId,
             responsavelId: venda.responsavelId,
             valor: Number(venda.precoVenda ?? 800000) - i * 5000,
+            entrada: 80000,
+            valorFinanciamento: Number(venda.precoVenda ?? 800000) - 80000,
             status: propostaStatus[i % propostaStatus.length]!,
             observacoes: 'Proposta de demonstração no usado.',
           },
+          select: { id: true, valor: true },
         });
+        const negociacao = await this.prisma.vendaUsadoNegociacao.create({
+          data: {
+            tenantId,
+            propostaId: proposta.id,
+            status:
+              propostaStatus[i % propostaStatus.length] ===
+              VendaUsadoPropostaStatus.aceita
+                ? VendaUsadoNegociacaoStatus.aceita
+                : VendaUsadoNegociacaoStatus.em_negociacao,
+          },
+          select: { id: true },
+        });
+        await this.prisma.vendaUsadoNegociacaoMovimento.create({
+          data: {
+            tenantId,
+            negociacaoId: negociacao.id,
+            valor: proposta.valor,
+            entrada: 80000,
+            observacoes: 'Contraproposta inicial da imobiliária.',
+            origem: VendaUsadoNegociacaoOrigem.corretor,
+            responsavelId: venda.responsavelId,
+          },
+        });
+        if (
+          propostaStatus[i % propostaStatus.length] ===
+            VendaUsadoPropostaStatus.aceita &&
+          !(await this.prisma.vendaUsadoFechamento.findUnique({
+            where: { vendaUsadoId: venda.id },
+            select: { id: true },
+          }))
+        ) {
+          const fechamento = await this.prisma.vendaUsadoFechamento.create({
+            data: {
+              tenantId,
+              vendaUsadoId: venda.id,
+              propostaId: proposta.id,
+              interessadoId,
+              responsavelId: venda.responsavelId,
+              status: VendaUsadoFechamentoStatus.documentacao_pendente,
+              observacoes: 'Fechamento de demonstração para o portal.',
+            },
+            select: { id: true },
+          });
+          await this.prisma.vendaUsadoDocumento.createMany({
+            data: [
+              {
+                tenantId,
+                fechamentoId: fechamento.id,
+                categoria: VendaUsadoDocumentoCategoria.proprietario,
+                tipo: VendaUsadoDocumentoTipo.identificacao,
+                nome: 'RG / CNH do proprietário',
+                fornecedor: VendaUsadoDocumentoFornecedor.proprietario,
+                status: VendaUsadoDocumentoStatus.aprovado,
+              },
+              {
+                tenantId,
+                fechamentoId: fechamento.id,
+                categoria: VendaUsadoDocumentoCategoria.imovel,
+                tipo: VendaUsadoDocumentoTipo.matricula,
+                nome: 'Matrícula atualizada',
+                fornecedor: VendaUsadoDocumentoFornecedor.proprietario,
+                status: VendaUsadoDocumentoStatus.pendente,
+              },
+              {
+                tenantId,
+                fechamentoId: fechamento.id,
+                categoria: VendaUsadoDocumentoCategoria.imovel,
+                tipo: VendaUsadoDocumentoTipo.iptu,
+                nome: 'IPTU do exercício',
+                fornecedor: VendaUsadoDocumentoFornecedor.imobiliaria,
+                status: VendaUsadoDocumentoStatus.recebido,
+              },
+              {
+                tenantId,
+                fechamentoId: fechamento.id,
+                categoria: VendaUsadoDocumentoCategoria.venda,
+                tipo: VendaUsadoDocumentoTipo.contrato,
+                nome: 'Minuta de compromisso',
+                fornecedor: VendaUsadoDocumentoFornecedor.imobiliaria,
+                status: VendaUsadoDocumentoStatus.em_analise,
+              },
+            ],
+          });
+          await this.prisma.vendaUsadoContrato.create({
+            data: {
+              tenantId,
+              fechamentoId: fechamento.id,
+              numero: `VU-DEMO-${String(i + 1).padStart(3, '0')}`,
+              status: VendaUsadoContratoStatus.em_elaboracao,
+              observacoes: 'Contrato de demonstração (sem arquivo).',
+            },
+          });
+        }
       }
+      await this.prisma.vendaUsadoHistorico.create({
+        data: {
+          tenantId,
+          vendaUsadoId: venda.id,
+          tipo: VendaUsadoHistoricoTipo.portal_acao,
+          texto: 'O proprietário registrou: vi e concordo.',
+        },
+      });
       const segundo = interessadoIds[(i + 1) % interessadoIds.length];
       if (segundo && segundo !== interessadoId) {
         await this.prisma.vendaUsadoVinculo.upsert({
@@ -1032,6 +1219,175 @@ export class TenantDemoDataService {
     return counts;
   }
 
+  private async seedCorretoresParceiros(
+    tenantId: string,
+    slug: string,
+    userIdByKey: Map<DemoUserKey, string>,
+  ) {
+    const counts = { corretores: 0, parcerias: 0 };
+    const passwordHash = await bcrypt.hash(DEMO_PASSWORD, SALT_ROUNDS);
+    const convidadoPorId = userIdByKey.get('gerente') ?? null;
+    const imoveis = await this.prisma.imovel.findMany({
+      where: { tenantId, liberadoParaParceria: true },
+      select: { id: true },
+      take: 8,
+    });
+    const lead = await this.prisma.lead.findFirst({
+      where: { tenantId },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    for (const def of DEMO_CORRETORES_PARCEIROS) {
+      const email = `parceiro.${def.key}.${slug}@example.com`.toLowerCase();
+      let parceiro = await this.prisma.corretorParceiro.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (!parceiro) {
+        parceiro = await this.prisma.corretorParceiro.create({
+          data: {
+            email,
+            nome: def.nome,
+            creci: def.creci,
+            imobiliariaOrigem: def.imobiliariaOrigem,
+            telefone: def.telefone,
+            password: passwordHash,
+            ativo: true,
+          },
+          select: { id: true },
+        });
+        counts.corretores += 1;
+      } else {
+        await this.prisma.corretorParceiro.update({
+          where: { id: parceiro.id },
+          data: {
+            nome: def.nome,
+            password: passwordHash,
+            ativo: true,
+            telefone: def.telefone,
+            creci: def.creci,
+            imobiliariaOrigem: def.imobiliariaOrigem,
+          },
+        });
+        counts.corretores += 1;
+      }
+
+      const existente = await this.prisma.parceria.findUnique({
+        where: {
+          tenantId_parceiroId: { tenantId, parceiroId: parceiro.id },
+        },
+        select: { id: true },
+      });
+      const parceria = existente
+        ? await this.prisma.parceria.update({
+            where: { id: existente.id },
+            data: {
+              status:
+                def.status === 'ativa'
+                  ? ParceriaStatus.ativa
+                  : ParceriaStatus.convite,
+              percentualParceiro: 50,
+              podeVerEstoque: true,
+              podeReceberLead: true,
+              podeIndicar: true,
+              aceitoAt: def.status === 'ativa' ? new Date() : null,
+              encerradoAt: null,
+              convidadoPorId,
+            },
+            select: { id: true },
+          })
+        : await this.prisma.parceria.create({
+            data: {
+              tenantId,
+              parceiroId: parceiro.id,
+              status:
+                def.status === 'ativa'
+                  ? ParceriaStatus.ativa
+                  : ParceriaStatus.convite,
+              percentualParceiro: 50,
+              aceitoAt: def.status === 'ativa' ? new Date() : null,
+              convidadoPorId,
+            },
+            select: { id: true },
+          });
+      counts.parcerias += 1;
+
+      if (!existente) {
+        await this.prisma.parceriaEvento.create({
+          data: {
+            parceriaId: parceria.id,
+            tipo: 'convite',
+            texto: `Convite de demonstração para ${def.nome}.`,
+          },
+        });
+        if (def.status === 'ativa') {
+          await this.prisma.parceriaEvento.create({
+            data: {
+              parceriaId: parceria.id,
+              tipo: 'aceite',
+              texto: 'Parceria aceita (carga de demonstração).',
+            },
+          });
+        }
+      }
+      if (def.status === 'ativa') {
+        for (const imovel of imoveis.slice(0, 4)) {
+          await this.prisma.parceriaInteresse.upsert({
+            where: {
+              parceriaId_imovelId: {
+                parceriaId: parceria.id,
+                imovelId: imovel.id,
+              },
+            },
+            create: {
+              parceriaId: parceria.id,
+              imovelId: imovel.id,
+              mensagem: 'Interesse de demonstração na vitrine.',
+            },
+            update: {},
+          });
+        }
+        if (lead) {
+          await this.prisma.parceriaParticipacao.upsert({
+            where: {
+              parceriaId_leadId: {
+                parceriaId: parceria.id,
+                leadId: lead.id,
+              },
+            },
+            create: {
+              parceriaId: parceria.id,
+              leadId: lead.id,
+              status: ParceriaParticipacaoStatus.ativa,
+              aceitoAt: new Date(),
+              responsavelCasaId: convidadoPorId,
+            },
+            update: {
+              status: ParceriaParticipacaoStatus.ativa,
+            },
+          });
+        }
+        const jaRepasse = await this.prisma.parceriaRepasse.findFirst({
+          where: { parceriaId: parceria.id },
+          select: { id: true },
+        });
+        if (!jaRepasse) {
+          await this.prisma.parceriaRepasse.create({
+            data: {
+              parceriaId: parceria.id,
+              descricao: 'Repasse previsto da indicação demo',
+              valor: 12500,
+              status: ParceriaRepasseStatus.prevista,
+            },
+          });
+        }
+      }
+    }
+
+    return counts;
+  }
+
   private async enableDemoOperationModules(
     tenantId: string,
     plano: TenantPlano,
@@ -1043,6 +1399,7 @@ export class TenantDemoDataService {
         : {};
     raw.captacao = true;
     raw.imoveisUsados = true;
+    raw.parcerias = true;
     raw[MURAL_CHAVES_OPT_IN_KEY] = true;
     const next = applyPlanoModules(plano, raw);
     await this.prisma.tenant.update({

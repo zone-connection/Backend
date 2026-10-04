@@ -1142,6 +1142,12 @@ export type DemoCaptacaoImovelDef = {
   avaliacao: number;
   etapaSlug: string;
   exclusivo?: boolean;
+  /** Origem Portal do proprietário + aba Portal no CRM. */
+  sugestaoPortal?: boolean;
+  /** Cancelamento pelo dono (aba Portal no CRM). */
+  canceladoPortal?: boolean;
+  /** Imóvel visível na vitrine de corretores parceiros. */
+  parceria?: boolean;
   origem: string;
   corretor: DemoUserKey;
   vendaUsado?: {
@@ -1158,6 +1164,7 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     telefone: '(81) 99120-1101',
     cpfCnpj: '12345678901',
     portal: true,
+    sugestaoPortal: true,
     tipo: 'apartamento',
     cep: '51020-000',
     logradouro: 'Av. Boa Viagem',
@@ -1182,6 +1189,7 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     proprietario: 'Roberto Melo',
     telefone: '(81) 99120-1102',
     cpfCnpj: '23456789012',
+    portal: true,
     tipo: 'casa',
     cep: '52060-000',
     logradouro: 'Rua das Flores',
@@ -1206,6 +1214,8 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     proprietario: 'Sandra Pires',
     telefone: '(81) 99120-1103',
     cpfCnpj: '34567890123',
+    portal: true,
+    canceladoPortal: true,
     tipo: 'apartamento',
     cep: '51110-000',
     logradouro: 'Rua do Pina',
@@ -1320,6 +1330,7 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     avaliacao: 620000,
     etapaSlug: 'imovel-captado',
     origem: 'Instagram',
+    parceria: true,
     corretor: 'corretor1',
     vendaUsado: {
       etapaSlug: 'visita-agendada-usados',
@@ -1349,6 +1360,8 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     avaliacao: 940000,
     etapaSlug: 'imovel-captado',
     exclusivo: true,
+    portal: true,
+    parceria: true,
     origem: 'Feirão',
     corretor: 'corretor3',
     vendaUsado: {
@@ -1400,6 +1413,7 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     avaliacao: 465000,
     etapaSlug: 'avaliacao',
     origem: 'Indicação de cliente',
+    parceria: true,
     corretor: 'corretor2',
     vendaUsado: {
       etapaSlug: 'visita-agendada-usados',
@@ -1431,6 +1445,7 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     etapaSlug: 'imovel-captado',
     exclusivo: true,
     origem: 'Feirão de captação',
+    parceria: true,
     corretor: 'corretor1',
     vendaUsado: {
       etapaSlug: 'proposta-usados',
@@ -1443,6 +1458,8 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     proprietario: 'Atlantic Investimentos Ltda',
     telefone: '(81) 3412-8800',
     cpfCnpj: '22333444000172',
+    portal: true,
+    canceladoPortal: true,
     tipo: 'sala_comercial',
     cep: '50030-230',
     logradouro: 'Av. Agamenon Magalhães',
@@ -1484,6 +1501,7 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     etapaSlug: 'aguardando-documentacao',
     exclusivo: true,
     origem: 'Instagram',
+    parceria: true,
     corretor: 'corretor3',
     vendaUsado: {
       etapaSlug: 'visita-agendada-usados',
@@ -1496,6 +1514,8 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     proprietario: 'Otávio Lira',
     telefone: '(81) 99120-1114',
     cpfCnpj: '21987654321',
+    portal: true,
+    sugestaoPortal: true,
     tipo: 'terreno',
     cep: '54762-000',
     logradouro: 'Rodovia PE-05',
@@ -1534,6 +1554,7 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     avaliacao: 1080000,
     etapaSlug: 'captacao-aprovada',
     origem: 'Portal Imobiliário',
+    parceria: true,
     corretor: 'corretor1',
     vendaUsado: {
       etapaSlug: 'proposta-usados',
@@ -1542,6 +1563,25 @@ export const DEMO_CAPTATION_IMOVEIS_BASE: readonly DemoCaptacaoImovelDef[] = [
     },
   },
 ];
+
+export const DEMO_CORRETORES_PARCEIROS = [
+  {
+    key: 'renata',
+    nome: 'Renata Alves',
+    creci: 'CRECI-PE 18420',
+    imobiliariaOrigem: 'Alves Brokers',
+    telefone: '(81) 98811-4401',
+    status: 'ativa' as const,
+  },
+  {
+    key: 'marcos',
+    nome: 'Marcos Queiroz',
+    creci: 'CRECI-PE 19733',
+    imobiliariaOrigem: 'Queiroz Imóveis',
+    telefone: '(81) 98811-4402',
+    status: 'convite' as const,
+  },
+] as const;
 
 export const DEMO_CAPTATION_IMOVEIS: readonly DemoCaptacaoImovelDef[] =
   expandDemoVolume(DEMO_CAPTATION_IMOVEIS_BASE, (item, n) => ({
