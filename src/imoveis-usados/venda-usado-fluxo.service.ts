@@ -16,7 +16,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
-import { moneyEqual, toMoneyNumber } from '../captacao/captacao.util';
+import { imovelTitulo } from '../captacao/captacao.constants';
 import {
   CreateNegociacaoMovimentoDto,
   CreatePropostaUsadoDto,
@@ -55,6 +55,80 @@ const propostaInclude = {
 @Injectable()
 export class VendaUsadoFluxoService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async listTodasVisitas(user: AuthenticatedUser) {
+    const tenantId = requireTenantId(user);
+    const rows = await this.prisma.vendaUsadoVisita.findMany({
+      where: { tenantId },
+      include: {
+        ...visitaInclude,
+        vendaUsado: {
+          select: {
+            id: true,
+            imovel: {
+              select: {
+                id: true,
+                tipo: true,
+                logradouro: true,
+                numero: true,
+                bairro: true,
+                cidade: true,
+                fotoUrl: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { dataHora: 'desc' },
+    });
+    return rows.map((row) => ({
+      ...this.exposeVisita(row),
+      vendaUsado: {
+        ...row.vendaUsado,
+        imovel: {
+          ...row.vendaUsado.imovel,
+          titulo: imovelTitulo(row.vendaUsado.imovel),
+        },
+      },
+    }));
+  }
+
+  async listTodasPropostas(user: AuthenticatedUser) {
+    const tenantId = requireTenantId(user);
+    const rows = await this.prisma.vendaUsadoProposta.findMany({
+      where: { tenantId },
+      include: {
+        ...propostaInclude,
+        vendaUsado: {
+          select: {
+            id: true,
+            imovel: {
+              select: {
+                id: true,
+                tipo: true,
+                logradouro: true,
+                numero: true,
+                bairro: true,
+                cidade: true,
+                fotoUrl: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((row) => ({
+      ...this.exposeProposta(row),
+      vendaUsado: {
+        ...row.vendaUsado,
+        imovel: {
+          ...row.vendaUsado.imovel,
+          titulo: imovelTitulo(row.vendaUsado.imovel),
+        },
+      },
+    }));
+  }
 
   async listVisitas(vendaId: string, user: AuthenticatedUser) {
     const tenantId = requireTenantId(user);

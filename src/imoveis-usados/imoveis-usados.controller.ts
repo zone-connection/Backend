@@ -83,6 +83,18 @@ export class ImoveisUsadosController {
     return this.service.listImoveisCaptados(user);
   }
 
+  @Get('visitas')
+  @Roles(...IMOVEIS_USADOS_ROLES)
+  listVisitas(@CurrentUser() user: AuthenticatedUser) {
+    return this.fluxo.listTodasVisitas(user);
+  }
+
+  @Get('propostas')
+  @Roles(...IMOVEIS_USADOS_ROLES)
+  listPropostas(@CurrentUser() user: AuthenticatedUser) {
+    return this.fluxo.listTodasPropostas(user);
+  }
+
   @Get()
   @Roles(...IMOVEIS_USADOS_ROLES)
   list(

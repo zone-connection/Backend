@@ -32,6 +32,7 @@ import {
   normalizeComodidades,
 } from '../captacao/captacao.util';
 import { imovelTitulo } from '../captacao/captacao.constants';
+import { imovelCapaResolvida } from '../captacao/imovel-capa';
 import {
   CreateInteressadoUsadoDto,
   CreateVendaUsadoDto,
@@ -889,10 +890,12 @@ export class ImoveisUsadosService {
     return {
       ...rest,
       fotos: fotosPublicas,
-      fotoUrl:
-        (item.fotoUrl as string | null | undefined) ??
-        fotosPublicas[0]?.url ??
-        null,
+      fotoUrl: imovelCapaResolvida({
+        id: item.id as string | undefined,
+        tipo: item.tipo,
+        fotoUrl: item.fotoUrl as string | null | undefined,
+        fotos: fotosPublicas,
+      }),
       area: toMoneyNumber(item.area as never),
       areaConstruida: toMoneyNumber(item.areaConstruida as never),
       titulo: imovelTitulo(item),

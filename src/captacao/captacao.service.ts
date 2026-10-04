@@ -23,6 +23,7 @@ import {
   IMOVEL_MAX_FOTOS,
   imovelTitulo,
 } from './captacao.constants';
+import { imovelCapaResolvida } from './imovel-capa';
 import {
   moneyEqual,
   pickFirstActiveEtapa,
@@ -1158,10 +1159,12 @@ export class CaptacaoService {
     return {
       ...rest,
       fotos: fotosPublicas,
-      fotoUrl:
-        (item.fotoUrl as string | null | undefined) ??
-        fotosPublicas[0]?.url ??
-        null,
+      fotoUrl: imovelCapaResolvida({
+        id: item.id as string | undefined,
+        tipo: item.tipo,
+        fotoUrl: item.fotoUrl as string | null | undefined,
+        fotos: fotosPublicas,
+      }),
       area: toMoneyNumber(item.area as never),
       areaConstruida: toMoneyNumber(item.areaConstruida as never),
       titulo: imovelTitulo(item),
@@ -1217,7 +1220,12 @@ export class CaptacaoService {
       imovel: {
         ...imovelRest,
         fotos: fotosPublicas,
-        fotoUrl: item.imovel.fotoUrl ?? fotosPublicas[0]?.url ?? null,
+        fotoUrl: imovelCapaResolvida({
+          id: (item.imovel as { id?: string }).id,
+          tipo: item.imovel.tipo,
+          fotoUrl: item.imovel.fotoUrl,
+          fotos: fotosPublicas,
+        }),
         area: toMoneyNumber(item.imovel.area as never),
         areaConstruida: toMoneyNumber(item.imovel.areaConstruida as never),
         titulo: imovelTitulo(item.imovel),
