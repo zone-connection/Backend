@@ -306,6 +306,7 @@ export class ImoveisUsadosService {
       },
       include: {
         proprietario: { select: { id: true, nome: true } },
+        fotos: { orderBy: { sortOrder: 'asc' as const } },
         captacoes: {
           orderBy: { createdAt: 'desc' },
           take: 1,
@@ -888,6 +889,10 @@ export class ImoveisUsadosService {
     return {
       ...rest,
       fotos: fotosPublicas,
+      fotoUrl:
+        (item.fotoUrl as string | null | undefined) ??
+        fotosPublicas[0]?.url ??
+        null,
       area: toMoneyNumber(item.area as never),
       areaConstruida: toMoneyNumber(item.areaConstruida as never),
       titulo: imovelTitulo(item),

@@ -87,6 +87,7 @@ import {
   demoExtraCount,
   demoUserEmail,
   extraDemoLeadKeys,
+  demoImovelCapaUrl,
   type DemoUserKey,
 } from './demo-seed.data';
 import { PopulateDemoDataDto } from './dto/populate-demo-data.dto';
@@ -809,6 +810,7 @@ export class TenantDemoDataService {
         });
       }
 
+      const capaUrl = demoImovelCapaUrl(def.tipo, def.email);
       const imovel = await this.prisma.imovel.create({
         data: {
           tenantId,
@@ -826,6 +828,16 @@ export class TenantDemoDataService {
           banheiros: def.banheiros ?? null,
           vagas: def.vagas ?? null,
           descricao: def.descricao,
+          fotoUrl: capaUrl,
+          fotoPublicId: 'demo-capa',
+          fotos: {
+            create: {
+              tenantId,
+              url: capaUrl,
+              publicId: 'demo-capa',
+              sortOrder: 0,
+            },
+          },
         },
         select: { id: true },
       });
@@ -904,6 +916,8 @@ export class TenantDemoDataService {
         vendaImovelIds.push(venda.id);
       }
     }
+
+    await this.ensureImovelCapas(tenantId);
 
     const interessadoIds: string[] = [];
     for (const def of DEMO_INTERESSADOS_USADOS) {
@@ -3206,5 +3220,37 @@ export class TenantDemoDataService {
     if (!data.length) return 0;
     const created = await this.prisma.financeiroComissao.createMany({ data });
     return created.count;
+  }
+
+  private async ensureImovelCapas(tenantId: string) {
+    const imoveis = await this.prisma.imovel.findMany({
+      where: { tenantId },
+      select: {
+        id: true,
+        tipo: true,
+        fotoUrl: true,
+        _count: { select: { fotos: true } },
+      },
+    });
+    for (const imovel of imoveis) {
+      const url = imovel.fotoUrl || demoImovelCapaUrl(imovel.tipo, imovel.id);
+      if (!imovel.fotoUrl) {
+        await this.prisma.imovel.update({
+          where: { id: imovel.id },
+          data: { fotoUrl: url, fotoPublicId: imovel.fotoUrl ? undefined : 'demo-capa' },
+        });
+      }
+      if (imovel._count.fotos === 0) {
+        await this.prisma.imovelFoto.create({
+          data: {
+            tenantId,
+            imovelId: imovel.id,
+            url,
+            publicId: 'demo-capa',
+            sortOrder: 0,
+          },
+        });
+      }
+    }
   }
 }

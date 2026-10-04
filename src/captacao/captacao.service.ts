@@ -97,7 +97,11 @@ const captacaoInclude = {
   proprietario: {
     select: { id: true, nome: true, telefone: true, email: true, tipoPessoa: true },
   },
-  imovel: true,
+  imovel: {
+    include: {
+      fotos: { orderBy: { sortOrder: 'asc' as const } },
+    },
+  },
   responsavel: { select: { id: true, name: true, email: true } },
   funil: {
     select: {
@@ -1154,6 +1158,10 @@ export class CaptacaoService {
     return {
       ...rest,
       fotos: fotosPublicas,
+      fotoUrl:
+        (item.fotoUrl as string | null | undefined) ??
+        fotosPublicas[0]?.url ??
+        null,
       area: toMoneyNumber(item.area as never),
       areaConstruida: toMoneyNumber(item.areaConstruida as never),
       titulo: imovelTitulo(item),
@@ -1178,11 +1186,16 @@ export class CaptacaoService {
       cidade: string;
       area: unknown;
       areaConstruida: unknown;
+      fotoUrl?: string | null;
       fotoPublicId?: string | null;
+      fotos?: Array<{ id: string; url: string; sortOrder: number; publicId?: string }>;
     };
     [key: string]: unknown;
   }) {
-    const { fotoPublicId: _fotoPublicId, ...imovelRest } = item.imovel;
+    const { fotoPublicId: _fotoPublicId, fotos, ...imovelRest } = item.imovel;
+    const fotosPublicas = Array.isArray(fotos)
+      ? fotos.map(({ publicId: _p, ...foto }) => foto)
+      : [];
     const funil = item.funil as
       | {
           inatividadeValor?: number;
@@ -1203,6 +1216,8 @@ export class CaptacaoService {
       valorAvaliacao: toMoneyNumber(item.valorAvaliacao as never),
       imovel: {
         ...imovelRest,
+        fotos: fotosPublicas,
+        fotoUrl: item.imovel.fotoUrl ?? fotosPublicas[0]?.url ?? null,
         area: toMoneyNumber(item.imovel.area as never),
         areaConstruida: toMoneyNumber(item.imovel.areaConstruida as never),
         titulo: imovelTitulo(item.imovel),
