@@ -989,7 +989,7 @@ export class TenantDemoDataService {
             vendaUsadoId: venda.id,
             interessadoId,
             responsavelId: venda.responsavelId,
-            valor: (venda.precoVenda ?? 800000) - i * 5000,
+            valor: Number(venda.precoVenda ?? 800000) - i * 5000,
             status: propostaStatus[i % propostaStatus.length]!,
             observacoes: 'Proposta de demonstração no usado.',
           },
