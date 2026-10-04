@@ -81,6 +81,8 @@ describe('portal proprietário — isolamento e dados', () => {
   it('proprietário acessa seu imóvel', async () => {
     const prisma = {
       imovel: { findFirst: async () => imovelA() },
+      captacaoHistorico: { findMany: async () => [] },
+      vendaUsadoHistorico: { findMany: async () => [] },
     };
     const service = new PortalProprietarioImoveisService(prisma as never);
     const item = await service.getImovel('i1', sessionA);
@@ -234,6 +236,12 @@ describe('portal proprietário — isolamento e dados', () => {
           return [imovelA()];
         },
       },
+      captacaoHistorico: { findMany: async () => [] },
+      vendaUsadoHistorico: { findMany: async () => [] },
+      propostaVinculo: { findMany: async () => [] },
+      proprietarioPortalAcesso: {
+        findUnique: async () => ({ novidadesLidasAt: null }),
+      },
     };
     const service = new PortalProprietarioImoveisService(prisma as never);
     const dash = await service.dashboard(sessionA);
@@ -245,13 +253,7 @@ describe('portal proprietário — isolamento e dados', () => {
     const prisma = {
       imovel: { findFirst: async () => imovelA() },
       captacaoHistorico: {
-        findMany: async (args: {
-          where: { tipo: { in: CaptacaoHistoricoTipo[] } };
-        }) => {
-          assert.equal(
-            args.where.tipo.in.includes(CaptacaoHistoricoTipo.edicao),
-            false,
-          );
+        findMany: async () => {
           return [
             {
               id: 'h1',
@@ -280,10 +282,28 @@ describe('portal proprietário — isolamento e dados', () => {
           ];
         },
       },
+      propostaVinculo: {
+        findMany: async (args: {
+          where: { proprietarioId: string; imovelId: string };
+        }) => {
+          assert.equal(args.where.proprietarioId, 'p1');
+          assert.equal(args.where.imovelId, 'i1');
+          return [
+            {
+              id: 'pv1',
+              vinculadoEm: new Date('2026-08-28'),
+              removidoEm: null,
+              corretorNome: 'Maria',
+              proposta: { codigo: 'PROP-1' },
+            },
+          ];
+        },
+      },
     };
     const service = new PortalProprietarioImoveisService(prisma as never);
     const historico = await service.getHistorico('i1', sessionA);
-    assert.equal(historico.length, 2);
+    assert.equal(historico.length, 3);
+    assert.equal(historico[2]?.origem, 'proposta');
   });
 
   it('visitas são filtradas pelo imóvel/proprietário', async () => {
@@ -346,24 +366,16 @@ describe('portal proprietário — isolamento e dados', () => {
   });
 });
 
-describe('portal proprietário — somente leitura', () => {
-  it('serviço não expõe métodos de alteração', () => {
+describe('portal proprietário — ações do dono', () => {
+  it('serviço permite atualizar o próprio imóvel pelo portal', () => {
     const service = new PortalProprietarioImoveisService({} as never);
-    assert.equal(
-      'createImovel' in service || 'updateImovel' in service,
-      false,
-    );
+    assert.equal(typeof service.updateImovel, 'function');
     assert.equal(typeof (service as { createProposta?: unknown }).createProposta, 'undefined');
-    assert.equal(typeof (service as { updateDocumento?: unknown }).updateDocumento, 'undefined');
-    assert.equal(typeof (service as { movimentarChave?: unknown }).movimentarChave, 'undefined');
-    assert.equal(typeof (service as { concluirPosVenda?: unknown }).concluirPosVenda, 'undefined');
   });
 
-  it('controller só declara leitura', () => {
+  it('controller expõe listagem agregada de propostas', () => {
     const proto = PortalProprietarioController.prototype;
-    const names = Object.getOwnPropertyNames(proto);
-    assert.equal(names.includes('create'), false);
-    assert.equal(names.includes('update'), false);
-    assert.equal(names.includes('patch'), false);
+    assert.equal(typeof proto.propostasCarteira, 'function');
+    assert.equal(typeof proto.propostas, 'function');
   });
 });

@@ -380,7 +380,7 @@ export class PortalProprietarioImoveisService {
       id: string;
       imovelId: string;
       identificacao: string;
-      origem: 'captacao' | 'venda';
+      origem: 'captacao' | 'venda' | 'proposta';
       tipo: string;
       texto: string;
       createdAt: Date;
@@ -432,6 +432,33 @@ export class PortalProprietarioImoveisService {
             createdAt: item.createdAt,
           });
         }
+      }
+      const vinculos = await this.prisma.propostaVinculo.findMany({
+        where: {
+          tenantId: session.tenantId,
+          imovelId: imovel.id,
+          proprietarioId: session.proprietarioId,
+          removidoEm: null,
+          vinculadoEm: { gte: since },
+          imovel: { proprietarioId: session.proprietarioId },
+        },
+        orderBy: { vinculadoEm: 'desc' },
+        select: {
+          id: true,
+          vinculadoEm: true,
+          proposta: { select: { codigo: true } },
+        },
+      });
+      for (const item of vinculos) {
+        eventos.push({
+          id: item.id,
+          imovelId: imovel.id,
+          identificacao,
+          origem: 'proposta',
+          tipo: 'vinculo',
+          texto: `Proposta ${item.proposta.codigo} vinculada ao seu imóvel.`,
+          createdAt: item.vinculadoEm,
+        });
       }
     }
     eventos.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -628,7 +655,7 @@ export class PortalProprietarioImoveisService {
     const row = await this.requireImovel(imovelId, session);
     const eventos: Array<{
       id: string;
-      origem: 'captacao' | 'venda';
+      origem: 'captacao' | 'venda' | 'proposta';
       tipo: string;
       texto: string;
       createdAt: Date;
@@ -672,6 +699,41 @@ export class PortalProprietarioImoveisService {
           tipo: item.tipo,
           texto: item.texto,
           createdAt: item.createdAt,
+        });
+      }
+    }
+
+    const vinculos = await this.prisma.propostaVinculo.findMany({
+      where: {
+        tenantId: session.tenantId,
+        imovelId,
+        proprietarioId: session.proprietarioId,
+        imovel: { proprietarioId: session.proprietarioId },
+      },
+      orderBy: { vinculadoEm: 'asc' },
+      select: {
+        id: true,
+        vinculadoEm: true,
+        removidoEm: true,
+        corretorNome: true,
+        proposta: { select: { codigo: true } },
+      },
+    });
+    for (const item of vinculos) {
+      eventos.push({
+        id: item.id,
+        origem: 'proposta',
+        tipo: 'vinculo',
+        texto: `Proposta ${item.proposta.codigo} vinculada${item.corretorNome ? ` por ${item.corretorNome}` : ''}.`,
+        createdAt: item.vinculadoEm,
+      });
+      if (item.removidoEm) {
+        eventos.push({
+          id: `${item.id}-removido`,
+          origem: 'proposta',
+          tipo: 'vinculo_removido',
+          texto: `Vínculo da proposta ${item.proposta.codigo} removido.`,
+          createdAt: item.removidoEm,
         });
       }
     }
@@ -739,6 +801,37 @@ export class PortalProprietarioImoveisService {
         )
         .map(mapVisita),
     };
+  }
+
+  async listPropostasCarteira(session: PortalProprietarioSession) {
+    const imoveis = await this.prisma.imovel.findMany({
+      where: {
+        tenantId: session.tenantId,
+        proprietarioId: session.proprietarioId,
+      },
+      select: {
+        id: true,
+        tipo: true,
+        logradouro: true,
+        numero: true,
+        bairro: true,
+        cidade: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const rows: Array<{
+      imovel: { id: string; identificacao: string };
+      propostas: Awaited<ReturnType<PortalProprietarioImoveisService['getPropostas']>>;
+    }> = [];
+    for (const imovel of imoveis) {
+      const propostas = await this.getPropostas(imovel.id, session);
+      if (propostas.length === 0) continue;
+      rows.push({
+        imovel: { id: imovel.id, identificacao: tituloImovel(imovel) },
+        propostas,
+      });
+    }
+    return rows;
   }
 
   async getPropostas(imovelId: string, session: PortalProprietarioSession) {
@@ -817,6 +910,7 @@ export class PortalProprietarioImoveisService {
       select: {
         id: true,
         vinculadoEm: true,
+        corretorNome: true,
         proposta: {
           select: {
             codigo: true,
@@ -834,6 +928,9 @@ export class PortalProprietarioImoveisService {
             mcmv: true,
             financiamento: true,
             status: true,
+            observacao: true,
+            validade: true,
+            corretor: { select: { name: true } },
             empreendimento: { select: { nome: true } },
           },
         },
@@ -857,6 +954,9 @@ export class PortalProprietarioImoveisService {
         interessadoNome: proposta.clienteNome,
         unidade: proposta.unidade,
         empreendimentoNome: proposta.empreendimento?.nome ?? null,
+        observacao: proposta.observacao,
+        validade: proposta.validade,
+        corretorNome: proposta.corretor?.name ?? item.corretorNome,
         composicao,
         negociacao: null,
       };
@@ -1028,6 +1128,10 @@ export class PortalProprietarioImoveisService {
           propostas: { select: { id: true, status: true } },
         },
       },
+      propostaVinculos: {
+        where: { removidoEm: null },
+        select: { id: true },
+      },
     };
   }
 
@@ -1059,6 +1163,7 @@ export class PortalProprietarioImoveisService {
       visitas: Array<{ id: string }>;
       propostas: Array<{ id: string; status: VendaUsadoPropostaStatus }>;
     } | null;
+    propostaVinculos?: Array<{ id: string }>;
   }) {
     const captacao = row.captacoes[0] ?? null;
     const venda = row.vendaUsado;
@@ -1113,8 +1218,8 @@ export class PortalProprietarioImoveisService {
       interessados: venda?.vinculos.length ?? 0,
       visitas: venda?.visitas.length ?? 0,
       propostas:
-        venda?.propostas.filter((p) => PROPOSTAS_VISIVEIS.includes(p.status))
-          .length ?? 0,
+        (venda?.propostas.filter((p) => PROPOSTAS_VISIVEIS.includes(p.status))
+          .length ?? 0) + (row.propostaVinculos?.length ?? 0),
     };
   }
 

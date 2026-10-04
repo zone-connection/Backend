@@ -69,6 +69,11 @@ export class PortalProprietarioController {
     return this.imoveis.listNovidades(session);
   }
 
+  @Get('propostas')
+  propostasCarteira(@CurrentPortal() session: PortalProprietarioSession) {
+    return this.imoveis.listPropostasCarteira(session);
+  }
+
   @Post('novidades/lidas')
   marcarNovidadesLidas(@CurrentPortal() session: PortalProprietarioSession) {
     return this.imoveis.marcarNovidadesLidas(session);

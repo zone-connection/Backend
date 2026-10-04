@@ -58,6 +58,14 @@ const vinculoSelect = {
   },
 } satisfies Prisma.PropostaVinculoSelect;
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 function brl(value: number | null | undefined) {
   return (value ?? 0).toLocaleString("pt-BR", {
     style: "currency",
@@ -255,21 +263,34 @@ export class PropostaVinculosService {
       `Proposta: ${proposta.codigo}`,
       `Interessado: ${proposta.clienteNome}`,
       `Valor: ${brl(proposta.valor)}`,
-      proposta.desconto
-        ? `Desconto: ${brl(proposta.desconto)}`
-        : "",
+      proposta.desconto ? `Desconto: ${brl(proposta.desconto)}` : "",
       `Imóvel: ${imovelLabel}`,
-      portalUrl ? "" : "",
-      portalUrl
-        ? `Consulte a proposta no Portal do Proprietário: ${portalUrl}`
-        : "",
+      portalUrl ? `Consulte a proposta no Portal do Proprietário: ${portalUrl}` : "",
     ].filter((linha) => linha !== "");
+
+    const botao = portalUrl
+      ? `<p style="margin:24px 0"><a href="${escapeHtml(portalUrl)}" style="display:inline-block;background:#12343d;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600">Ver proposta no portal</a></p>`
+      : "";
+    const html = `<div style="font-family:Arial,sans-serif;color:#12343d;line-height:1.5;max-width:560px">
+<p>Olá, ${escapeHtml(imovel.proprietario.nome)}.</p>
+<p>Uma nova proposta foi vinculada ao seu imóvel.</p>
+<table style="border-collapse:collapse;width:100%">
+<tr><td style="padding:6px 0;color:#64748b">Proposta</td><td style="padding:6px 0;font-weight:600">${escapeHtml(proposta.codigo)}</td></tr>
+<tr><td style="padding:6px 0;color:#64748b">Interessado</td><td style="padding:6px 0">${escapeHtml(proposta.clienteNome)}</td></tr>
+<tr><td style="padding:6px 0;color:#64748b">Valor</td><td style="padding:6px 0">${escapeHtml(brl(proposta.valor))}</td></tr>
+${proposta.desconto ? `<tr><td style="padding:6px 0;color:#64748b">Desconto</td><td style="padding:6px 0">${escapeHtml(brl(proposta.desconto))}</td></tr>` : ""}
+<tr><td style="padding:6px 0;color:#64748b">Imóvel</td><td style="padding:6px 0">${escapeHtml(imovelLabel)}</td></tr>
+</table>
+${botao}
+<p style="color:#64748b;font-size:12px">Esta mensagem refere-se apenas ao imóvel acima. Outros proprietários não recebem os dados deste vínculo.</p>
+</div>`;
 
     try {
       await this.mailer.sendText({
         to: destino,
         subject: assunto,
         text: linhas.join("\n"),
+        html,
       });
       await this.registrarNotificacao(vinculoId, destino, "enviado", assunto);
     } catch (error) {
