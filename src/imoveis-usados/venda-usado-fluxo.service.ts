@@ -17,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { imovelTitulo } from '../captacao/captacao.constants';
+import { moneyEqual, toMoneyNumber } from '../captacao/captacao.util';
 import {
   CreateNegociacaoMovimentoDto,
   CreatePropostaUsadoDto,

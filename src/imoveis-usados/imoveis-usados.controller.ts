@@ -85,13 +85,13 @@ export class ImoveisUsadosController {
 
   @Get('visitas')
   @Roles(...IMOVEIS_USADOS_ROLES)
-  listVisitas(@CurrentUser() user: AuthenticatedUser) {
+  listTodasVisitas(@CurrentUser() user: AuthenticatedUser) {
     return this.fluxo.listTodasVisitas(user);
   }
 
   @Get('propostas')
   @Roles(...IMOVEIS_USADOS_ROLES)
-  listPropostas(@CurrentUser() user: AuthenticatedUser) {
+  listTodasPropostas(@CurrentUser() user: AuthenticatedUser) {
     return this.fluxo.listTodasPropostas(user);
   }
 
