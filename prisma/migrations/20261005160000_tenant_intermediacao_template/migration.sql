@@ -1,3 +1,3 @@
 -- Processed Word template with CRM placeholders for intermediacao.
-ALTER TABLE "Tenant" ADD COLUMN "intermediacaoTemplateUrl" TEXT;
-ALTER TABLE "Tenant" ADD COLUMN "intermediacaoTemplatePublicId" TEXT;
+ALTER TABLE "tenants" ADD COLUMN IF NOT EXISTS "intermediacaoTemplateUrl" TEXT;
+ALTER TABLE "tenants" ADD COLUMN IF NOT EXISTS "intermediacaoTemplatePublicId" TEXT;
