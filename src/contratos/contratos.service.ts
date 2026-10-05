@@ -4,16 +4,26 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ContratoDocumentoStatus, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import { MediaService } from '../media/media.service';
 import { TenantLogoColorService } from '../tenants/tenant-logo-color.service';
 import {
   GenerateContratoDto,
   UpsertContratoDocumentoDto,
 } from './dto/generate-contrato.dto';
 import { buildChecklistRendaPdf } from './checklist-renda-pdf';
+import { extractIntermediacaoFields } from './intermediacao-extract';
+import {
+  INTERMEDIACAO_KEYS,
+  sanitizeKnownValues,
+} from './intermediacao-fields';
+import { interpretWithOpenAi } from './intermediacao-ia';
+import { injectDocxPlaceholders, renderIntermediacaoDocx } from './intermediacao-docx';
+import { extractDocumentText, intermediacaoFileKind } from './intermediacao-text';
 
 const VALUE_MAX = 500;
 const NOTES_MAX = 2000;
@@ -59,6 +69,8 @@ export class ContratosService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly logoColor: TenantLogoColorService,
+    private readonly media: MediaService,
+    private readonly config: ConfigService,
   ) {}
 
   async listDocumentos(requester: AuthenticatedUser) {
@@ -171,6 +183,185 @@ export class ContratosService {
     };
   }
 
+  async analisarIntermediacao(
+    file: Express.Multer.File | undefined,
+    intencao: string | undefined,
+    requester: AuthenticatedUser,
+  ) {
+    requireTenantId(requester);
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Envie um Word (.docx) ou PDF com texto.');
+    }
+    const { kind, text } = await extractDocumentText({
+      buffer: file.buffer,
+      filename: file.originalname || '',
+      mimetype: file.mimetype || '',
+    });
+    const heuristic = extractIntermediacaoFields(text);
+    let fields = heuristic.fields;
+    let values = { ...heuristic.values };
+    const avisos = [...heuristic.avisos];
+    let fonte: 'regras' | 'ia+regras' = 'regras';
+
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: requireTenantId(requester) },
+      select: { iaBotEnabled: true },
+    });
+    const apiKey = this.config.get<string>('OPENAI_API_KEY')?.trim();
+    if (tenant?.iaBotEnabled && apiKey) {
+      const ia = await interpretWithOpenAi({ text, apiKey });
+      if (ia) {
+        fonte = 'ia+regras';
+        const merged: Record<string, string> = { ...ia.values, ...values };
+        values = merged;
+        const byKey = new Map(fields.map((item) => [item.key, item]));
+        for (const item of ia.fields) {
+          if (!byKey.has(item.key)) {
+            fields = [...fields, item];
+            byKey.set(item.key, item);
+          }
+        }
+      }
+    }
+
+    if (kind === 'pdf' && intencao === 'modelo') {
+      avisos.push(
+        'PDF serve para ler dados. Para gerar no papel timbrado, envie o mesmo contrato em Word (.docx).',
+      );
+    }
+
+    return {
+      intencao: intencao === 'modelo' ? 'modelo' : 'extrair',
+      kind,
+      textPreview: text.slice(0, 1200),
+      fields,
+      values,
+      avisos,
+      fonte,
+    };
+  }
+
+  async confirmarModeloIntermediacao(
+    file: Express.Multer.File | undefined,
+    mappingsRaw: unknown,
+    requester: AuthenticatedUser,
+  ) {
+    if (requester.role !== Role.admin && requester.role !== Role.super_admin) {
+      throw new ForbiddenException('Só o admin confirma o modelo da imobiliária.');
+    }
+    const tenantId = requireTenantId(requester);
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Envie o Word (.docx) da imobiliária.');
+    }
+    intermediacaoFileKind(file.originalname || '', file.mimetype || '');
+    if (!file.originalname.toLowerCase().endsWith('.docx')) {
+      throw new BadRequestException(
+        'Para virar modelo preenchível envie o contrato em Word (.docx).',
+      );
+    }
+    const mappings = parseMappings(mappingsRaw);
+    const processed = injectDocxPlaceholders(file.buffer, mappings);
+    const nome = (file.originalname || 'contrato-intermediacao.docx')
+      .replace(/[/\\]/g, ' ')
+      .slice(0, 160);
+
+    const current = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        intermediacaoModeloPublicId: true,
+        intermediacaoTemplatePublicId: true,
+      },
+    });
+    if (!current) throw new NotFoundException('Tenant não encontrado.');
+
+    const original = await this.media.uploadRaw({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      filename: nome,
+      folder: this.media.folder(tenantId, 'tenants', tenantId) + '/contratos',
+    });
+    const template = await this.media.uploadRaw({
+      buffer: processed,
+      mimetype:
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      filename: nome.replace(/\.docx$/i, '-template.docx'),
+      folder: this.media.folder(tenantId, 'tenants', tenantId) + '/contratos',
+    });
+
+    await this.media.destroyRaw(current.intermediacaoModeloPublicId);
+    await this.media.destroyRaw(current.intermediacaoTemplatePublicId);
+
+    return this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        intermediacaoModeloUrl: original.url,
+        intermediacaoModeloPublicId: original.publicId,
+        intermediacaoModeloNome: nome,
+        intermediacaoTemplateUrl: template.url,
+        intermediacaoTemplatePublicId: template.publicId,
+      },
+      select: {
+        intermediacaoModeloUrl: true,
+        intermediacaoModeloNome: true,
+        intermediacaoTemplateUrl: true,
+      },
+    });
+  }
+
+  async generateIntermediacaoDocx(
+    rawValues: Record<string, string>,
+    requester: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(requester);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        name: true,
+        documento: true,
+        creci: true,
+        email: true,
+        endereco: true,
+        cidade: true,
+        banco: true,
+        agencia: true,
+        contaBancaria: true,
+        pix: true,
+        representanteLegal: true,
+        intermediacaoTemplateUrl: true,
+        intermediacaoModeloNome: true,
+      },
+    });
+    if (!tenant?.intermediacaoTemplateUrl) {
+      throw new BadRequestException(
+        'A imobiliária ainda não confirmou o Word como modelo preenchível.',
+      );
+    }
+
+    const values = sanitizeKnownValues(rawValues);
+    fillIfEmpty(values, 'contratadaNome', tenant.name);
+    fillIfEmpty(values, 'contratadaCnpj', tenant.documento);
+    fillIfEmpty(values, 'contratadaCreci', tenant.creci);
+    fillIfEmpty(values, 'contratadaEmail', tenant.email);
+    fillIfEmpty(values, 'contratadaEndereco', tenant.endereco);
+    fillIfEmpty(values, 'cidade', tenant.cidade);
+    fillIfEmpty(values, 'banco', tenant.banco);
+    fillIfEmpty(values, 'agencia', tenant.agencia);
+    fillIfEmpty(values, 'conta', tenant.contaBancaria);
+    fillIfEmpty(values, 'pix', tenant.pix);
+    fillIfEmpty(values, 'representanteLegal', tenant.representanteLegal);
+
+    const response = await fetch(tenant.intermediacaoTemplateUrl);
+    if (!response.ok) {
+      throw new BadRequestException('Não foi possível baixar o modelo Word da imobiliária.');
+    }
+    const templateBuffer = Buffer.from(await response.arrayBuffer());
+    const buffer = renderIntermediacaoDocx(templateBuffer, values);
+    return {
+      buffer,
+      filename: `contrato-intermediacao-${safeName(values.contratanteNome || 'cliente')}.docx`,
+    };
+  }
+
   private veTodos(requester: AuthenticatedUser) {
     return (
       requester.role === Role.admin ||
@@ -223,6 +414,42 @@ function pickTitulo(values: Record<string, string>) {
     values.compradorNome?.trim() ||
     ''
   );
+}
+
+function fillIfEmpty(
+  values: Record<string, string>,
+  key: string,
+  raw: string | null | undefined,
+) {
+  if (values[key]?.trim()) return;
+  const next = raw?.trim();
+  if (next) values[key] = next;
+}
+
+function parseMappings(raw: unknown): { key: string; snippet: string }[] {
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new BadRequestException('Mapeamento inválido.');
+    }
+  }
+  if (!Array.isArray(parsed)) {
+    throw new BadRequestException('Informe a lista de campos confirmados.');
+  }
+  const out: { key: string; snippet: string }[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue;
+    const key = String((item as { key?: string }).key ?? '').trim();
+    const snippet = String((item as { snippet?: string }).snippet ?? '').trim();
+    if (!INTERMEDIACAO_KEYS.includes(key as (typeof INTERMEDIACAO_KEYS)[number])) {
+      continue;
+    }
+    if (!snippet) continue;
+    out.push({ key, snippet });
+  }
+  return out;
 }
 
 function safeName(raw: string) {

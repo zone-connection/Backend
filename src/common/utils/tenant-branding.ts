@@ -18,6 +18,7 @@ export const tenantBrandingSelect = {
   representanteLegal: true,
   intermediacaoModeloUrl: true,
   intermediacaoModeloNome: true,
+  intermediacaoTemplateUrl: true,
   logoUrl: true,
   primaryColor: true,
   sidebarStyle: true,

@@ -1155,7 +1155,10 @@ export class TenantsService {
     const tenantId = this.assertCanEditCompany(requester);
     const current = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { intermediacaoModeloPublicId: true },
+      select: {
+        intermediacaoModeloPublicId: true,
+        intermediacaoTemplatePublicId: true,
+      },
     });
     if (!current) throw new NotFoundException('Tenant não encontrado.');
     const file = this.media.requireDocument(rawFile);
@@ -1171,12 +1174,15 @@ export class TenantsService {
     if (current.intermediacaoModeloPublicId) {
       await this.media.destroyRaw(current.intermediacaoModeloPublicId);
     }
+    await this.media.destroyRaw(current.intermediacaoTemplatePublicId);
     return this.prisma.tenant.update({
       where: { id: tenantId },
       data: {
         intermediacaoModeloUrl: uploaded.url,
         intermediacaoModeloPublicId: uploaded.publicId,
         intermediacaoModeloNome: nome,
+        intermediacaoTemplateUrl: null,
+        intermediacaoTemplatePublicId: null,
       },
       select: tenantBrandingSelect,
     });
@@ -1186,16 +1192,22 @@ export class TenantsService {
     const tenantId = this.assertCanEditCompany(requester);
     const current = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { intermediacaoModeloPublicId: true },
+      select: {
+        intermediacaoModeloPublicId: true,
+        intermediacaoTemplatePublicId: true,
+      },
     });
     if (!current) throw new NotFoundException('Tenant não encontrado.');
     await this.media.destroyRaw(current.intermediacaoModeloPublicId);
+    await this.media.destroyRaw(current.intermediacaoTemplatePublicId);
     return this.prisma.tenant.update({
       where: { id: tenantId },
       data: {
         intermediacaoModeloUrl: null,
         intermediacaoModeloPublicId: null,
         intermediacaoModeloNome: '',
+        intermediacaoTemplateUrl: null,
+        intermediacaoTemplatePublicId: null,
       },
       select: tenantBrandingSelect,
     });
