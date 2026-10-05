@@ -124,6 +124,24 @@ export class ContratosController {
     });
   }
 
+  @Post('intermediacao/pdf')
+  @Roles(...ROLES)
+  @Header('Content-Type', 'application/pdf')
+  async generateIntermediacaoPdf(
+    @Body() dto: GenerateContratoDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    const { buffer, filename } =
+      await this.contratosService.generateIntermediacaoPdf(
+        dto.values,
+        requester,
+      );
+    return new StreamableFile(buffer, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${filename}"`,
+    });
+  }
+
   @Post('pdf')
   @Roles(...ROLES)
   @Header('Content-Type', 'application/pdf')

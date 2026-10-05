@@ -136,9 +136,10 @@ model Tenant {
   intermediacaoModeloUrl      String?
   intermediacaoModeloPublicId String?
   intermediacaoModeloNome     String  @default("")
-  /// DOCX processado com placeholders {{campo}} para preencher.
+  /// DOCX/PDF processado para preencher com dados do CRM.
   intermediacaoTemplateUrl      String?
   intermediacaoTemplatePublicId String?
+  intermediacaoCampoMap         Json?
 
   /// Branding visual (nível 1).
   logoUrl      String?

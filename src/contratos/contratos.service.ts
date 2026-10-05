@@ -23,6 +23,7 @@ import {
 } from './intermediacao-fields';
 import { interpretWithOpenAi } from './intermediacao-ia';
 import { injectDocxPlaceholders, renderIntermediacaoDocx } from './intermediacao-docx';
+import { fillPdfTemplate } from './intermediacao-pdf';
 import { extractDocumentText, intermediacaoFileKind } from './intermediacao-text';
 
 const VALUE_MAX = 500;
@@ -251,17 +252,11 @@ export class ContratosService {
     }
     const tenantId = requireTenantId(requester);
     if (!file?.buffer?.length) {
-      throw new BadRequestException('Envie o Word (.docx) da imobiliária.');
+      throw new BadRequestException('Envie o Word (.docx) ou PDF da imobiliária.');
     }
-    intermediacaoFileKind(file.originalname || '', file.mimetype || '');
-    if (!file.originalname.toLowerCase().endsWith('.docx')) {
-      throw new BadRequestException(
-        'Para virar modelo preenchível envie o contrato em Word (.docx).',
-      );
-    }
+    const kind = intermediacaoFileKind(file.originalname || '', file.mimetype || '');
     const mappings = parseMappings(mappingsRaw);
-    const processed = injectDocxPlaceholders(file.buffer, mappings);
-    const nome = (file.originalname || 'contrato-intermediacao.docx')
+    const nome = (file.originalname || 'contrato-intermediacao')
       .replace(/[/\\]/g, ' ')
       .slice(0, 160);
 
@@ -274,6 +269,17 @@ export class ContratosService {
     });
     if (!current) throw new NotFoundException('Tenant não encontrado.');
 
+    const templateBuffer =
+      kind === 'docx'
+        ? injectDocxPlaceholders(file.buffer, mappings)
+        : file.buffer;
+    const templateMime =
+      kind === 'docx'
+        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : file.mimetype || 'application/pdf';
+    const templateName =
+      kind === 'docx' ? nome.replace(/\.docx$/i, '-template.docx') : nome;
+
     const original = await this.media.uploadRaw({
       buffer: file.buffer,
       mimetype: file.mimetype,
@@ -281,10 +287,9 @@ export class ContratosService {
       folder: this.media.folder(tenantId, 'tenants', tenantId) + '/contratos',
     });
     const template = await this.media.uploadRaw({
-      buffer: processed,
-      mimetype:
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      filename: nome.replace(/\.docx$/i, '-template.docx'),
+      buffer: templateBuffer,
+      mimetype: templateMime,
+      filename: templateName,
       folder: this.media.folder(tenantId, 'tenants', tenantId) + '/contratos',
     });
 
@@ -299,6 +304,7 @@ export class ContratosService {
         intermediacaoModeloNome: nome,
         intermediacaoTemplateUrl: template.url,
         intermediacaoTemplatePublicId: template.publicId,
+        intermediacaoCampoMap: mappings as Prisma.InputJsonValue,
       },
       select: {
         intermediacaoModeloUrl: true,
@@ -311,6 +317,22 @@ export class ContratosService {
   async generateIntermediacaoDocx(
     rawValues: Record<string, string>,
     requester: AuthenticatedUser,
+  ) {
+    const filled = await this.fillIntermediacaoTemplate(rawValues, requester, 'docx');
+    return filled;
+  }
+
+  async generateIntermediacaoPdf(
+    rawValues: Record<string, string>,
+    requester: AuthenticatedUser,
+  ) {
+    return this.fillIntermediacaoTemplate(rawValues, requester, 'pdf');
+  }
+
+  private async fillIntermediacaoTemplate(
+    rawValues: Record<string, string>,
+    requester: AuthenticatedUser,
+    want: 'docx' | 'pdf',
   ) {
     const tenantId = requireTenantId(requester);
     const tenant = await this.prisma.tenant.findUnique({
@@ -329,11 +351,12 @@ export class ContratosService {
         representanteLegal: true,
         intermediacaoTemplateUrl: true,
         intermediacaoModeloNome: true,
+        intermediacaoCampoMap: true,
       },
     });
     if (!tenant?.intermediacaoTemplateUrl) {
       throw new BadRequestException(
-        'A imobiliária ainda não confirmou o Word como modelo preenchível.',
+        'A imobiliária ainda não confirmou o arquivo como modelo preenchível.',
       );
     }
 
@@ -350,16 +373,32 @@ export class ContratosService {
     fillIfEmpty(values, 'pix', tenant.pix);
     fillIfEmpty(values, 'representanteLegal', tenant.representanteLegal);
 
+    const nome = tenant.intermediacaoModeloNome?.toLowerCase() ?? '';
+    const mappings = parseMappings(tenant.intermediacaoCampoMap ?? []);
     const response = await fetch(tenant.intermediacaoTemplateUrl);
     if (!response.ok) {
-      throw new BadRequestException('Não foi possível baixar o modelo Word da imobiliária.');
+      throw new BadRequestException('Não foi possível baixar o modelo da imobiliária.');
     }
     const templateBuffer = Buffer.from(await response.arrayBuffer());
+    const base = `contrato-intermediacao-${safeName(values.contratanteNome || 'cliente')}`;
+
+    if (want === 'pdf') {
+      if (!nome.endsWith('.pdf')) {
+        throw new BadRequestException(
+          'O modelo confirmado não é PDF. Use Baixar Word da imobiliária.',
+        );
+      }
+      const buffer = await fillPdfTemplate(templateBuffer, mappings, values);
+      return { buffer, filename: `${base}.pdf` };
+    }
+
+    if (nome.endsWith('.pdf')) {
+      throw new BadRequestException(
+        'O modelo confirmado é PDF. Use Baixar PDF para gerar no layout da imobiliária.',
+      );
+    }
     const buffer = renderIntermediacaoDocx(templateBuffer, values);
-    return {
-      buffer,
-      filename: `contrato-intermediacao-${safeName(values.contratanteNome || 'cliente')}.docx`,
-    };
+    return { buffer, filename: `${base}.docx` };
   }
 
   private veTodos(requester: AuthenticatedUser) {
@@ -435,6 +474,7 @@ function parseMappings(raw: unknown): { key: string; snippet: string }[] {
       throw new BadRequestException('Mapeamento inválido.');
     }
   }
+  if (parsed == null) parsed = [];
   if (!Array.isArray(parsed)) {
     throw new BadRequestException('Informe a lista de campos confirmados.');
   }

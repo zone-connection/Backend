@@ -1183,6 +1183,7 @@ export class TenantsService {
         intermediacaoModeloNome: nome,
         intermediacaoTemplateUrl: null,
         intermediacaoTemplatePublicId: null,
+        intermediacaoCampoMap: Prisma.JsonNull,
       },
       select: tenantBrandingSelect,
     });
@@ -1208,6 +1209,7 @@ export class TenantsService {
         intermediacaoModeloNome: '',
         intermediacaoTemplateUrl: null,
         intermediacaoTemplatePublicId: null,
+        intermediacaoCampoMap: Prisma.JsonNull,
       },
       select: tenantBrandingSelect,
     });
