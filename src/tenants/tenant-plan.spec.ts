@@ -72,15 +72,20 @@ describe('módulos de operação no plano', () => {
     assert.equal(next.corretoresCriamPropostas, true);
   });
 
-  it('deixa o mural de chaves oculto até o opt-in', () => {
+  it('deixa o mural de chaves oculto até o opt-in e uma operação com chave', () => {
     const preset = modulesPresetForPlano(TenantPlano.ouro);
     assert.equal(preset.muralChaves, false);
     const legado = normalizeModulesForPlano(TenantPlano.ouro, {
       muralChaves: true,
     });
     assert.equal(legado.muralChaves, false);
+    const semOperacao = normalizeModulesForPlano(TenantPlano.prata, {
+      muralChavesOptIn: true,
+    });
+    assert.equal(semOperacao.muralChaves, false);
     const ativo = normalizeModulesForPlano(TenantPlano.prata, {
       muralChavesOptIn: true,
+      captacao: true,
     });
     assert.equal(ativo.muralChaves, true);
     assert.equal(ativo.muralChavesOptIn, true);

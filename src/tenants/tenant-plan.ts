@@ -80,6 +80,16 @@ export const CORRETORES_CRIAM_PROPOSTAS_KEY = 'corretoresCriamPropostas';
 /** Mural de chaves nasce oculto. Só aparece depois que o admin ativa. */
 export const MURAL_CHAVES_OPT_IN_KEY = 'muralChavesOptIn';
 
+export function muralChavesTemOperacao(
+  modules: Record<string, boolean> | null | undefined,
+): boolean {
+  return (
+    modules?.captacao === true ||
+    modules?.imoveisUsados === true ||
+    modules?.locacao === true
+  );
+}
+
 function withNavPrefs(
   normalized: Record<string, boolean>,
   raw: Record<string, boolean>,
@@ -107,7 +117,8 @@ function applyMuralChavesVisibility(
   next: Record<string, boolean>,
   raw: Record<string, boolean>,
 ) {
-  next.muralChaves = raw[MURAL_CHAVES_OPT_IN_KEY] === true;
+  next.muralChaves =
+    raw[MURAL_CHAVES_OPT_IN_KEY] === true && muralChavesTemOperacao(next);
 }
 
 const OPERACAO_DEFAULT: Record<(typeof OPERACOES)[number], boolean> = {
