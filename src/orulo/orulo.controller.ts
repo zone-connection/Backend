@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -43,8 +52,11 @@ export class OruloController {
 
   @Get('oauth/url')
   @Roles(Role.admin, Role.gerente, Role.corretor, Role.analista, Role.treinee, Role.super_admin)
-  oauthUrl(@CurrentUser() user: AuthenticatedUser) {
-    return this.orulo.authorizeUrl(user);
+  oauthUrl(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('returnTo') returnTo?: string,
+  ) {
+    return this.orulo.authorizeUrl(user, returnTo);
   }
 
   @Post('oauth/complete')
@@ -53,7 +65,13 @@ export class OruloController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CompleteOruloOAuthDto,
   ) {
-    return this.orulo.completeEndUser(user, dto.code);
+    return this.orulo.completeEndUser(user, dto.code, dto.state);
+  }
+
+  @Post('oauth/disconnect')
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.analista, Role.treinee, Role.super_admin)
+  oauthDisconnect(@CurrentUser() user: AuthenticatedUser) {
+    return this.orulo.disconnectEndUser(user);
   }
 
   @Get('empreendimentos/:id/comercial')

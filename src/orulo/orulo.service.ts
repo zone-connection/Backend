@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,6 +15,11 @@ import {
 } from './orulo-token.crypto';
 import { ORULO_API_BASE } from './orulo.constants';
 import { oruloPublicOrigin } from './orulo-frontend-origin';
+import {
+  safeOruloReturnTo,
+  signOruloOAuthState,
+  verifyOruloOAuthState,
+} from './orulo-oauth-state';
 import { UpsertOruloConnectionDto } from './dto/upsert-orulo-connection.dto';
 
 const connectionSelect = {
@@ -73,7 +77,14 @@ export class OruloService {
   }
 
   async status(user: AuthenticatedUser) {
-    return this.statusForTenant(requireTenantId(user));
+    const userToken = await this.prisma.userOruloToken.findUnique({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    return {
+      ...(await this.statusForTenant(requireTenantId(user))),
+      endUserAuthorized: Boolean(userToken),
+    };
   }
 
   async upsertForTenant(tenantId: string, dto: UpsertOruloConnectionDto) {
@@ -153,7 +164,7 @@ export class OruloService {
     return this.sync.syncConnection(connection.id, true);
   }
 
-  authorizeUrl(user: AuthenticatedUser) {
+  authorizeUrl(user: AuthenticatedUser, returnTo?: string) {
     const tenantId = requireTenantId(user);
     return this.prisma.tenantOruloConnection
       .findUnique({ where: { tenantId } })
@@ -163,17 +174,38 @@ export class OruloService {
             'Conecte as credenciais da imobiliária na Órulo antes de autorizar o corretor.',
           );
         }
-        const redirect = encodeURIComponent(this.redirectUri());
+        const redirect = this.redirectUri();
+        const state = signOruloOAuthState(
+          {
+            uid: user.id,
+            tid: tenantId,
+            returnTo: safeOruloReturnTo(returnTo),
+          },
+          this.config,
+        );
+        const params = new URLSearchParams({
+          client_id: connection.clientId,
+          redirect_uri: redirect,
+          response_type: 'code',
+          state,
+        });
         return {
-          url: `${ORULO_API_BASE}/oauth/authorize?client_id=${encodeURIComponent(
-            connection.clientId,
-          )}&redirect_uri=${redirect}&response_type=code`,
+          url: `${ORULO_API_BASE}/oauth/authorize?${params.toString()}`,
+          redirectUri: redirect,
         };
       });
   }
 
-  async completeEndUser(user: AuthenticatedUser, code: string) {
+  async completeEndUser(user: AuthenticatedUser, code: string, state?: string) {
     const tenantId = requireTenantId(user);
+    if (state) {
+      const parsed = verifyOruloOAuthState(state, this.config);
+      if (!parsed || parsed.uid !== user.id || parsed.tid !== tenantId) {
+        throw new BadRequestException(
+          'A autorização da Órulo expirou ou não pertence a este usuário. Tente de novo.',
+        );
+      }
+    }
     const connection = await this.prisma.tenantOruloConnection.findUnique({
       where: { tenantId },
     });
@@ -195,10 +227,22 @@ export class OruloService {
         },
         update: { accessToken: encryptOruloSecret(token, this.config) },
       });
-      return { connected: true };
-    } catch {
+      const parsed = state
+        ? verifyOruloOAuthState(state, this.config)
+        : null;
+      return {
+        connected: true,
+        returnTo: parsed?.returnTo ?? '/imoveis',
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
       throw new BadRequestException('Não foi possível concluir a autorização Órulo.');
     }
+  }
+
+  async disconnectEndUser(user: AuthenticatedUser) {
+    await this.prisma.userOruloToken.deleteMany({ where: { userId: user.id } });
+    return { connected: false };
   }
 
   async comercial(user: AuthenticatedUser, empreendimentoId: string) {
@@ -241,18 +285,27 @@ export class OruloService {
       return {
         orulo: true,
         authorized: true,
-        oruloUrl: item.externalUrl,
+        stored: false,
+        oruloUrl:
+          asLiveString(building.orulo_url) ??
+          asLiveString(building.website) ??
+          item.externalUrl,
+        website: asLiveString(building.website),
         buildingId: item.oruloBuildingId,
-        opportunity: building.opportunity ?? null,
+        opportunity: asLiveRecord(building.opportunity),
+        commissionPct: firstCommission(contacts),
         commercialContacts: contacts,
         files,
       };
     } catch (error) {
       if (error instanceof OruloApiError && error.status === 401) {
         await this.prisma.userOruloToken.delete({ where: { userId: user.id } });
-        throw new UnauthorizedException(
-          'Autorize novamente a Órulo para ver dados comerciais.',
-        );
+        return {
+          orulo: true,
+          authorized: false,
+          oruloUrl: item.externalUrl,
+          buildingId: item.oruloBuildingId,
+        };
       }
       throw error;
     }
@@ -319,11 +372,38 @@ export class OruloService {
         'Defina FRONTEND_URL ou ORULO_REDIRECT_URI para o OAuth da Órulo.',
       );
     }
-    return `${origin}/configuracoes?secao=conta&item=conexoes&orulo=callback`;
+    return `${origin}/orulo-oauth-callback`;
   }
 
   private mask(value: string) {
     if (value.length <= 6) return '••••';
     return `${value.slice(0, 4)}…${value.slice(-4)}`;
   }
+}
+
+function asLiveString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function asLiveRecord(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function firstCommission(contacts: Record<string, unknown>[]) {
+  for (const contact of contacts) {
+    const keys = [
+      'real_estate_agency_commission',
+      'realtor_commission',
+      'commission',
+      'commission_percentage',
+    ];
+    for (const key of keys) {
+      const raw = contact[key];
+      const num = typeof raw === 'number' ? raw : Number(raw);
+      if (Number.isFinite(num)) return num;
+    }
+  }
+  return null;
 }
