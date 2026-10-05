@@ -299,7 +299,7 @@ export class MatchingService {
       construtoraId: string | null;
       empreendimentoId: string | null;
       interessesEmpreendimento?: Array<{
-        empreendimentoId: string;
+        empreendimentoId: string | null;
         status: string;
       }>;
     },
@@ -367,8 +367,8 @@ export class MatchingService {
 
     const interesseIds = new Set(
       (lead.interessesEmpreendimento ?? [])
-        .filter((row) => row.status !== 'descartado')
-        .map((row) => row.empreendimentoId),
+        .filter((row) => row.status !== 'descartado' && row.empreendimentoId)
+        .map((row) => row.empreendimentoId as string),
     );
     const interessePrevio =
       lead.empreendimentoId === emp.id ||
