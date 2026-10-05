@@ -18,6 +18,8 @@ import {
   Prisma,
   Role,
   UserStatus,
+  VendaUsadoFechamentoStatus,
+  VendaUsadoVisitaStatus,
 } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { isCorretorLike } from '../common/utils/roles';
@@ -48,6 +50,10 @@ import {
   janelaPeriodoBrasil,
   type PeriodoGranularidade,
 } from '../common/utils/periodo-brasil';
+import type {
+  RankingCategoria,
+  RankingFaixa,
+} from './dto/query-dashboard.dto';
 
 const BRASIL_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
 const DIAS_PARADO_DEFAULT = 3;
@@ -101,8 +107,30 @@ type JanelasOpts = {
   /** Ano calendário. Omite = ano corrente (BR). */
   ano?: number;
   granularidade?: PeriodoGranularidade;
+  faixa?: RankingFaixa;
+  de?: string;
+  ate?: string;
   now?: Date;
 };
+
+function diaBrasilParaInstant(isoDay: string, fimExclusivo = false) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDay.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]) + (fimExclusivo ? 1 : 0);
+  return new Date(Date.UTC(year, month, day) + BRASIL_UTC_OFFSET_MS);
+}
+
+function granularidadeDaFaixa(
+  faixa?: RankingFaixa,
+  fallback?: PeriodoGranularidade,
+): PeriodoGranularidade | undefined {
+  if (faixa === 'mes') return 'mes';
+  if (faixa === 'trimestre') return 'trimestre';
+  if (faixa === 'ano') return 'anual';
+  return fallback;
+}
 
 function janelasBrasil(opts: JanelasOpts = {}) {
   const now = opts.now ?? new Date();
@@ -116,7 +144,7 @@ function janelasBrasil(opts: JanelasOpts = {}) {
   const janela = janelaPeriodoBrasil({
     mes: opts.mes,
     ano: opts.ano,
-    granularidade: opts.granularidade,
+    granularidade: granularidadeDaFaixa(opts.faixa, opts.granularidade),
     now,
   });
   const y = janela.ano;
@@ -128,6 +156,32 @@ function janelasBrasil(opts: JanelasOpts = {}) {
   const inicioHoje = toInstant(realY, realM, d);
   const inicioAmanha = toInstant(realY, realM, d + 1);
   const inicioSemana = toInstant(realY, realM, d - mondayOffset);
+  const fimSemana = toInstant(realY, realM, d - mondayOffset + 7);
+
+  let mesAtual = janela.atual satisfies Periodo;
+  let mesAnterior = janela.anterior satisfies Periodo;
+  if (opts.faixa === 'hoje') {
+    mesAtual = { inicio: inicioHoje, fim: inicioAmanha };
+    mesAnterior = { inicio: toInstant(realY, realM, d - 1), fim: inicioHoje };
+  } else if (opts.faixa === 'semana') {
+    mesAtual = { inicio: inicioSemana, fim: fimSemana };
+    mesAnterior = {
+      inicio: toInstant(realY, realM, d - mondayOffset - 7),
+      fim: inicioSemana,
+    };
+  } else if (opts.faixa === 'personalizado') {
+    const inicio = diaBrasilParaInstant(opts.de ?? '') ?? inicioHoje;
+    const fimBruto = diaBrasilParaInstant(opts.ate ?? '', true) ?? inicioAmanha;
+    const fim = fimBruto.getTime() > inicio.getTime()
+      ? fimBruto
+      : new Date(inicio.getTime() + 24 * 60 * 60 * 1000);
+    const duracao = fim.getTime() - inicio.getTime();
+    mesAtual = { inicio, fim };
+    mesAnterior = {
+      inicio: new Date(inicio.getTime() - duracao),
+      fim: inicio,
+    };
+  }
 
   return {
     agora: now,
@@ -136,10 +190,41 @@ function janelasBrasil(opts: JanelasOpts = {}) {
     inicioSemana,
     ano: y,
     mes: m,
-    mesAtual: janela.atual satisfies Periodo,
-    mesAnterior: janela.anterior satisfies Periodo,
+    mesAtual,
+    mesAnterior,
   };
 }
+
+const RANKING_CATEGORIA_META: Record<
+  Exclude<RankingCategoria, 'lancamentos'>,
+  { indicador: string; regra: string }
+> = {
+  documentacoes: {
+    indicador: 'Documentações',
+    regra:
+      'Conta cada ficha operacional de documentação criada no período, uma vez, no corretor da ficha (ou do lead, se a ficha não tiver corretor). Exclusão ou troca de responsável altera o ranking.',
+  },
+  captacoes: {
+    indicador: 'Captações',
+    regra:
+      'Conta cada captação registrada no período, uma vez, no responsável da captação. Remover a captação tira o ponto.',
+  },
+  visitas: {
+    indicador: 'Visitas',
+    regra:
+      'Conta visita de agenda concluída no período (corretor atribuído, ou autor) e visita de usados marcada como realizada. Cada registro entra uma vez.',
+  },
+  vendas_usados: {
+    indicador: 'Vendas de usados',
+    regra:
+      'Conta fechamento de usado concluído no período, uma vez por imóvel, no responsável do fechamento. Cancelar ou excluir tira o ponto.',
+  },
+  locacoes: {
+    indicador: 'Locações',
+    regra:
+      'O módulo de locação ainda não registra contratos concluídos. O ranking permanece zerado até existir esse cadastro.',
+  },
+};
 
 @Injectable()
 export class DashboardService {
@@ -1820,6 +1905,9 @@ export class DashboardService {
       ano?: number;
       origem?: string;
       granularidade?: PeriodoGranularidade;
+      faixa?: RankingFaixa;
+      de?: string;
+      ate?: string;
     } = {},
   ) {
     await this.assertDashboardGerencial(requester, [
@@ -1833,6 +1921,9 @@ export class DashboardService {
       mes: filtros.mes,
       ano: filtros.ano,
       granularidade: filtros.granularidade,
+      faixa: filtros.faixa,
+      de: filtros.de,
+      ate: filtros.ate,
     });
     const origem = filtros.origem?.trim() || undefined;
     const origemWhere = origem ? { origem } : {};
@@ -2217,6 +2308,195 @@ export class DashboardService {
     };
   }
 
+  async rankingCategoria(
+    requester: AuthenticatedUser,
+    filtros: {
+      categoria?: RankingCategoria;
+      mes?: number;
+      ano?: number;
+      granularidade?: PeriodoGranularidade;
+      faixa?: RankingFaixa;
+      de?: string;
+      ate?: string;
+    } = {},
+  ) {
+    await this.assertDashboardGerencial(requester, [
+      'dashboard',
+      'corretores',
+    ]);
+    const categoria: Exclude<RankingCategoria, 'lancamentos'> =
+      filtros.categoria && filtros.categoria !== 'lancamentos'
+        ? filtros.categoria
+        : 'documentacoes';
+    const tenantId = requireTenantId(requester);
+    const { mesAtual } = janelasBrasil({
+      mes: filtros.mes,
+      ano: filtros.ano,
+      granularidade: filtros.granularidade,
+      faixa: filtros.faixa,
+      de: filtros.de,
+      ate: filtros.ate,
+    });
+    const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
+    const corretores = await this.prisma.user.findMany({
+      where: {
+        tenantId,
+        role: { in: [Role.corretor, Role.treinee] },
+        status: UserStatus.ativo,
+        ...(corretorIds ? { id: { in: corretorIds } } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        equipe: { select: { name: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+    const ids = corretores.map((c) => c.id);
+    const valores = await this.contarIndicadorRanking(
+      tenantId,
+      ids,
+      mesAtual,
+      categoria,
+    );
+    const linhas = corretores
+      .map((c) => ({
+        posicao: 0,
+        corretorId: c.id,
+        nome: c.name,
+        equipe: c.equipe?.name ?? null,
+        valor: valores.get(c.id) ?? 0,
+      }))
+      .sort(
+        (a, b) => b.valor - a.valor || a.nome.localeCompare(b.nome, 'pt-BR'),
+      )
+      .map((row, index) => ({ ...row, posicao: index + 1 }));
+    const meta = RANKING_CATEGORIA_META[categoria];
+    const total = linhas.reduce((acc, row) => acc + row.valor, 0);
+    return {
+      categoria,
+      indicador: meta.indicador,
+      unidade: 'count' as const,
+      regra: meta.regra,
+      podeVerRegras:
+        requester.role === Role.admin || requester.role === Role.super_admin,
+      periodo: {
+        inicio: mesAtual.inicio.toISOString(),
+        fim: mesAtual.fim.toISOString(),
+      },
+      totais: { corretores: linhas.length, valor: total },
+      linhas,
+    };
+  }
+
+  private async contarIndicadorRanking(
+    tenantId: string,
+    ids: string[],
+    periodo: Periodo,
+    categoria: RankingCategoria,
+  ) {
+    const empty = new Map<string, number>();
+    if (ids.length === 0 || categoria === 'lancamentos') return empty;
+    if (categoria === 'locacoes') return empty;
+    if (categoria === 'documentacoes') {
+      const docs = await this.countDocumentacoesPorCorretor(
+        tenantId,
+        ids,
+        periodo,
+      );
+      return docs.totais;
+    }
+    if (categoria === 'captacoes') {
+      const rows = await this.prisma.captacao.groupBy({
+        by: ['responsavelId'],
+        where: {
+          tenantId,
+          responsavelId: { in: ids },
+          createdAt: { gte: periodo.inicio, lt: periodo.fim },
+        },
+        _count: { _all: true },
+      });
+      return new Map(rows.map((row) => [row.responsavelId, row._count._all]));
+    }
+    if (categoria === 'visitas') {
+      const [agenda, usados] = await Promise.all([
+        this.prisma.agendamento.findMany({
+          where: {
+            tenantId,
+            tipo: AgendamentoTipo.visita,
+            status: AgendamentoStatus.concluido,
+            startsAt: { gte: periodo.inicio, lt: periodo.fim },
+            OR: [
+              { atribuidoParaId: { in: ids } },
+              { autorId: { in: ids } },
+            ],
+          },
+          select: { id: true, autorId: true, atribuidoParaId: true },
+        }),
+        this.prisma.vendaUsadoVisita.findMany({
+          where: {
+            tenantId,
+            responsavelId: { in: ids },
+            status: VendaUsadoVisitaStatus.realizada,
+            dataHora: { gte: periodo.inicio, lt: periodo.fim },
+          },
+          select: { id: true, responsavelId: true },
+        }),
+      ]);
+      const idSet = new Set(ids);
+      const seenAgenda = new Set<string>();
+      const counts = new Map<string, number>();
+      const bump = (corretorId: string) => {
+        counts.set(corretorId, (counts.get(corretorId) ?? 0) + 1);
+      };
+      for (const row of agenda) {
+        if (seenAgenda.has(row.id)) continue;
+        seenAgenda.add(row.id);
+        const credited =
+          row.atribuidoParaId && idSet.has(row.atribuidoParaId)
+            ? row.atribuidoParaId
+            : idSet.has(row.autorId)
+              ? row.autorId
+              : null;
+        if (credited) bump(credited);
+      }
+      const seenUsado = new Set<string>();
+      for (const row of usados) {
+        if (seenUsado.has(row.id)) continue;
+        seenUsado.add(row.id);
+        bump(row.responsavelId);
+      }
+      return counts;
+    }
+    const fechamentos = await this.prisma.vendaUsadoFechamento.findMany({
+      where: {
+        tenantId,
+        status: VendaUsadoFechamentoStatus.concluido,
+        canceladoAt: null,
+        responsavelId: { in: ids },
+        OR: [
+          { concluidoAt: { gte: periodo.inicio, lt: periodo.fim } },
+          {
+            concluidoAt: null,
+            updatedAt: { gte: periodo.inicio, lt: periodo.fim },
+          },
+        ],
+      },
+      select: { vendaUsadoId: true, responsavelId: true },
+    });
+    const seenVenda = new Set<string>();
+    const counts = new Map<string, number>();
+    for (const row of fechamentos) {
+      if (seenVenda.has(row.vendaUsadoId)) continue;
+      seenVenda.add(row.vendaUsadoId);
+      counts.set(
+        row.responsavelId,
+        (counts.get(row.responsavelId) ?? 0) + 1,
+      );
+    }
+    return counts;
+  }
+
   async listVendasCorretor(
     corretorId: string,
     requester: AuthenticatedUser,
@@ -2224,6 +2504,9 @@ export class DashboardService {
       mes?: number;
       ano?: number;
       granularidade?: PeriodoGranularidade;
+      faixa?: RankingFaixa;
+      de?: string;
+      ate?: string;
     } = {},
   ) {
     await this.assertDashboardGerencial(requester, [
@@ -2243,6 +2526,9 @@ export class DashboardService {
       mes: filtros.mes,
       ano: filtros.ano,
       granularidade: filtros.granularidade,
+      faixa: filtros.faixa,
+      de: filtros.de,
+      ate: filtros.ate,
     });
     const corretor = await this.prisma.user.findFirst({
       where: { id: corretorId, tenantId },

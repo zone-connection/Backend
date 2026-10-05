@@ -100,6 +100,9 @@ export class DashboardController {
     @CurrentUser() requester: AuthenticatedUser,
     @Query() query: QueryDashboardDto,
   ) {
+    if (query.categoria && query.categoria !== 'lancamentos') {
+      return this.dashboardService.rankingCategoria(requester, query);
+    }
     return this.dashboardService.rankingCompleto(requester, query);
   }
 }
