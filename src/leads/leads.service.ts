@@ -218,6 +218,7 @@ export class LeadsService {
       created.id,
       tenantId,
       dto.empreendimentoIds,
+      dto.imovelIds,
       assignment.corretorId,
     );
     void this.leadNotify.notifyNewLead({
@@ -1543,20 +1544,34 @@ export class LeadsService {
   ) {
     const tenantId = requireTenantId(requester);
     await this.ensureExistsAndAccessible(leadId, requester);
-    await this.assertEmpreendimentoNoTenant(tenantId, dto.empreendimentoId);
+    const empreendimentoId = dto.empreendimentoId || null;
+    const imovelId = dto.imovelId || null;
+    if (Boolean(empreendimentoId) === Boolean(imovelId)) {
+      throw new BadRequestException(
+        'Informe um empreendimento ou um imóvel de captação, não os dois.',
+      );
+    }
+    if (empreendimentoId) {
+      await this.assertEmpreendimentoNoTenant(tenantId, empreendimentoId);
+    } else if (imovelId) {
+      await this.assertImovelNoTenant(tenantId, imovelId);
+    }
     const now = new Date();
     const dataInteresse = dto.dataInteresse
       ? new Date(dto.dataInteresse)
       : now;
     const status = this.parseInteresseStatus(dto.status, 'ativo');
-    const existing = await this.prisma.leadEmpreendimentoInteresse.findUnique({
-      where: {
-        leadId_empreendimentoId: {
-          leadId,
-          empreendimentoId: dto.empreendimentoId,
-        },
-      },
-    });
+    const existing = empreendimentoId
+      ? await this.prisma.leadEmpreendimentoInteresse.findUnique({
+          where: {
+            leadId_empreendimentoId: { leadId, empreendimentoId },
+          },
+        })
+      : await this.prisma.leadEmpreendimentoInteresse.findUnique({
+          where: {
+            leadId_imovelId: { leadId, imovelId: imovelId! },
+          },
+        });
     const leadRow = await this.prisma.lead.findFirst({
       where: { id: leadId, tenantId },
       select: { corretorId: true },
@@ -1586,7 +1601,8 @@ export class LeadsService {
         data: {
           tenantId,
           leadId,
-          empreendimentoId: dto.empreendimentoId,
+          empreendimentoId,
+          imovelId,
           status,
           observacoes: dto.observacoes?.trim() ?? '',
           corretorId,
@@ -2745,32 +2761,68 @@ export class LeadsService {
     }
   }
 
+  private async assertImovelNoTenant(tenantId: string, imovelId: string) {
+    const imovel = await this.prisma.imovel.findFirst({
+      where: { id: imovelId, tenantId },
+      select: { id: true },
+    });
+    if (!imovel) {
+      throw new BadRequestException('Imóvel não encontrado.');
+    }
+  }
+
   private async seedInteresses(
     leadId: string,
     tenantId: string,
-    ids: string[] | undefined,
+    empreendimentoIds: string[] | undefined,
+    imovelIds: string[] | undefined,
     corretorId: string | null,
   ) {
-    const unique = [...new Set((ids ?? []).filter(Boolean))];
-    if (!unique.length) return;
-    const found = await this.prisma.empreendimento.findMany({
-      where: { id: { in: unique }, tenantId },
-      select: { id: true },
-    });
-    if (found.length !== unique.length) {
-      throw new BadRequestException('Um ou mais empreendimentos são inválidos.');
+    const empIds = [...new Set((empreendimentoIds ?? []).filter(Boolean))];
+    const capIds = [...new Set((imovelIds ?? []).filter(Boolean))];
+    if (!empIds.length && !capIds.length) return;
+    if (empIds.length) {
+      const found = await this.prisma.empreendimento.findMany({
+        where: { id: { in: empIds }, tenantId },
+        select: { id: true },
+      });
+      if (found.length !== empIds.length) {
+        throw new BadRequestException('Um ou mais empreendimentos são inválidos.');
+      }
+    }
+    if (capIds.length) {
+      const found = await this.prisma.imovel.findMany({
+        where: { id: { in: capIds }, tenantId },
+        select: { id: true },
+      });
+      if (found.length !== capIds.length) {
+        throw new BadRequestException('Um ou mais imóveis são inválidos.');
+      }
     }
     const now = new Date();
     await this.prisma.leadEmpreendimentoInteresse.createMany({
-      data: unique.map((empreendimentoId) => ({
-        tenantId,
-        leadId,
-        empreendimentoId,
-        status: InteresseEmpreendimentoStatus.ativo,
-        corretorId,
-        dataInteresse: now,
-        ultimaInteracao: now,
-      })),
+      data: [
+        ...empIds.map((empreendimentoId) => ({
+          tenantId,
+          leadId,
+          empreendimentoId,
+          imovelId: null as string | null,
+          status: InteresseEmpreendimentoStatus.ativo,
+          corretorId,
+          dataInteresse: now,
+          ultimaInteracao: now,
+        })),
+        ...capIds.map((imovelId) => ({
+          tenantId,
+          leadId,
+          empreendimentoId: null as string | null,
+          imovelId,
+          status: InteresseEmpreendimentoStatus.ativo,
+          corretorId,
+          dataInteresse: now,
+          ultimaInteracao: now,
+        })),
+      ],
       skipDuplicates: true,
     });
     await this.syncLeadEmpreendimentoPrincipal(leadId, tenantId);

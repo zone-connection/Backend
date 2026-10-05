@@ -17,8 +17,15 @@ export const INTERESSE_EMPREENDIMENTO_STATUS = [
 ] as const;
 
 export class CreateLeadInteresseDto {
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID('4', { message: 'Empreendimento inválido.' })
-  empreendimentoId!: string;
+  empreendimentoId?: string;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Imóvel inválido.' })
+  imovelId?: string;
 
   @IsOptional()
   @IsIn(INTERESSE_EMPREENDIMENTO_STATUS, { message: 'Status inválido.' })

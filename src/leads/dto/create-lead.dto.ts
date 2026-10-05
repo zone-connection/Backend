@@ -194,4 +194,10 @@ export class CreateLeadDto {
   @ArrayMaxSize(40)
   @IsUUID('4', { each: true, message: 'Empreendimento inválido.' })
   empreendimentoIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(40)
+  @IsUUID('4', { each: true, message: 'Imóvel inválido.' })
+  imovelIds?: string[];
 }

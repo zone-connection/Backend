@@ -674,8 +674,11 @@ model LeadEmpreendimentoInteresse {
   leadId String
   lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
-  empreendimentoId String
-  empreendimento   Empreendimento @relation(fields: [empreendimentoId], references: [id], onDelete: Restrict)
+  empreendimentoId String?
+  empreendimento   Empreendimento? @relation(fields: [empreendimentoId], references: [id], onDelete: Restrict)
+
+  imovelId String?
+  imovel   Imovel? @relation(fields: [imovelId], references: [id], onDelete: Restrict)
 
   status      InteresseEmpreendimentoStatus @default(ativo)
   observacoes String                        @default("")
@@ -692,9 +695,11 @@ model LeadEmpreendimentoInteresse {
   updatedAt DateTime @updatedAt
 
   @@unique([leadId, empreendimentoId])
+  @@unique([leadId, imovelId])
   @@index([tenantId])
   @@index([leadId, removidoEm])
   @@index([empreendimentoId])
+  @@index([imovelId])
   @@index([corretorId])
   @@map("lead_empreendimentos_interesse")
 }
@@ -2026,6 +2031,7 @@ model Imovel {
   vendaUsado VendaUsado?
   propostaVinculos PropostaVinculo[]
   grupoZapIssues GrupoZapListingIssue[]
+  interessesLead LeadEmpreendimentoInteresse[]
   chaves     ImovelChave[]
   muralChaves MuralChave[]
   posVendas  VendaUsadoPosVenda[]

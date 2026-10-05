@@ -51,6 +51,7 @@ export const leadSelect = {
     select: {
       id: true,
       empreendimentoId: true,
+      imovelId: true,
       status: true,
       observacoes: true,
       corretorId: true,
@@ -61,6 +62,15 @@ export const leadSelect = {
       updatedAt: true,
       corretor: { select: { id: true, name: true } },
       empreendimento: { select: { id: true, nome: true, cidade: true } },
+      imovel: {
+        select: {
+          id: true,
+          logradouro: true,
+          numero: true,
+          bairro: true,
+          cidade: true,
+        },
+      },
     },
   },
   analise: {
