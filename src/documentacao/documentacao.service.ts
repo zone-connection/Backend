@@ -15,10 +15,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import {
+  canonicalizeStatus2,
   documentacaoOperacionalWhere,
+  documentacaoVinculadaAoCorretorWhere,
   isStatusAnalise,
   isStatusVendido,
-  documentacaoVinculadaAoCorretorWhere,
+  status2Group,
 } from '../common/utils/documentacao-status';
 import { requireTenantId } from '../common/utils/tenant';
 import { hasUserModule } from '../common/utils/user-permissions';
@@ -97,8 +99,27 @@ function parseOptionalCreatedAt(value?: string | null): Date | null {
   return date;
 }
 
+function todayCivilDate(): Date | null {
+  return (
+    parseOptionalDate(new Date().toISOString().slice(0, 10)) ?? null
+  );
+}
+
 function todayDateOnly(): Date {
-  return new Date(new Date().toISOString().slice(0, 10));
+  return todayCivilDate() ?? new Date();
+}
+
+function status2QuandoTemVgv(
+  status2: string,
+  vgv: number | null | undefined,
+): string {
+  if (vgv == null || vgv <= 0) return status2;
+  if (isStatusVendido(status2)) return status2;
+  const grupo = status2Group(status2);
+  if (!grupo || grupo === 'andamento') {
+    return canonicalizeStatus2('Vendido');
+  }
+  return status2;
 }
 
 @Injectable()
@@ -244,11 +265,14 @@ export class DocumentacaoService {
     const dataAnalise =
       parsedAnalise ?? (isStatusAnalise(status1) ? todayDateOnly() : null);
 
-    const status2 = await this.resolveCatalogLabel(
-      tenantId,
-      CatalogType.documentacao_status2,
-      dto.status2,
-      'Status 2',
+    const status2 = status2QuandoTemVgv(
+      await this.resolveCatalogLabel(
+        tenantId,
+        CatalogType.documentacao_status2,
+        dto.status2,
+        'Status 2',
+      ),
+      dto.vgv,
     );
     const createdAt = parseOptionalCreatedAt(dto.createdAt);
 
@@ -269,9 +293,7 @@ export class DocumentacaoService {
         dataAnalise,
         dataVenda:
           parseOptionalDate(dto.dataVenda) ??
-          (isStatusVendido(status2)
-            ? parseOptionalDate(new Date().toISOString().slice(0, 10)) ?? null
-            : null),
+          (isStatusVendido(status2) ? todayCivilDate() : null),
         vgv: dto.vgv ?? null,
         obs: dto.obs?.trim() || null,
         temEntrada: dto.temEntrada ?? false,
@@ -301,6 +323,7 @@ export class DocumentacaoService {
         gerenteId: true,
         status1: true,
         status2: true,
+        vgv: true,
       },
     });
     if (!existing) {
@@ -394,16 +417,23 @@ export class DocumentacaoService {
     }
     if (dto.dataVenda !== undefined) {
       data.dataVenda = parseOptionalDate(dto.dataVenda) ?? null;
-    } else if (
-      dto.status2 !== undefined &&
-      isStatusVendido(dto.status2) &&
-      !existing.dataVenda &&
-      !isStatusVendido(existing.status2)
-    ) {
-      data.dataVenda =
-        parseOptionalDate(new Date().toISOString().slice(0, 10)) ?? null;
     }
     if (dto.vgv !== undefined) data.vgv = dto.vgv;
+
+    const status2Atual =
+      typeof data.status2 === 'string' ? data.status2 : existing.status2;
+    const vgvAtual = dto.vgv !== undefined ? dto.vgv : existing.vgv;
+    const status2Final = status2QuandoTemVgv(status2Atual, vgvAtual);
+    if (status2Final !== existing.status2 || dto.status2 !== undefined) {
+      data.status2 = status2Final;
+    }
+    if (
+      dto.dataVenda === undefined &&
+      isStatusVendido(status2Final) &&
+      !existing.dataVenda
+    ) {
+      data.dataVenda = todayCivilDate();
+    }
     if (dto.obs !== undefined) data.obs = dto.obs?.trim() || null;
     if (dto.temEntrada !== undefined) {
       data.temEntrada = dto.temEntrada;

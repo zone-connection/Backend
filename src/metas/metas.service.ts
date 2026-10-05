@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -134,6 +135,9 @@ export class MetasService {
           where: { id: existente.id },
           data: {
             valor: dto.valor,
+            ...(dto.titulo !== undefined
+              ? { titulo: normalizeTitulo(dto.titulo) }
+              : {}),
             criadorId: requester.id,
             fim: definicao.fim,
           },
@@ -149,6 +153,7 @@ export class MetasService {
             origem: destino.origem,
             tipo: dto.tipo as MetaTipo,
             periodo: dto.periodo as MetaPeriodo,
+            titulo: normalizeTitulo(dto.titulo),
             valor: dto.valor,
             ...definicao,
           },
@@ -160,12 +165,38 @@ export class MetasService {
 
   async update(id: string, dto: UpdateMetaDto, requester: AuthenticatedUser) {
     const meta = await this.findEditable(id, requester);
-    const updated = await this.prisma.meta.update({
-      where: { id: meta.id },
-      data: { valor: dto.valor },
-      include: metaInclude,
-    });
-    return this.withProgress(updated, requireTenantId(requester));
+    const periodo = (dto.periodo as MetaPeriodo | undefined) ?? meta.periodo;
+    const tipo = (dto.tipo as MetaTipo | undefined) ?? meta.tipo;
+    const definicao =
+      dto.periodo && dto.periodo !== meta.periodo
+        ? this.getDefinicaoPeriodo(dto.periodo)
+        : null;
+    try {
+      const updated = await this.prisma.meta.update({
+        where: { id: meta.id },
+        data: {
+          valor: dto.valor,
+          tipo,
+          periodo,
+          ...(definicao ?? {}),
+          ...(dto.titulo !== undefined
+            ? { titulo: normalizeTitulo(dto.titulo) }
+            : {}),
+        },
+        include: metaInclude,
+      });
+      return this.withProgress(updated, requireTenantId(requester));
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new BadRequestException(
+          'Já existe uma meta com esse título, tipo e período para este responsável.',
+        );
+      }
+      throw error;
+    }
   }
 
   async remove(id: string, requester: AuthenticatedUser) {
@@ -255,6 +286,7 @@ export class MetasService {
         tipo: dto.tipo as MetaTipo,
         periodo: dto.periodo as MetaPeriodo,
         inicio,
+        titulo: normalizeTitulo(dto.titulo),
         corretorId: destino.corretorId,
         gerenteId: destino.gerenteId,
       },
@@ -620,4 +652,8 @@ export class MetasService {
       percentual: Math.min(100, Math.round((atual / meta.valor) * 100)),
     };
   }
+}
+
+function normalizeTitulo(raw: string | undefined) {
+  return (raw ?? '').trim().slice(0, 80);
 }

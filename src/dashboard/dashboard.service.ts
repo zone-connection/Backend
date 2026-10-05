@@ -30,6 +30,7 @@ import {
   isStatusAnalise,
   isStatusAprovado,
   isStatusReprovado,
+  documentacaoLeadEscopoWhere,
   documentacaoOperacionalWhere,
   documentacaoVendaNoPeriodoWhere,
   documentacaoVinculadaAoCorretorWhere,
@@ -459,15 +460,17 @@ export class DashboardService {
       ...(corretorIds
         ? documentacaoVinculadaAoCorretorWhere(corretorIds)
         : {}),
-      lead: {
-        ...leadScope,
-        ...(origem ? { origem } : {}),
-      },
+      ...documentacaoLeadEscopoWhere(leadScope, origem),
     };
-    /** Vendas/VGV: mesma regra de Ranking e da lista de Vendas. */
+    /** Vendas/VGV: vendido/Bacen no período, ou ficha com VGV preenchido. */
     const docVendaWhere = (periodo: Periodo) => ({
       ...docEscopoWhere,
-      AND: [status2VendidoWhere(), documentacaoVendaNoPeriodoWhere(periodo)],
+      AND: [
+        documentacaoVendaNoPeriodoWhere(periodo),
+        {
+          OR: [status2VendidoWhere(), { vgv: { gt: 0 } }],
+        },
+      ],
     });
     /** Pipeline ao vivo: mesmas fichas da tela Documentação (sem recorte de cadastro). */
     const docPipelineStockWhere = () => docEscopoWhere;
@@ -1079,7 +1082,8 @@ export class DashboardService {
     });
     const seenDocs = new Set<string>();
     for (const doc of docs) {
-      if (!isStatusVendido(doc.status2)) continue;
+      const temVgv = (doc.vgv ?? 0) > 0;
+      if (!isStatusVendido(doc.status2) && !temVgv) continue;
       if (seenDocs.has(doc.id)) continue;
       seenDocs.add(doc.id);
       const credited =
@@ -1089,7 +1093,9 @@ export class DashboardService {
             ? doc.lead.corretorId
             : null;
       if (!credited) continue;
-      markSale(doc.leadId ?? doc.id, credited);
+      if (isStatusVendido(doc.status2)) {
+        markSale(doc.leadId ?? doc.id, credited);
+      }
       addVgv(credited, doc.vgv);
     }
 

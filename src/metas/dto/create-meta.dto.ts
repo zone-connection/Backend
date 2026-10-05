@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength } from 'class-validator';
 
 export const META_TIPOS = ['vendas', 'documentacoes', 'vgv'] as const;
 export const META_PERIODOS = [
@@ -38,6 +38,11 @@ export class CreateMetaDto {
 
   @IsIn(META_PERIODOS, { message: 'Período de meta inválido.' })
   periodo!: (typeof META_PERIODOS)[number];
+
+  @IsString({ message: 'Informe o título da meta.' })
+  @MinLength(2, { message: 'O título deve ter pelo menos 2 caracteres.' })
+  @MaxLength(80, { message: 'O título deve ter no máximo 80 caracteres.' })
+  titulo!: string;
 
   @IsInt({ message: 'O valor da meta deve ser um número inteiro.' })
   @Min(1, { message: 'O valor da meta deve ser maior que zero.' })

@@ -2887,6 +2887,7 @@ model Meta {
   origem  MetaOrigem
   tipo    MetaTipo
   periodo MetaPeriodo
+  titulo  String      @default("")
   valor   Int
 
   inicio DateTime

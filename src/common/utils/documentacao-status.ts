@@ -120,7 +120,8 @@ export function status2Group(
 export function isStatusVendido(
   status: string | null | undefined,
 ): boolean {
-  return status2Group(status) === 'vendido';
+  const g = status2Group(status);
+  return g === 'vendido' || g === 'bacen';
 }
 
 export function isStatusAnalise(
@@ -219,7 +220,24 @@ export function status2VendidoWhere(): Prisma.DocumentacaoWhereInput {
       { status2: { startsWith: 'vend', mode: 'insensitive' } },
       { status2: { contains: 'vendido', mode: 'insensitive' } },
       { status2: { equals: 'venda', mode: 'insensitive' } },
+      { status2: { contains: 'bacen', mode: 'insensitive' } },
     ],
+  };
+}
+
+/**
+ * Fichas avulsas (sem lead) entram no dashboard; com filtro de origem,
+ * só as que têm lead daquela origem.
+ */
+export function documentacaoLeadEscopoWhere(
+  leadScope: Prisma.LeadWhereInput,
+  origem?: string,
+): Prisma.DocumentacaoWhereInput {
+  if (origem) {
+    return { lead: { ...leadScope, origem } };
+  }
+  return {
+    OR: [{ leadId: null }, { lead: leadScope }],
   };
 }
 
@@ -249,9 +267,7 @@ export function documentacaoVendaNoPeriodoWhere(periodo: {
 export function sumVgvVendido(
   rows: Array<{ status2: string; _sum: { vgv: number | null } }>,
 ): number {
-  return rows
-    .filter((row) => isStatusVendido(row.status2))
-    .reduce((total, row) => total + (row._sum.vgv ?? 0), 0);
+  return rows.reduce((total, row) => total + (row._sum.vgv ?? 0), 0);
 }
 
 export function countStatusVendido(
