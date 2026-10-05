@@ -41,4 +41,29 @@ export class UpdateTenantCompanyDto {
   @IsString()
   @MaxLength(80)
   cidade?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  banco?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  agencia?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  contaBancaria?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  pix?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  representanteLegal?: string;
 }

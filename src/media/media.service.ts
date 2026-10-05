@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary, type UploadApiResponse } from 'cloudinary';
 import sharp from 'sharp';
-import { IMAGE_MAX_BYTES } from './media.constants';
+import { IMAGE_MAX_BYTES, DOCUMENT_MAX_BYTES, DOCUMENT_MIMES } from './media.constants';
 
 const SHARP_FORMATS = new Set(['jpeg', 'png', 'webp']);
 
@@ -119,6 +119,83 @@ export class MediaService {
     }
   }
 
+  async uploadRaw(params: {
+    buffer: Buffer;
+    mimetype: string;
+    filename: string;
+    folder: string;
+    publicId?: string;
+  }): Promise<UploadedMedia> {
+    this.ensureConfigured();
+    if (params.buffer.length > DOCUMENT_MAX_BYTES) {
+      throw new BadRequestException('O arquivo deve ter no máximo 15 MB.');
+    }
+    const mime = (params.mimetype || '').toLowerCase();
+    const name = (params.filename || '').toLowerCase();
+    const allowed =
+      DOCUMENT_MIMES.includes(mime as (typeof DOCUMENT_MIMES)[number]) ||
+      name.endsWith('.pdf') ||
+      name.endsWith('.doc') ||
+      name.endsWith('.docx');
+    if (!allowed) {
+      throw new BadRequestException('Envie um PDF ou Word (.doc / .docx).');
+    }
+    try {
+      const result = await new Promise<UploadApiResponse>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: params.folder,
+            resource_type: 'raw',
+            public_id: params.publicId,
+            unique_filename: !params.publicId,
+            overwrite: Boolean(params.publicId),
+            invalidate: Boolean(params.publicId),
+            filename_override: params.filename,
+            use_filename: true,
+          },
+          (error, uploaded) => {
+            if (error || !uploaded) {
+              reject(error ?? new Error('Falha no upload do arquivo.'));
+              return;
+            }
+            resolve(uploaded);
+          },
+        );
+        stream.end(params.buffer);
+      });
+      const url = result.secure_url?.trim();
+      const publicId = result.public_id?.trim();
+      if (!url || !publicId) {
+        throw new ServiceUnavailableException(
+          'O Cloudinary não retornou a URL do arquivo.',
+        );
+      }
+      return { url, publicId };
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      if (error instanceof BadRequestException) throw error;
+      this.logger.error(
+        `Falha no upload Cloudinary (raw): ${this.errorMessage(error)}`,
+      );
+      throw new ServiceUnavailableException(
+        this.cloudinaryFailureMessage(error),
+      );
+    }
+  }
+
+  async destroyRaw(publicId: string | null | undefined): Promise<void> {
+    const id = publicId?.trim();
+    if (!id) return;
+    try {
+      this.ensureConfigured();
+      await cloudinary.uploader.destroy(id, { resource_type: 'raw' });
+    } catch (error) {
+      this.logger.warn(
+        `Não foi possível remover o arquivo ${id} no Cloudinary: ${this.errorMessage(error)}`,
+      );
+    }
+  }
+
   async destroy(publicId: string | null | undefined): Promise<void> {
     const id = publicId?.trim();
     if (!id) return;
@@ -142,6 +219,13 @@ export class MediaService {
     id: string,
   ) {
     return `crm/${tenantId}/${kind}/${id}`;
+  }
+
+  requireDocument(file?: Express.Multer.File): Express.Multer.File {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Envie um PDF ou Word (.doc / .docx).');
+    }
+    return file;
   }
 
   requireFile(file?: Express.Multer.File): Express.Multer.File {

@@ -126,6 +126,16 @@ model Tenant {
   endereco String @default("")
   /// Cidade do contrato (ex.: Recife/PE).
   cidade String @default("")
+  /// Dados bancários para contratos de intermediação.
+  banco String @default("")
+  agencia String @default("")
+  contaBancaria String @default("")
+  pix String @default("")
+  representanteLegal String @default("")
+  /// Modelo próprio de contrato de intermediação (PDF ou Word).
+  intermediacaoModeloUrl      String?
+  intermediacaoModeloPublicId String?
+  intermediacaoModeloNome     String  @default("")
 
   /// Branding visual (nível 1).
   logoUrl      String?

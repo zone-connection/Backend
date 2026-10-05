@@ -14,7 +14,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
-import { imageUploadInterceptor } from '../media/media.constants';
+import { imageUploadInterceptor, documentUploadInterceptor } from '../media/media.constants';
 import { UpdateTenantCompanyDto } from './dto/update-tenant-company.dto';
 import { TenantsService } from './tenants.service';
 
@@ -28,7 +28,13 @@ export class TenantCompanyController {
   constructor(private readonly tenantsService: TenantsService) {}
 
   @Get()
-  @Roles(Role.admin, Role.gerente)
+  @Roles(
+    Role.admin,
+    Role.gerente,
+    Role.corretor,
+    Role.treinee,
+    Role.analista,
+  )
   getCompany(@CurrentUser() requester: AuthenticatedUser) {
     return this.tenantsService.getCompanyProfile(requester);
   }
@@ -56,5 +62,21 @@ export class TenantCompanyController {
   @Roles(Role.admin)
   removeLogo(@CurrentUser() requester: AuthenticatedUser) {
     return this.tenantsService.removeCompanyLogo(requester);
+  }
+
+  @Post('intermediacao-modelo')
+  @Roles(Role.admin)
+  @UseInterceptors(documentUploadInterceptor())
+  uploadIntermediacaoModelo(
+    @CurrentUser() requester: AuthenticatedUser,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.tenantsService.uploadIntermediacaoModelo(requester, file);
+  }
+
+  @Delete('intermediacao-modelo')
+  @Roles(Role.admin)
+  removeIntermediacaoModelo(@CurrentUser() requester: AuthenticatedUser) {
+    return this.tenantsService.removeIntermediacaoModelo(requester);
   }
 }

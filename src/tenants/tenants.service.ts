@@ -1121,6 +1121,15 @@ export class TenantsService {
           ? { endereco: dto.endereco.trim() }
           : {}),
         ...(dto.cidade !== undefined ? { cidade: dto.cidade.trim() } : {}),
+        ...(dto.banco !== undefined ? { banco: dto.banco.trim() } : {}),
+        ...(dto.agencia !== undefined ? { agencia: dto.agencia.trim() } : {}),
+        ...(dto.contaBancaria !== undefined
+          ? { contaBancaria: dto.contaBancaria.trim() }
+          : {}),
+        ...(dto.pix !== undefined ? { pix: dto.pix.trim() } : {}),
+        ...(dto.representanteLegal !== undefined
+          ? { representanteLegal: dto.representanteLegal.trim() }
+          : {}),
       },
       select: tenantBrandingSelect,
     });
@@ -1137,6 +1146,59 @@ export class TenantsService {
   async removeCompanyLogo(requester: AuthenticatedUser) {
     const tenantId = this.assertCanEditCompany(requester);
     return this.clearTenantLogo(tenantId);
+  }
+
+  async uploadIntermediacaoModelo(
+    requester: AuthenticatedUser,
+    rawFile: Express.Multer.File | undefined,
+  ) {
+    const tenantId = this.assertCanEditCompany(requester);
+    const current = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { intermediacaoModeloPublicId: true },
+    });
+    if (!current) throw new NotFoundException('Tenant não encontrado.');
+    const file = this.media.requireDocument(rawFile);
+    const nome = (file.originalname || 'contrato-intermediacao.pdf')
+      .replace(/[/\\]/g, ' ')
+      .slice(0, 160);
+    const uploaded = await this.media.uploadRaw({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      filename: nome,
+      folder: this.media.folder(tenantId, 'tenants', tenantId) + '/contratos',
+    });
+    if (current.intermediacaoModeloPublicId) {
+      await this.media.destroyRaw(current.intermediacaoModeloPublicId);
+    }
+    return this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        intermediacaoModeloUrl: uploaded.url,
+        intermediacaoModeloPublicId: uploaded.publicId,
+        intermediacaoModeloNome: nome,
+      },
+      select: tenantBrandingSelect,
+    });
+  }
+
+  async removeIntermediacaoModelo(requester: AuthenticatedUser) {
+    const tenantId = this.assertCanEditCompany(requester);
+    const current = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { intermediacaoModeloPublicId: true },
+    });
+    if (!current) throw new NotFoundException('Tenant não encontrado.');
+    await this.media.destroyRaw(current.intermediacaoModeloPublicId);
+    return this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        intermediacaoModeloUrl: null,
+        intermediacaoModeloPublicId: null,
+        intermediacaoModeloNome: '',
+      },
+      select: tenantBrandingSelect,
+    });
   }
 
   /** Logo enviada pelo super admin, no mesmo campo usado pelo perfil da imobiliária. */
