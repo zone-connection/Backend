@@ -77,6 +77,10 @@ export class CreateTenantDto {
 
   @IsOptional()
   @IsBoolean()
+  tarefasEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   isTest?: boolean;
 
   @IsOptional()

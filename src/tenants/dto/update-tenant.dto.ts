@@ -65,6 +65,10 @@ export class UpdateTenantDto {
 
   @IsOptional()
   @IsBoolean()
+  tarefasEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   isTest?: boolean;
 
   @IsOptional()

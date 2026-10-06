@@ -21,6 +21,7 @@ import { CaptacaoModule } from './captacao/captacao.module';
 import { ImoveisUsadosModule } from './imoveis-usados/imoveis-usados.module';
 import { PortalProprietarioModule } from './portal-proprietario/portal-proprietario.module';
 import { ParceriasModule } from './parcerias/parcerias.module';
+import { TarefasModule } from './tarefas/tarefas.module';
 import { ConstrutorasModule } from './construtoras/construtoras.module';
 import { ContratosModule } from './contratos/contratos.module';
 import { ListasDocumentosModule } from './listas-documentos/listas-documentos.module';
@@ -90,6 +91,7 @@ import { THROTTLE } from './config/security.constants';
     ImoveisUsadosModule,
     PortalProprietarioModule,
     ParceriasModule,
+    TarefasModule,
   ],
   controllers: [AppController],
   providers: [

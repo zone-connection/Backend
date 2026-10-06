@@ -81,6 +81,7 @@ const agendamentoSelect = {
   muralChaveId: true,
   chaveRetiradaEm: true,
   motivoRecusa: true,
+  origemTarefa: true,
   aprovadoAt: true,
   createdAt: true,
   updatedAt: true,
@@ -435,7 +436,8 @@ export class AgendaService {
       (item) =>
         !item.isAniversario &&
         !isAniversarioId(item.id) &&
-        item.tipo !== AgendamentoTipo.bloqueio,
+        item.tipo !== AgendamentoTipo.bloqueio &&
+        !item.origemTarefa,
     );
 
     const corretorIds = Array.from(
@@ -1870,6 +1872,100 @@ export class AgendaService {
     );
     await this.prisma.agendamento.delete({ where: { id } });
     return { ok: true };
+  }
+
+  /** Cria ou atualiza o compromisso da tarefa e replica no Google de quem já está conectado. */
+  async syncEspelhoTarefa(input: {
+    agendaEventoId?: string | null;
+    tenantId: string;
+    autorId: string;
+    titulo: string;
+    descricao: string;
+    startsAt: Date;
+    responsavelId: string;
+    leadId: string | null;
+    imovelId: string | null;
+    concluida: boolean;
+  }): Promise<string> {
+    const endsAt = new Date(input.startsAt.getTime() + 30 * 60 * 1000);
+    const data = {
+      titulo: input.titulo,
+      observacoes: input.descricao || null,
+      startsAt: input.startsAt,
+      endsAt,
+      atribuidoParaId: input.responsavelId,
+      leadId: input.leadId,
+      imovelId: input.imovelId,
+      status: input.concluida
+        ? AgendamentoStatus.concluido
+        : AgendamentoStatus.agendado,
+      tipo: AgendamentoTipo.tarefa,
+      origemTarefa: true,
+      escopo: AgendamentoEscopo.pessoal,
+      contaAtraso: false,
+    };
+
+    let id = input.agendaEventoId ?? null;
+    if (id) {
+      const existing = await this.prisma.agendamento.findFirst({
+        where: { id, tenantId: input.tenantId, origemTarefa: true },
+        select: { id: true },
+      });
+      if (!existing) id = null;
+    }
+
+    const select = {
+      id: true,
+      tenantId: true,
+      autorId: true,
+      atribuidoParaId: true,
+      titulo: true,
+      tipo: true,
+      status: true,
+      solicitacaoStatus: true,
+      alvoTipo: true,
+      alvoEquipeId: true,
+      alvoGerenteId: true,
+      startsAt: true,
+      endsAt: true,
+      local: true,
+      observacoes: true,
+      lead: { select: { nome: true } },
+    } as const;
+
+    const row = id
+      ? await this.prisma.agendamento.update({
+          where: { id },
+          data,
+          select,
+        })
+      : await this.prisma.agendamento.create({
+          data: {
+            ...data,
+            tenantId: input.tenantId,
+            autorId: input.autorId,
+          },
+          select,
+        });
+
+    await this.googleCalendar.syncAgendamento(row).catch((err) =>
+      this.logger.warn(
+        `Falha ao sincronizar tarefa com Google Calendar: ${err instanceof Error ? err.message : err}`,
+      ),
+    );
+    return row.id;
+  }
+
+  async removeEspelhoTarefa(agendaEventoId: string | null) {
+    if (!agendaEventoId) return;
+    await this.googleCalendar.removeAgendamento(agendaEventoId).catch((err) =>
+      this.logger.warn(
+        `Falha ao remover tarefa no Google Calendar: ${err instanceof Error ? err.message : err}`,
+      ),
+    );
+    await this.prisma.agendamento.deleteMany({
+      where: { id: agendaEventoId, origemTarefa: true },
+    });
   }
 
   private async queueGoogleSync(item: AgendamentoListItem) {

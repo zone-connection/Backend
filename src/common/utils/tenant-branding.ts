@@ -29,6 +29,7 @@ export const tenantBrandingSelect = {
   maxUsuarios: true,
   usuariosExtras: true,
   iaBotEnabled: true,
+  tarefasEnabled: true,
 } satisfies Prisma.TenantSelect;
 
 export type TenantBranding = Prisma.TenantGetPayload<{

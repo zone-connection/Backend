@@ -219,6 +219,7 @@ export class TenantsService {
             maxUsuarios: planFields.maxUsuarios,
             usuariosExtras: planFields.usuariosExtras,
             iaBotEnabled: planFields.iaBotEnabled,
+            tarefasEnabled: dto.tarefasEnabled ?? false,
             isTest: dto.isTest ?? false,
             ...extras,
           },
@@ -711,6 +712,7 @@ export class TenantsService {
         maxUsuarios: true,
         usuariosExtras: true,
         iaBotEnabled: true,
+        tarefasEnabled: true,
         modules: true,
         logoUrl: true,
         logoPublicId: true,
@@ -773,6 +775,7 @@ export class TenantsService {
               : current.maxUsuarios),
           usuariosExtras: planFields.usuariosExtras,
           iaBotEnabled: planFields.iaBotEnabled,
+          tarefasEnabled: dto.tarefasEnabled ?? current.tarefasEnabled,
           ...(dto.isTest !== undefined ? { isTest: dto.isTest } : {}),
           ...(logoChanged
             ? { primaryColor, logoPublicId: null }

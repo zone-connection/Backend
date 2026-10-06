@@ -168,6 +168,8 @@ model Tenant {
   iaBotEnabled Boolean @default(false)
   /// Cliente de teste/demonstração (separado dos clientes reais na gestão).
   isTest Boolean @default(false)
+  /// Add-on Gestão de Tarefas e Lembretes (contratado à parte do plano).
+  tarefasEnabled Boolean @default(false)
 
   users             User[]
   equipes           Equipe[]
@@ -238,6 +240,7 @@ model Tenant {
   contratoDocumentos             ContratoDocumento[]
   propostaPublicaLinks           PropostaPublicaLink[]
   propostaHistoricos             PropostaHistorico[]
+  tarefas                        Tarefa[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -488,6 +491,9 @@ model User {
   parceriasConvidadas             Parceria[] @relation("ParceriaConvidadoPor")
   parceriasParticipacaoCasa       ParceriaParticipacao[] @relation("ParceriaParticipacaoResponsavel")
   presencaLancamentos             PresencaLancamento[]
+  tarefasResponsavel              Tarefa[] @relation("TarefaResponsavel")
+  tarefasCriadas                  Tarefa[] @relation("TarefaCriador")
+  tarefaComentarios               TarefaComentario[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -658,6 +664,7 @@ model Lead {
   grupoZapLink  LeadGrupoZapLink?
   participacoesParceria ParceriaParticipacao[]
   interessesEmpreendimento LeadEmpreendimentoInteresse[]
+  tarefas Tarefa[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1587,11 +1594,16 @@ model Agendamento {
   aprovadoAt    DateTime?
   motivoRecusa  String?
 
+  /// Compromisso criado a partir de uma tarefa do add-on. Não gera lembrete da agenda.
+  origemTarefa Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   googleCalendarEvents UserGoogleCalendarEvent[]
   historico            AgendamentoHistorico[]
+  tarefas              Tarefa[]
+  tarefaEspelho        Tarefa?  @relation("TarefaAgendaEspelho")
 
   @@index([tenantId])
   @@index([leadId])
@@ -2116,6 +2128,7 @@ model Imovel {
   muralChaves MuralChave[]
   posVendas  VendaUsadoPosVenda[]
   agendamentos Agendamento[]
+  tarefas      Tarefa[]
   /// Mesmo imóvel no catálogo de empreendimentos.
   empreendimentoId String?         @unique
   empreendimento   Empreendimento? @relation(fields: [empreendimentoId], references: [id], onDelete: SetNull)
@@ -3664,4 +3677,108 @@ model ContratoDocumento {
   @@index([tenantId, status, updatedAt])
   @@index([autorId])
   @@map("contrato_documentos")
+}
+
+enum TarefaPrioridade {
+  alta
+  media
+  baixa
+}
+
+enum TarefaStatus {
+  aberta
+  concluida
+}
+
+enum TarefaRecorrencia {
+  nenhuma
+  diaria
+  semanal
+  mensal
+  dias_especificos
+  personalizado
+}
+
+/// Canal do lembrete. Hoje só e-mail; o campo deixa espaço para outros.
+enum TarefaLembreteCanal {
+  email
+}
+
+enum TarefaLembrete {
+  nenhum
+  no_horario
+  min_5
+  min_15
+  min_30
+  hora_1
+  dia_1
+  personalizado
+}
+
+model Tarefa {
+  id          String            @id @default(uuid())
+  tenantId    String
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  titulo      String
+  descricao   String            @default("")
+  /// Dia da tarefa (YYYY-MM-DD), no fuso America/Sao_Paulo.
+  data        String
+  /// HH:mm opcional.
+  horario     String?
+  venceEm     DateTime
+  prioridade  TarefaPrioridade  @default(media)
+  status      TarefaStatus      @default(aberta)
+  responsavelId String
+  responsavel User              @relation("TarefaResponsavel", fields: [responsavelId], references: [id], onDelete: Restrict)
+  criadoPorId String
+  criadoPor   User              @relation("TarefaCriador", fields: [criadoPorId], references: [id], onDelete: Restrict)
+  leadId      String?
+  lead        Lead?             @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  agendamentoId String?
+  agendamento Agendamento?      @relation(fields: [agendamentoId], references: [id], onDelete: SetNull)
+  imovelId    String?
+  imovel      Imovel?           @relation(fields: [imovelId], references: [id], onDelete: SetNull)
+  /// Compromisso desta tarefa na agenda (e, se conectado, no Google Agenda).
+  agendaEventoId String? @unique
+  agendaEvento   Agendamento? @relation("TarefaAgendaEspelho", fields: [agendaEventoId], references: [id], onDelete: SetNull)
+  recorrencia TarefaRecorrencia @default(nenhuma)
+  /// 0=domingo … 6=sábado, quando recorrencia = dias_especificos.
+  diasSemana  Int[]             @default([])
+  /// Intervalo em dias quando recorrencia = personalizado.
+  intervaloDias Int?
+  lembrete    TarefaLembrete    @default(nenhum)
+  /// Minutos antes, quando lembrete = personalizado.
+  lembreteMinutos Int?
+  lembreteCanal TarefaLembreteCanal @default(email)
+  lembreteEm  DateTime?
+  lembreteEnviadoEm DateTime?
+  atrasoEnviadoEm DateTime?
+  /// Agrupa ocorrências da mesma série recorrente.
+  serieId     String?
+  concluidaEm DateTime?
+  comentarios TarefaComentario[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status, venceEm])
+  @@index([tenantId, responsavelId])
+  @@index([leadId])
+  @@index([agendamentoId])
+  @@index([imovelId])
+  @@index([lembreteEm])
+  @@map("tarefas")
+}
+
+model TarefaComentario {
+  id        String   @id @default(uuid())
+  tarefaId  String
+  tarefa    Tarefa   @relation(fields: [tarefaId], references: [id], onDelete: Cascade)
+  autorId   String
+  autor     User     @relation(fields: [autorId], references: [id], onDelete: Cascade)
+  texto     String
+  createdAt DateTime @default(now())
+
+  @@index([tarefaId])
+  @@map("tarefa_comentarios")
 }

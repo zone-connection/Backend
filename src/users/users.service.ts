@@ -217,6 +217,7 @@ export class UsersService {
         maxUsuarios: true,
         usuariosExtras: true,
         iaBotEnabled: true,
+        tarefasEnabled: true,
       },
     });
     if (!tenant) {
@@ -236,6 +237,7 @@ export class UsersService {
       usados: used,
       restantes: Math.max(0, limit - used),
       iaBotEnabled: tenant.iaBotEnabled,
+      tarefasEnabled: tenant.tarefasEnabled,
     };
   }
 
