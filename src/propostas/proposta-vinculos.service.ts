@@ -204,6 +204,48 @@ export class PropostaVinculosService {
     });
   }
 
+  async createForPublico(params: {
+    propostaId: string;
+    tenantId: string;
+    imovelId: string;
+    corretorId: string;
+    corretorNome: string;
+    proposta: {
+      codigo: string;
+      clienteNome: string;
+      valor: number;
+      desconto: number | null;
+    };
+  }) {
+    const imovel = await this.prisma.imovel.findFirst({
+      where: { id: params.imovelId, tenantId: params.tenantId },
+      select: {
+        id: true,
+        logradouro: true,
+        numero: true,
+        bairro: true,
+        cidade: true,
+        proprietario: { select: { id: true, nome: true, email: true } },
+      },
+    });
+    if (!imovel) throw new NotFoundException("Imóvel não encontrado.");
+
+    const criado = await this.prisma.propostaVinculo.create({
+      data: {
+        tenantId: params.tenantId,
+        propostaId: params.propostaId,
+        imovelId: imovel.id,
+        proprietarioId: imovel.proprietario.id,
+        corretorId: params.corretorId,
+        corretorNome: params.corretorNome,
+      },
+      select: { id: true },
+    });
+
+    await this.notificarProprietario(criado.id, params.proposta, imovel);
+    return criado;
+  }
+
   async remove(
     propostaId: string,
     vinculoId: string,

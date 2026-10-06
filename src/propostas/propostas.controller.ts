@@ -17,10 +17,12 @@ import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { AuthenticatedUser } from "../common/types/authenticated-user";
 import { CreatePropostaDto } from "./dto/create-proposta.dto";
+import { CreatePropostaLinkDto } from "./dto/create-proposta-link.dto";
 import { CreatePropostaVinculoDto } from "./dto/create-proposta-vinculo.dto";
 import { QueryPropostaDto } from "./dto/query-proposta.dto";
 import { QueryPropostasVinculadasDto } from "./dto/query-propostas-vinculadas.dto";
 import { UpdatePropostaDto } from "./dto/update-proposta.dto";
+import { PropostaPublicaService } from "./proposta-publica.service";
 import { PropostaVinculosService } from "./proposta-vinculos.service";
 import { PropostasService } from "./propostas.service";
 
@@ -38,6 +40,7 @@ export class PropostasController {
   constructor(
     private readonly propostasService: PropostasService,
     private readonly vinculos: PropostaVinculosService,
+    private readonly publica: PropostaPublicaService,
   ) {}
 
   @Get()
@@ -57,9 +60,25 @@ export class PropostasController {
     return this.propostasService.listVinculadas(query, user);
   }
 
+  @Post("link-publico")
+  criarLinkPublico(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreatePropostaLinkDto,
+  ) {
+    return this.publica.obterOuCriarLink(dto.imovelId, user);
+  }
+
   @Get("cep/:cep")
   buscarCep(@CurrentUser() user: AuthenticatedUser, @Param("cep") cep: string) {
     return this.propostasService.buscarCep(cep, user);
+  }
+
+  @Get(":id/historico")
+  historico(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+  ) {
+    return this.publica.listHistorico(id, user);
   }
 
   @Get(":id/vinculos")

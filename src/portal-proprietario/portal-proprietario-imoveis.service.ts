@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   Optional,
@@ -8,12 +9,15 @@ import {
 import {
   CaptacaoHistoricoTipo,
   FunilTipo,
+  NotificacaoTipo,
+  PropostaStatus,
   Role,
   UserStatus,
   VendaUsadoHistoricoTipo,
   VendaUsadoPropostaStatus,
   VendaUsadoVisitaStatus,
 } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { IMOVEL_MAX_FOTOS } from '../captacao/captacao.constants';
 import { pickFirstActiveEtapa } from '../captacao/captacao.util';
@@ -33,6 +37,12 @@ import {
 } from './portal-proprietario.mappers';
 import type { PortalProprietarioSession } from './portal-proprietario.types';
 import { MediaService } from '../media/media.service';
+import {
+  isDeliverableEmail,
+  MailerService,
+} from '../mailer/mailer.service';
+import { NotificacoesService } from '../notificacoes/notificacoes.service';
+import { PropostaHistoricoService } from '../propostas/proposta-historico.service';
 
 const TEXTO_PORTAL_ACAO = {
   vi_e_concordo: 'O proprietário registrou: vi e concordo.',
@@ -91,6 +101,10 @@ export class PortalProprietarioImoveisService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly media?: MediaService,
+    @Optional() private readonly historico?: PropostaHistoricoService,
+    @Optional() private readonly notificacoes?: NotificacoesService,
+    @Optional() private readonly mailer?: MailerService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   async dashboard(session: PortalProprietarioSession) {
@@ -913,6 +927,7 @@ export class PortalProprietarioImoveisService {
         corretorNome: true,
         proposta: {
           select: {
+            id: true,
             codigo: true,
             clienteNome: true,
             unidade: true,
@@ -930,6 +945,12 @@ export class PortalProprietarioImoveisService {
             status: true,
             observacao: true,
             validade: true,
+            origemPublica: true,
+            aceitaEm: true,
+            visualizadaNoPortalEm: true,
+            clienteTelefone: true,
+            clienteEmail: true,
+            parcelaCaixa: true,
             corretor: { select: { name: true } },
             empreendimento: { select: { nome: true } },
           },
@@ -941,7 +962,7 @@ export class PortalProprietarioImoveisService {
       const proposta = item.proposta;
       const composicao = composicaoProposta(proposta);
       return {
-        id: item.id,
+        id: proposta.id,
         origem: 'crm' as const,
         numero: proposta.codigo,
         codigo: proposta.codigo,
@@ -952,15 +973,165 @@ export class PortalProprietarioImoveisService {
         status: proposta.status,
         data: item.vinculadoEm,
         interessadoNome: proposta.clienteNome,
+        interessadoTelefone: proposta.clienteTelefone,
+        interessadoEmail: proposta.clienteEmail,
         unidade: proposta.unidade,
         empreendimentoNome: proposta.empreendimento?.nome ?? null,
         observacao: proposta.observacao,
         validade: proposta.validade,
         corretorNome: proposta.corretor?.name ?? item.corretorNome,
+        origemPublica: proposta.origemPublica,
+        aceitaEm: proposta.aceitaEm,
+        visualizadaNoPortalEm: proposta.visualizadaNoPortalEm,
+        parcelaCaixa: proposta.parcelaCaixa,
         composicao,
         negociacao: null,
       };
     });
+  }
+
+  async marcarPropostaVisualizada(
+    propostaId: string,
+    session: PortalProprietarioSession,
+  ) {
+    const vinculo = await this.prisma.propostaVinculo.findFirst({
+      where: {
+        propostaId,
+        tenantId: session.tenantId,
+        proprietarioId: session.proprietarioId,
+        removidoEm: null,
+      },
+      select: {
+        proposta: {
+          select: { id: true, visualizadaNoPortalEm: true },
+        },
+      },
+    });
+    if (!vinculo) throw new NotFoundException('Proposta não encontrada.');
+    if (!vinculo.proposta.visualizadaNoPortalEm) {
+      await this.prisma.proposta.update({
+        where: { id: vinculo.proposta.id },
+        data: { visualizadaNoPortalEm: new Date() },
+      });
+    }
+    return { ok: true };
+  }
+
+  async aceitarProposta(
+    propostaId: string,
+    session: PortalProprietarioSession,
+  ) {
+    const vinculo = await this.prisma.propostaVinculo.findFirst({
+      where: {
+        propostaId,
+        tenantId: session.tenantId,
+        proprietarioId: session.proprietarioId,
+        removidoEm: null,
+        imovel: { proprietarioId: session.proprietarioId },
+      },
+      select: {
+        id: true,
+        proposta: {
+          select: {
+            id: true,
+            tenantId: true,
+            codigo: true,
+            status: true,
+            valor: true,
+            clienteNome: true,
+            clienteEmail: true,
+            corretorId: true,
+            compradorToken: true,
+          },
+        },
+      },
+    });
+    if (!vinculo) throw new NotFoundException('Proposta não encontrada.');
+    const proposta = vinculo.proposta;
+    if (
+      proposta.status === PropostaStatus.aceita ||
+      proposta.status === PropostaStatus.recusada ||
+      proposta.status === PropostaStatus.expirada
+    ) {
+      throw new ConflictException('Esta proposta não pode mais ser aceita.');
+    }
+
+    const agora = new Date();
+    const atualizada = await this.prisma.proposta.update({
+      where: { id: proposta.id },
+      data: {
+        status: PropostaStatus.aceita,
+        aceitaEm: agora,
+        aceitaPorProprietarioId: session.proprietarioId,
+        visualizadaNoPortalEm: agora,
+      },
+      select: {
+        id: true,
+        codigo: true,
+        status: true,
+        aceitaEm: true,
+        valor: true,
+        clienteNome: true,
+        clienteEmail: true,
+        corretorId: true,
+        compradorToken: true,
+        tenantId: true,
+      },
+    });
+
+    await this.historico?.append({
+      tenantId: atualizada.tenantId,
+      propostaId: atualizada.id,
+      tipo: 'aceita_portal',
+      payload: { aceitaEm: agora.toISOString() },
+      atorTipo: 'proprietario',
+      atorId: session.proprietarioId,
+      atorNome: session.name ?? 'Proprietário',
+    });
+
+    if (atualizada.corretorId) {
+      await this.notificacoes?.createPropostaPublica({
+        userId: atualizada.corretorId,
+        propostaId: atualizada.id,
+        tipo: NotificacaoTipo.proposta_publica_aceita,
+        titulo: `Proposta aceita — ${atualizada.codigo}`,
+        corpo: `O proprietário aceitou a proposta ${atualizada.codigo} de ${atualizada.clienteNome}.`,
+        eventoChave: `proposta_publica_aceita:${atualizada.id}`,
+      });
+    }
+
+    const email = atualizada.clienteEmail?.trim() ?? '';
+    if (this.mailer && isDeliverableEmail(email)) {
+      try {
+        const origin = (this.config?.get<string>('FRONTEND_URL') ?? '')
+          .split(',')[0]
+          ?.trim()
+          .replace(/\/$/, '');
+        const recibo = atualizada.compradorToken && origin
+          ? `${origin}/publico/proposta/recibo/${atualizada.compradorToken}`
+          : '';
+        await this.mailer.sendText({
+          to: email,
+          subject: `Sua proposta ${atualizada.codigo} foi aceita`,
+          text: [
+            `Olá, ${atualizada.clienteNome}.`,
+            '',
+            `O proprietário aceitou a proposta ${atualizada.codigo}.`,
+            recibo ? `Acompanhe o recibo: ${recibo}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+      } catch {
+        // Aceite não depende do e-mail ao comprador.
+      }
+    }
+
+    return {
+      id: atualizada.id,
+      status: atualizada.status,
+      aceitaEm: atualizada.aceitaEm,
+    };
   }
 
   async getFechamento(imovelId: string, session: PortalProprietarioSession) {

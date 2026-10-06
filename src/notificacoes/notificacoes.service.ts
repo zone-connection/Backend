@@ -442,6 +442,41 @@ export class NotificacoesService {
     });
   }
 
+  async createPropostaPublica(params: {
+    userId: string;
+    propostaId: string;
+    tipo:
+      | typeof NotificacaoTipo.proposta_publica_recebida
+      | typeof NotificacaoTipo.proposta_publica_aceita;
+    titulo: string;
+    corpo: string;
+    eventoChave: string;
+  }) {
+    const existing = await this.prisma.notificacao.findFirst({
+      where: {
+        userId: params.userId,
+        propostaId: params.propostaId,
+        tipo: params.tipo,
+        eventoChave: params.eventoChave,
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: params.tipo,
+        titulo: params.titulo,
+        corpo: params.corpo,
+        propostaId: params.propostaId,
+        eventoChave: params.eventoChave,
+      },
+      select: notifSelect,
+    });
+  }
+
   /** Lead atribuído ao corretor. Idempotente por usuário + eventoChave. */
   async createLeadAtribuido(params: {
     userId: string;

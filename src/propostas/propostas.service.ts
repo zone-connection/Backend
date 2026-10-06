@@ -75,6 +75,10 @@ const propostaSelect = {
   status: true,
   validade: true,
   enviadaEm: true,
+  origemPublica: true,
+  compradorToken: true,
+  aceitaEm: true,
+  visualizadaNoPortalEm: true,
   observacao: true,
   createdAt: true,
   updatedAt: true,
@@ -424,6 +428,7 @@ export class PropostasService {
         leadId: true,
         status: true,
         enviadaEm: true,
+        origemPublica: true,
       },
     });
     if (!existing) throw new NotFoundException("Proposta não encontrada.");
@@ -508,6 +513,14 @@ export class PropostasService {
       }
     }
     if (dto.status !== undefined) {
+      if (
+        existing.origemPublica &&
+        dto.status === PropostaStatus.aceita
+      ) {
+        throw new ForbiddenException(
+          "O aceite desta proposta é feito pelo proprietário no portal.",
+        );
+      }
       data.status = dto.status;
       if (
         !existing.enviadaEm &&
@@ -524,6 +537,14 @@ export class PropostasService {
       data,
       select: propostaSelect,
     });
+  }
+
+  async nextCodigoPublic(tenantId: string) {
+    return this.nextCodigo(tenantId);
+  }
+
+  async assertModuloPropostasPublic(requester: AuthenticatedUser) {
+    return this.assertModuloPropostas(requester);
   }
 
   async remove(id: string, requester: AuthenticatedUser) {

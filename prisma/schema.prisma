@@ -236,6 +236,8 @@ model Tenant {
   presencaLancamentos            PresencaLancamento[]
   listasDocumento                ListaDocumento[]
   contratoDocumentos             ContratoDocumento[]
+  propostaPublicaLinks           PropostaPublicaLink[]
+  propostaHistoricos             PropostaHistorico[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -406,6 +408,7 @@ model User {
 
   propostaVinculos         PropostaVinculo[] @relation("PropostaVinculoCorretor")
   propostaVinculosRemovidos PropostaVinculo[] @relation("PropostaVinculoRemovidoPor")
+  propostaPublicaLinks     PropostaPublicaLink[]
 
   // Análises registradas por este usuário (auto ou edição).
   analises Analise[] @relation("AnaliseAutor")
@@ -1274,8 +1277,18 @@ model Proposta {
   enviadaEm DateTime?
   observacao String?
 
+  origemPublica           Boolean @default(false)
+  linkId                  String?
+  link                    PropostaPublicaLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  compradorToken          String? @unique
+  aceitaEm                DateTime?
+  aceitaPorProprietarioId String?
+  aceitaPorProprietario   Proprietario? @relation("PropostaAceiteProprietario", fields: [aceitaPorProprietarioId], references: [id], onDelete: SetNull)
+  visualizadaNoPortalEm   DateTime?
+
   notificacoes Notificacao[]
   vinculos     PropostaVinculo[]
+  historico    PropostaHistorico[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1288,7 +1301,55 @@ model Proposta {
   @@index([status])
   @@index([createdAt])
   @@index([validade])
+  @@index([origemPublica])
   @@map("propostas")
+}
+
+model PropostaPublicaLink {
+  id             String       @id @default(uuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  token          String       @unique
+  imovelId       String
+  imovel         Imovel       @relation(fields: [imovelId], references: [id], onDelete: Cascade)
+  proprietarioId String
+  proprietario   Proprietario @relation(fields: [proprietarioId], references: [id], onDelete: Cascade)
+  corretorId     String
+  corretor       User         @relation(fields: [corretorId], references: [id], onDelete: Cascade)
+  ativo          Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  propostas      Proposta[]
+
+  @@unique([imovelId, corretorId])
+  @@index([tenantId, imovelId])
+  @@index([tenantId, corretorId])
+  @@map("proposta_publica_links")
+}
+
+enum PropostaHistoricoAtor {
+  comprador
+  corretor
+  proprietario
+  sistema
+}
+
+model PropostaHistorico {
+  id         String                @id @default(uuid())
+  tenantId   String
+  tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  propostaId String
+  proposta   Proposta              @relation(fields: [propostaId], references: [id], onDelete: Cascade)
+  tipo       String
+  payload    Json?
+  atorTipo   PropostaHistoricoAtor
+  atorId     String?
+  atorNome   String?
+  createdAt  DateTime              @default(now())
+
+  @@index([propostaId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("proposta_historicos")
 }
 
 /// Vínculo individual entre uma proposta comercial e um imóvel ou empreendimento.
@@ -1623,6 +1684,8 @@ enum NotificacaoTipo {
   tarefa_atrasada
   imovel_compativel
   proposta_vencimento_proximo
+  proposta_publica_recebida
+  proposta_publica_aceita
   lead_atribuido
   lead_pool
   chave_retirada
@@ -1830,6 +1893,8 @@ model Proprietario {
   posVendas    VendaUsadoPosVenda[]
   portalAcesso ProprietarioPortalAcesso?
   propostaVinculos PropostaVinculo[]
+  propostaPublicaLinks PropostaPublicaLink[]
+  propostasAceitas     Proposta[]            @relation("PropostaAceiteProprietario")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2044,6 +2109,7 @@ model Imovel {
   captacoes Captacao[]
   vendaUsado VendaUsado?
   propostaVinculos PropostaVinculo[]
+  propostaPublicaLinks PropostaPublicaLink[]
   grupoZapIssues GrupoZapListingIssue[]
   interessesLead LeadEmpreendimentoInteresse[]
   chaves     ImovelChave[]

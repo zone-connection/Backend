@@ -74,6 +74,22 @@ export class PortalProprietarioController {
     return this.imoveis.listPropostasCarteira(session);
   }
 
+  @Post('propostas/:id/visualizar')
+  visualizarProposta(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentPortal() session: PortalProprietarioSession,
+  ) {
+    return this.imoveis.marcarPropostaVisualizada(id, session);
+  }
+
+  @Post('propostas/:id/aceitar')
+  aceitarProposta(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentPortal() session: PortalProprietarioSession,
+  ) {
+    return this.imoveis.aceitarProposta(id, session);
+  }
+
   @Post('novidades/lidas')
   marcarNovidadesLidas(@CurrentPortal() session: PortalProprietarioSession) {
     return this.imoveis.marcarNovidadesLidas(session);
