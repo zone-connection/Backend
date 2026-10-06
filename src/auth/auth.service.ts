@@ -39,7 +39,7 @@ import {
 import { JwtPayload } from './strategies/jwt.strategy';
 import { UpdateAppearanceDto } from './dto/update-appearance.dto';
 import { sanitizeUserPermissions } from '../common/utils/user-permissions';
-import { applyPlanoModules } from '../tenants/tenant-plan';
+import { applyPlanoModules, tenantTemTarefas } from '../tenants/tenant-plan';
 import { isCorretorLike } from '../common/utils/roles';
 import { corretorTemVendaVinculada } from '../common/utils/corretor-venda';
 
@@ -316,7 +316,11 @@ export class AuthService {
       ...rest,
       temVendaVinculada: await this.resolveTemVendaVinculada(rest),
       tenant: branding
-        ? { ...branding, modules: applyPlanoModules(branding.plano, branding.modules) }
+        ? {
+            ...branding,
+            modules: applyPlanoModules(branding.plano, branding.modules),
+            tarefasEnabled: tenantTemTarefas(branding),
+          }
         : null,
     };
   }
@@ -658,7 +662,11 @@ export class AuthService {
       updatedAt: user.updatedAt,
       temVendaVinculada: await this.resolveTemVendaVinculada(user),
       tenant: tenant
-        ? { ...tenant, modules: applyPlanoModules(tenant.plano, tenant.modules) }
+        ? {
+            ...tenant,
+            modules: applyPlanoModules(tenant.plano, tenant.modules),
+            tarefasEnabled: tenantTemTarefas(tenant),
+          }
         : null,
     };
   }

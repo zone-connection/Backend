@@ -1,5 +1,17 @@
 import { Role, TenantPlano } from '@prisma/client';
 
+/** Tarefas entra no plano a partir do Prata. Abaixo disso, só com o extra ligado. */
+export function tenantTemTarefas(tenant: {
+  plano: TenantPlano;
+  tarefasEnabled?: boolean | null;
+}) {
+  return (
+    tenant.plano === TenantPlano.prata ||
+    tenant.plano === TenantPlano.ouro ||
+    tenant.tarefasEnabled === true
+  );
+}
+
 export const PLANO_MAX_USUARIOS: Record<TenantPlano, number> = {
   [TenantPlano.solo]: 2,
   [TenantPlano.bronze]: 5,

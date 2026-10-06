@@ -37,7 +37,11 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { ImportUsersDto } from './dto/import-users.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
-import { assertRoleAllowedForPlano, PLANO_MAX_USUARIOS } from '../tenants/tenant-plan';
+import {
+  assertRoleAllowedForPlano,
+  PLANO_MAX_USUARIOS,
+  tenantTemTarefas,
+} from '../tenants/tenant-plan';
 import { sanitizeUserPermissions } from '../common/utils/user-permissions';
 
 export interface PaginatedUsers {
@@ -237,7 +241,7 @@ export class UsersService {
       usados: used,
       restantes: Math.max(0, limit - used),
       iaBotEnabled: tenant.iaBotEnabled,
-      tarefasEnabled: tenant.tarefasEnabled,
+      tarefasEnabled: tenantTemTarefas(tenant),
     };
   }
 

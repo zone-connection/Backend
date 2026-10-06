@@ -22,6 +22,7 @@ import { resolveNotifyEmail } from '../mailer/mailer.service';
 import { MailerService } from '../mailer/mailer.service';
 import { AgendaService } from '../agenda/agenda.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { tenantTemTarefas } from '../tenants/tenant-plan';
 import { CreateComentarioDto } from './dto/create-comentario.dto';
 import { CreateTarefaDto } from './dto/create-tarefa.dto';
 import { UpdateTarefaDto } from './dto/update-tarefa.dto';
@@ -83,9 +84,9 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     const tenantId = requireTenantId(requester);
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { tarefasEnabled: true },
+      select: { plano: true, tarefasEnabled: true },
     });
-    return { enabled: Boolean(tenant?.tarefasEnabled) };
+    return { enabled: Boolean(tenant && tenantTemTarefas(tenant)) };
   }
 
   async list(
@@ -355,9 +356,9 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     const tenantId = requireTenantId(requester);
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { tarefasEnabled: true },
+      select: { plano: true, tarefasEnabled: true },
     });
-    if (!tenant?.tarefasEnabled) {
+    if (!tenant || !tenantTemTarefas(tenant)) {
       throw new ForbiddenException(
         'Gestão de tarefas não está contratada para esta empresa.',
       );
@@ -420,7 +421,12 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
         status: 'aberta',
         lembreteEnviadoEm: null,
         lembreteEm: { lte: now },
-        tenant: { tarefasEnabled: true },
+        tenant: {
+          OR: [
+            { tarefasEnabled: true },
+            { plano: { in: ['prata', 'ouro'] } },
+          ],
+        },
       },
       include: tarefaInclude,
       take: 40,
@@ -440,7 +446,12 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
         status: 'aberta',
         atrasoEnviadoEm: null,
         venceEm: { lt: now },
-        tenant: { tarefasEnabled: true },
+        tenant: {
+          OR: [
+            { tarefasEnabled: true },
+            { plano: { in: ['prata', 'ouro'] } },
+          ],
+        },
       },
       include: tarefaInclude,
       take: 40,
