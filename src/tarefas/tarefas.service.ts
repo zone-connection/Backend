@@ -123,10 +123,11 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
 
   async create(dto: CreateTarefaDto, requester: AuthenticatedUser) {
     const tenantId = await this.assertEnabled(requester);
-    const data = await this.buildData(dto, requester, tenantId);
+    const data = await this.buildData(dto, tenantId);
     const created = await this.prisma.tarefa.create({
       data: {
         ...data,
+        criadoPorId: requester.id,
         serieId: data.recorrencia === 'nenhuma' ? null : randomUUID(),
       },
       include: tarefaInclude,
@@ -168,7 +169,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
           : dto.agendamentoId,
       imovelId: dto.imovelId === undefined ? current.imovelId ?? undefined : dto.imovelId,
     };
-    const data = await this.buildData(merged, requester, tenantId, false);
+    const data = await this.buildData(merged, tenantId);
     const scheduleChanged =
       merged.data !== current.data ||
       (merged.horario ?? null) !== current.horario ||
@@ -259,12 +260,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     return this.present(await this.attachEspelho(updated), new Date());
   }
 
-  private async buildData(
-    dto: CreateTarefaDto,
-    requester: AuthenticatedUser,
-    tenantId: string,
-    withAuthor = true,
-  ) {
+  private async buildData(dto: CreateTarefaDto, tenantId: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dto.data) || Number.isNaN(venceEmFrom(dto.data).getTime())) {
       throw new BadRequestException('Data inválida.');
     }
@@ -299,7 +295,6 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
       venceEm,
       prioridade: dto.prioridade ?? 'media',
       responsavelId: dto.responsavelId,
-      ...(withAuthor ? { criadoPorId: requester.id } : {}),
       leadId: dto.leadId ?? null,
       agendamentoId: dto.agendamentoId ?? null,
       imovelId: dto.imovelId ?? null,

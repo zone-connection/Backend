@@ -2515,6 +2515,7 @@ export class AgendaService {
           muralChaveId: null,
           chaveRetiradaEm: null,
           motivoRecusa: null,
+          origemTarefa: false,
           aprovadoAt: null,
           createdAt: now,
           updatedAt: now,
