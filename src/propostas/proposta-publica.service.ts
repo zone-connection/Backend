@@ -8,6 +8,7 @@ import { NotificacaoTipo, Prisma, PropostaStatus } from "@prisma/client";
 import { randomBytes } from "crypto";
 import { AuthenticatedUser } from "../common/types/authenticated-user";
 import { requireTenantId } from "../common/utils/tenant";
+import { pickPublicFrontendUrl } from "../lead-notify/lead-notify.messages";
 import { NotificacoesService } from "../notificacoes/notificacoes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePropostaDto } from "./dto/create-proposta.dto";
@@ -394,26 +395,21 @@ export class PropostaPublicaService {
   }
 
   private frontendOrigin() {
-    const raw = this.config.get<string>("FRONTEND_URL") ?? "";
-    return raw.split(",")[0]?.trim().replace(/\/$/, "") ?? "";
+    return pickPublicFrontendUrl(
+      this.config.get<string>("FRONTEND_URL"),
+      this.config.get<string>("CRM_PUBLIC_URL"),
+    );
   }
 
   private urlDoLink(token: string) {
-    const origin =
-      this.frontendOrigin() ||
-      (typeof process !== "undefined" ? "" : "");
+    const origin = this.frontendOrigin();
     return {
       token,
-      url: origin
-        ? `${origin}/publico/proposta/${token}`
-        : `/publico/proposta/${token}`,
+      url: `${origin}/publico/proposta/${token}`,
     };
   }
 
   private urlRecibo(compradorToken: string) {
-    const origin = this.frontendOrigin();
-    return origin
-      ? `${origin}/publico/proposta/recibo/${compradorToken}`
-      : `/publico/proposta/recibo/${compradorToken}`;
+    return `${this.frontendOrigin()}/publico/proposta/recibo/${compradorToken}`;
   }
 }

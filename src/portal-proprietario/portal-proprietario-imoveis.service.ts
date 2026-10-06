@@ -22,6 +22,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { IMOVEL_MAX_FOTOS } from '../captacao/captacao.constants';
 import { pickFirstActiveEtapa } from '../captacao/captacao.util';
 import { stageChangeTiming } from '../operacao/operacao-monitoramento.util';
+import { pickPublicFrontendUrl } from '../lead-notify/lead-notify.messages';
 import type {
   CreatePortalImovelDto,
   UpdatePortalImovelDto,
@@ -1103,11 +1104,11 @@ export class PortalProprietarioImoveisService {
     const email = atualizada.clienteEmail?.trim() ?? '';
     if (this.mailer && isDeliverableEmail(email)) {
       try {
-        const origin = (this.config?.get<string>('FRONTEND_URL') ?? '')
-          .split(',')[0]
-          ?.trim()
-          .replace(/\/$/, '');
-        const recibo = atualizada.compradorToken && origin
+        const origin = pickPublicFrontendUrl(
+          this.config?.get<string>('FRONTEND_URL'),
+          this.config?.get<string>('CRM_PUBLIC_URL'),
+        );
+        const recibo = atualizada.compradorToken
           ? `${origin}/publico/proposta/recibo/${atualizada.compradorToken}`
           : '';
         await this.mailer.sendText({
