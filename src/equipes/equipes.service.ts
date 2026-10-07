@@ -65,10 +65,7 @@ export class EquipesService {
     const tenantId = requireTenantId(requester);
 
     const where: Prisma.EquipeWhereInput = { tenantId };
-    if (
-      requester.role === Role.gerente &&
-      requester.tenantModules?.gerenteVerLeadsGerais !== true
-    ) {
+    if (requester.role === Role.gerente) {
       where.gerenteId = requester.id;
     }
 

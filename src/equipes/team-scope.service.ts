@@ -11,7 +11,8 @@ import { whereNotRetrabalho } from './lead-retrabalho.where';
  * Escopo de dados por equipe, sempre aninhado ao tenant do requester:
  * - admin / analista → todos do tenant
  * - gerente (opção off) → só a própria equipe e carteira
- * - gerente (opção on) → todas as equipes + pool geral
+ * - gerente (opção on) → própria equipe + novos leads sem equipe (pool do admin)
+ *   Nunca as carteiras das outras equipes.
  * - corretor → só o próprio (nunca retrabalho)
  * - retrabalho (desvinculado) → admin e gerente do tenant
  */
@@ -35,8 +36,7 @@ export class TeamScopeService {
     if (
       requester.role === Role.admin ||
       requester.role === Role.super_admin ||
-      requester.role === Role.analista ||
-      this.gerenteSeesSharedLeads(requester)
+      requester.role === Role.analista
     ) {
       return null;
     }
@@ -62,8 +62,8 @@ export class TeamScopeService {
 
   /**
    * Filtro Prisma para leads/documentação baseado na equipe + tenant.
-   * Com a opção do admin ligada, o gerente vê o tenant inteiro (outras equipes
-   * e pool geral). Desligada, só a própria equipe — sem leads gerais.
+   * Com a opção do admin ligada, o gerente também vê os novos leads sem equipe.
+   * Leads já ligados a outra equipe continuam fora do escopo.
    */
   async leadScope(
     requester: AuthenticatedUser,
@@ -129,13 +129,12 @@ export class TeamScopeService {
       if (
         requester.role === Role.admin ||
         requester.role === Role.super_admin ||
-        requester.role === Role.analista ||
-        this.gerenteSeesSharedLeads(requester)
+        requester.role === Role.analista
       ) {
         return true;
       }
       if (requester.role === Role.gerente) {
-        if (!equipeId) return false;
+        if (!equipeId) return this.gerenteSeesSharedLeads(requester);
         const equipe = await this.prisma.equipe.findFirst({
           where: {
             id: equipeId,
