@@ -21,6 +21,8 @@ import { requireTenantId } from '../common/utils/tenant';
 import { resolveNotifyEmail } from '../mailer/mailer.service';
 import { MailerService } from '../mailer/mailer.service';
 import { AgendaService } from '../agenda/agenda.service';
+import { isCorretorLike } from '../common/utils/roles';
+import { TeamScopeService } from '../equipes/team-scope.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantTemTarefas } from '../tenants/tenant-plan';
 import { CreateComentarioDto } from './dto/create-comentario.dto';
@@ -53,7 +55,7 @@ const tarefaInclude = {
   },
 } satisfies Prisma.TarefaInclude;
 
-const MANAGE_ALL = new Set<Role>([Role.admin, Role.gerente, Role.super_admin]);
+const VER_TODOS = new Set<Role>([Role.admin, Role.super_admin]);
 
 @Injectable()
 export class TarefasService implements OnModuleInit, OnModuleDestroy {
@@ -65,6 +67,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     private readonly mailer: MailerService,
     private readonly config: ConfigService,
     private readonly agenda: AgendaService,
+    private readonly teamScope: TeamScopeService,
   ) {}
 
   onModuleInit() {
@@ -99,7 +102,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     },
   ) {
     const tenantId = await this.assertEnabled(requester);
-    const where = this.scopeWhere(requester, tenantId);
+    const where = await this.scopeWhere(requester, tenantId);
     if (query.leadId) where.leadId = query.leadId;
     if (query.agendamentoId) where.agendamentoId = query.agendamentoId;
     if (query.imovelId) where.imovelId = query.imovelId;
@@ -124,7 +127,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
 
   async create(dto: CreateTarefaDto, requester: AuthenticatedUser) {
     const tenantId = await this.assertEnabled(requester);
-    const data = await this.buildData(dto, tenantId);
+    const data = await this.buildData(dto, tenantId, requester);
     const created = await this.prisma.tarefa.create({
       data: {
         ...data,
@@ -170,7 +173,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
           : dto.agendamentoId,
       imovelId: dto.imovelId === undefined ? current.imovelId ?? undefined : dto.imovelId,
     };
-    const data = await this.buildData(merged, tenantId);
+    const data = await this.buildData(merged, tenantId, requester);
     const scheduleChanged =
       merged.data !== current.data ||
       (merged.horario ?? null) !== current.horario ||
@@ -261,15 +264,15 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     return this.present(await this.attachEspelho(updated), new Date());
   }
 
-  private async buildData(dto: CreateTarefaDto, tenantId: string) {
+  private async buildData(
+    dto: CreateTarefaDto,
+    tenantId: string,
+    requester: AuthenticatedUser,
+  ) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dto.data) || Number.isNaN(venceEmFrom(dto.data).getTime())) {
       throw new BadRequestException('Data inválida.');
     }
-    const responsavel = await this.prisma.user.findFirst({
-      where: { id: dto.responsavelId, tenantId, status: 'ativo' },
-      select: { id: true },
-    });
-    if (!responsavel) throw new BadRequestException('Responsável inválido.');
+    await this.assertResponsavel(requester, tenantId, dto.responsavelId);
     await this.assertVinculo(tenantId, dto.leadId, 'lead');
     await this.assertVinculo(tenantId, dto.agendamentoId, 'agendamento');
     await this.assertVinculo(tenantId, dto.imovelId, 'imovel');
@@ -366,11 +369,47 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     return tenantId;
   }
 
-  private scopeWhere(
+  private async assertResponsavel(
     requester: AuthenticatedUser,
     tenantId: string,
-  ): Prisma.TarefaWhereInput {
-    if (MANAGE_ALL.has(requester.role)) return { tenantId };
+    responsavelId: string,
+  ) {
+    const responsavel = await this.prisma.user.findFirst({
+      where: { id: responsavelId, tenantId, status: 'ativo' },
+      select: { id: true, role: true },
+    });
+    if (!responsavel) throw new BadRequestException('Responsável inválido.');
+    if (VER_TODOS.has(requester.role) || responsavel.id === requester.id) return;
+
+    if (requester.role === Role.gerente) {
+      if (!isCorretorLike(responsavel.role)) {
+        throw new ForbiddenException(
+          'O gerente pode atribuir tarefas apenas a corretores e trainees.',
+        );
+      }
+      const ids = await this.teamScope.getVisibleCorretorIds(requester);
+      if (!ids?.includes(responsavel.id)) {
+        throw new ForbiddenException(
+          'Esse usuário não faz parte da sua equipe.',
+        );
+      }
+      return;
+    }
+
+    throw new ForbiddenException('Você só pode criar tarefas para si.');
+  }
+
+  private async scopeWhere(
+    requester: AuthenticatedUser,
+    tenantId: string,
+  ): Promise<Prisma.TarefaWhereInput> {
+    if (VER_TODOS.has(requester.role)) return { tenantId };
+    if (requester.role === Role.gerente) {
+      const ids = (await this.teamScope.getVisibleCorretorIds(requester)) ?? [
+        requester.id,
+      ];
+      return { tenantId, responsavelId: { in: ids } };
+    }
     return {
       tenantId,
       OR: [{ responsavelId: requester.id }, { criadoPorId: requester.id }],
@@ -383,7 +422,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     tenantId: string,
   ) {
     const item = await this.prisma.tarefa.findFirst({
-      where: { id, ...this.scopeWhere(requester, tenantId) },
+      where: { id, ...(await this.scopeWhere(requester, tenantId)) },
       include: tarefaInclude,
     });
     if (!item) throw new NotFoundException('Tarefa não encontrada.');
