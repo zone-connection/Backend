@@ -1071,6 +1071,7 @@ model Empreendimento {
   cadastroVendas CadastroVenda[]
   muralChaves    MuralChave[]
   agendamentos  Agendamento[]
+  tarefas       Tarefa[]
   propostas     Proposta[]
   propostaVinculos PropostaVinculo[]
   leads         Lead[]
@@ -3740,6 +3741,8 @@ model Tarefa {
   agendamento Agendamento?      @relation(fields: [agendamentoId], references: [id], onDelete: SetNull)
   imovelId    String?
   imovel      Imovel?           @relation(fields: [imovelId], references: [id], onDelete: SetNull)
+  empreendimentoId String?
+  empreendimento   Empreendimento? @relation(fields: [empreendimentoId], references: [id], onDelete: SetNull)
   /// Compromisso desta tarefa na agenda (e, se conectado, no Google Agenda).
   agendaEventoId String? @unique
   agendaEvento   Agendamento? @relation("TarefaAgendaEspelho", fields: [agendaEventoId], references: [id], onDelete: SetNull)
@@ -3768,6 +3771,7 @@ model Tarefa {
   @@index([leadId])
   @@index([agendamentoId])
   @@index([imovelId])
+  @@index([empreendimentoId])
   @@index([lembreteEm])
   @@map("tarefas")
 }

@@ -106,4 +106,8 @@ export class CreateTarefaDto {
   @IsOptional()
   @IsUUID('4')
   imovelId?: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  empreendimentoId?: string;
 }

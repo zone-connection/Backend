@@ -49,6 +49,7 @@ const tarefaInclude = {
       cidade: true,
     },
   },
+  empreendimento: { select: { id: true, nome: true } },
   comentarios: {
     orderBy: { createdAt: 'asc' as const },
     include: { autor: { select: { id: true, name: true } } },
@@ -173,6 +174,10 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
           ? current.agendamentoId ?? undefined
           : dto.agendamentoId,
       imovelId: dto.imovelId === undefined ? current.imovelId ?? undefined : dto.imovelId,
+      empreendimentoId:
+        dto.empreendimentoId === undefined
+          ? current.empreendimentoId ?? undefined
+          : dto.empreendimentoId,
     };
     const data = await this.buildData(merged, tenantId, requester);
     const scheduleChanged =
@@ -277,6 +282,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     await this.assertVinculo(tenantId, dto.leadId, 'lead');
     await this.assertVinculo(tenantId, dto.agendamentoId, 'agendamento');
     await this.assertVinculo(tenantId, dto.imovelId, 'imovel');
+    await this.assertVinculo(tenantId, dto.empreendimentoId, 'empreendimento');
 
     const recorrencia = (dto.recorrencia ?? 'nenhuma') as TarefaRecorrencia;
     const lembrete = (dto.lembrete ?? 'nenhum') as TarefaLembrete;
@@ -304,6 +310,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
       leadId: dto.leadId ?? null,
       agendamentoId: dto.agendamentoId ?? null,
       imovelId: dto.imovelId ?? null,
+      empreendimentoId: dto.empreendimentoId ?? null,
       recorrencia,
       diasSemana: dto.diasSemana ?? [],
       intervaloDias: dto.intervaloDias ?? null,
@@ -316,7 +323,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
   private async assertVinculo(
     tenantId: string,
     id: string | undefined,
-    kind: 'lead' | 'agendamento' | 'imovel',
+    kind: 'lead' | 'agendamento' | 'imovel' | 'empreendimento',
   ) {
     if (!id) return;
     const found =
@@ -327,10 +334,15 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
               where: { id, tenantId },
               select: { id: true },
             })
-          : await this.prisma.imovel.findFirst({
-              where: { id, tenantId },
-              select: { id: true },
-            });
+          : kind === 'imovel'
+            ? await this.prisma.imovel.findFirst({
+                where: { id, tenantId },
+                select: { id: true },
+              })
+            : await this.prisma.empreendimento.findFirst({
+                where: { id, tenantId },
+                select: { id: true },
+              });
     if (!found) throw new BadRequestException('Registro relacionado não encontrado.');
   }
 

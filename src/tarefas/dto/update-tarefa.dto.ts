@@ -88,6 +88,10 @@ export class UpdateTarefaDto {
   imovelId?: string;
 
   @IsOptional()
+  @IsUUID('4')
+  empreendimentoId?: string;
+
+  @IsOptional()
   @IsIn(['aberta', 'concluida'])
   status?: 'aberta' | 'concluida';
 }
