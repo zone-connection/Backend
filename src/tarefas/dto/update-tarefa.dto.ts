@@ -92,6 +92,6 @@ export class UpdateTarefaDto {
   empreendimentoId?: string;
 
   @IsOptional()
-  @IsIn(['aberta', 'concluida'])
-  status?: 'aberta' | 'concluida';
+  @IsIn(['aberta', 'concluida', 'cancelada'])
+  status?: 'aberta' | 'concluida' | 'cancelada';
 }

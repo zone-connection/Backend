@@ -112,7 +112,9 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
     const hoje = todayYmd(now);
     const filtro = query.filtro ?? 'todas';
     if (filtro === 'concluidas') where.status = TarefaStatus.concluida;
-    else if (filtro !== 'todas') where.status = TarefaStatus.aberta;
+    else if (filtro === 'canceladas') where.status = TarefaStatus.cancelada;
+    else if (filtro === 'todas') where.status = { not: TarefaStatus.cancelada };
+    else where.status = TarefaStatus.aberta;
     if (filtro === 'hoje') where.data = hoje;
     if (filtro === 'proximas') where.data = { gt: hoje };
     if (filtro === 'atrasadas') where.venceEm = { lt: now };
@@ -143,6 +145,15 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
   async update(id: string, dto: UpdateTarefaDto, requester: AuthenticatedUser) {
     const tenantId = await this.assertEnabled(requester);
     const current = await this.findScoped(id, requester, tenantId);
+    if (dto.status === 'cancelada' && current.status !== 'cancelada') {
+      await this.agenda.removeEspelhoTarefa(current.agendaEventoId);
+      const updated = await this.prisma.tarefa.update({
+        where: { id },
+        data: { status: 'cancelada', agendaEventoId: null },
+        include: tarefaInclude,
+      });
+      return this.present(updated, new Date());
+    }
     if (dto.status === 'concluida' && current.status !== 'concluida') {
       return this.concluir(current, requester);
     }
