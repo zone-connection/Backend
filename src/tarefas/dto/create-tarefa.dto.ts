@@ -13,6 +13,15 @@ import {
 } from 'class-validator';
 
 export const TAREFA_PRIORIDADES = ['alta', 'media', 'baixa'] as const;
+export const TAREFA_TIPOS = [
+  'visita',
+  'ligacao',
+  'reuniao',
+  'tarefa',
+  'outro',
+  'bloqueio',
+  'retirada_chave',
+] as const;
 export const TAREFA_RECORRENCIAS = [
   'nenhuma',
   'diaria',
@@ -51,6 +60,10 @@ export class CreateTarefaDto {
   @IsOptional()
   @IsIn(TAREFA_PRIORIDADES)
   prioridade?: (typeof TAREFA_PRIORIDADES)[number];
+
+  @IsOptional()
+  @IsIn(TAREFA_TIPOS)
+  tipo?: (typeof TAREFA_TIPOS)[number];
 
   @IsOptional()
   @IsString()

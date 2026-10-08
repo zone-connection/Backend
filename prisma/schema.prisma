@@ -3728,6 +3728,8 @@ model Tarefa {
   venceEm     DateTime
   prioridade  TarefaPrioridade  @default(media)
   status      TarefaStatus      @default(aberta)
+  /// Mesmos tipos da agenda. A agenda em si continua existindo.
+  tipo        AgendamentoTipo   @default(tarefa)
   responsavelId String
   responsavel User              @relation("TarefaResponsavel", fields: [responsavelId], references: [id], onDelete: Restrict)
   criadoPorId String

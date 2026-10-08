@@ -1886,6 +1886,7 @@ export class AgendaService {
     leadId: string | null;
     imovelId: string | null;
     concluida: boolean;
+    tipo?: AgendamentoTipo;
   }): Promise<string> {
     const endsAt = new Date(input.startsAt.getTime() + 30 * 60 * 1000);
     const data = {
@@ -1899,7 +1900,7 @@ export class AgendaService {
       status: input.concluida
         ? AgendamentoStatus.concluido
         : AgendamentoStatus.agendado,
-      tipo: AgendamentoTipo.tarefa,
+      tipo: input.tipo ?? AgendamentoTipo.tarefa,
       origemTarefa: true,
       escopo: AgendamentoEscopo.pessoal,
       contaAtraso: false,

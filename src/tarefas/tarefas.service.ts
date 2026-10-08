@@ -160,6 +160,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
       responsavelId: dto.responsavelId ?? current.responsavelId,
       horario: dto.horario === undefined ? current.horario ?? undefined : dto.horario,
       prioridade: dto.prioridade ?? current.prioridade,
+      tipo: dto.tipo ?? current.tipo,
       descricao: dto.descricao ?? current.descricao,
       lembrete: dto.lembrete ?? current.lembrete,
       lembreteMinutos: dto.lembreteMinutos ?? current.lembreteMinutos ?? undefined,
@@ -298,6 +299,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
       horario: dto.horario ?? null,
       venceEm,
       prioridade: dto.prioridade ?? 'media',
+      tipo: dto.tipo ?? 'tarefa',
       responsavelId: dto.responsavelId,
       leadId: dto.leadId ?? null,
       agendamentoId: dto.agendamentoId ?? null,
@@ -346,6 +348,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
       leadId: tarefa.leadId,
       imovelId: tarefa.imovelId,
       concluida: tarefa.status === 'concluida',
+      tipo: tarefa.tipo,
     });
     if (agendaEventoId === tarefa.agendaEventoId) return tarefa;
     return this.prisma.tarefa.update({

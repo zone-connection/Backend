@@ -15,6 +15,7 @@ import {
   TAREFA_LEMBRETES,
   TAREFA_PRIORIDADES,
   TAREFA_RECORRENCIAS,
+  TAREFA_TIPOS,
 } from './create-tarefa.dto';
 
 export class UpdateTarefaDto {
@@ -35,6 +36,10 @@ export class UpdateTarefaDto {
   @IsOptional()
   @Matches(/^\d{2}:\d{2}$/, { message: 'Horário inválido.' })
   horario?: string;
+
+  @IsOptional()
+  @IsIn(TAREFA_TIPOS)
+  tipo?: (typeof TAREFA_TIPOS)[number];
 
   @IsOptional()
   @IsIn(TAREFA_PRIORIDADES)
