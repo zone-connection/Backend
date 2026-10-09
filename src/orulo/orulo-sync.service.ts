@@ -33,6 +33,7 @@ import {
 import { oruloPublicOrigin } from './orulo-frontend-origin';
 import { extractOruloBuildingIds, oruloTotalPages } from './orulo-ids';
 import type { OruloWebhookPayload } from './orulo-api.types';
+import { slugifyPublico } from '../empreendimentos/empreendimentos.service';
 
 @Injectable()
 export class OruloSyncService implements OnModuleInit {
@@ -345,7 +346,7 @@ export class OruloSyncService implements OnModuleInit {
         });
 
     try {
-      await this.pushPublicationLinks(token, buildingId, saved.id, true);
+      await this.pushPublicationLinks(token, buildingId, saved, true);
     } catch (error) {
       this.logger.warn(
         `Publication links #${buildingId}: ${
@@ -371,7 +372,7 @@ export class OruloSyncService implements OnModuleInit {
       });
       if (connection?.ativo) {
         const token = await this.ensureClientToken(connection);
-        await this.pushPublicationLinks(token, buildingId, existing.id, false);
+        await this.pushPublicationLinks(token, buildingId, existing, false);
       }
     } catch (error) {
       this.logger.warn(
@@ -394,6 +395,21 @@ export class OruloSyncService implements OnModuleInit {
       existing._count.leads +
       existing._count.documentacoes +
       existing._count.propostas;
+    try {
+      const connection = await this.prisma.tenantOruloConnection.findUnique({
+        where: { tenantId },
+      });
+      if (connection?.ativo) {
+        const token = await this.ensureClientToken(connection);
+        await this.pushPublicationLinks(token, buildingId, existing, false);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Não foi possível despublicar #${buildingId}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
     if (linked > 0) {
       await this.prisma.empreendimento.update({
         where: { id: existing.id },
@@ -411,13 +427,20 @@ export class OruloSyncService implements OnModuleInit {
   private async pushPublicationLinks(
     token: string,
     buildingId: number,
-    empreendimentoId: string,
+    item: { id: string; nome: string; tenantId: string },
     active: boolean,
   ) {
     const frontend = oruloPublicOrigin(this.config.get<string>('FRONTEND_URL'));
     if (!frontend) return;
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: item.tenantId },
+      select: { slug: true },
+    });
+    const slug = tenant?.slug?.trim();
+    if (!slug) return;
+    const path = `/publico/empreendimento/${encodeURIComponent(slug)}/${slugifyPublico(item.nome)}`;
     await this.api.putPublicationLinks(token, buildingId, [
-      { url: `${frontend}/imoveis/${empreendimentoId}`, active },
+      { url: `${frontend}${path}`, active },
     ]);
   }
 
