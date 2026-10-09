@@ -3257,13 +3257,14 @@ model FinanceiroRecebimento {
   @@map("financeiro_recebimentos")
 }
 
-/// Comissão originada de uma documentação vendida.
+/// Comissão de uma venda da documentação, ou lançada direto para cliente ainda não cadastrado.
 model FinanceiroComissao {
   id              String                   @id @default(uuid())
   tenantId        String
   tenant          Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  documentacaoId  String
-  documentacao    Documentacao             @relation(fields: [documentacaoId], references: [id], onDelete: Restrict)
+  /// Vazio quando a comissão não veio de uma venda em Documentação.
+  documentacaoId  String?
+  documentacao    Documentacao?            @relation(fields: [documentacaoId], references: [id], onDelete: Restrict)
   corretorId      String
   corretorUsuario User                     @relation("ComissaoCorretor", fields: [corretorId], references: [id], onDelete: Restrict)
   gerenteId       String?

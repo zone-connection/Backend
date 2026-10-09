@@ -13,6 +13,7 @@ import {
   FinanceiroTituloTipo,
   Prisma,
   Role,
+  UserStatus,
 } from "@prisma/client";
 import { AuthenticatedUser } from "../common/types/authenticated-user";
 import {
@@ -23,7 +24,6 @@ import { resolveFinanceiroTenantId } from "../common/utils/tenant";
 import { isCorretorLike } from "../common/utils/roles";
 import { corretorTemVendaVinculada } from "../common/utils/corretor-venda";
 import { hasUserModule } from "../common/utils/user-permissions";
-import { DocumentacaoService } from "../documentacao/documentacao.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { calcularEncargosAtraso } from "./titulo-atraso";
 import { BaixarTituloDto } from "./dto/baixar-titulo.dto";
@@ -297,10 +297,7 @@ type FluxoEvento = {
 
 @Injectable()
 export class FinanceiroService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly documentacaoService: DocumentacaoService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   // ─── Parceiros ───────────────────────────────────────────────
 
@@ -1762,41 +1759,78 @@ export class FinanceiroService {
     requester: AuthenticatedUser,
   ) {
     this.assertComissaoWrite(requester);
+    const tenantId = resolveFinanceiroTenantId(requester);
     const clienteNome = dto.clienteNome.trim();
-    const doc = await this.documentacaoService.create(
-      {
-        nome: clienteNome,
-        fonte: "Comissão",
-        status1: "Aprovado",
-        status2: "Vendido",
-        corretorId: dto.corretorId,
-        construtoraId: dto.construtoraId || null,
-        empreendimentoId: dto.empreendimentoId || null,
-        dataVenda: dto.dataVenda,
-        vgv: dto.vgv,
+    const corretor = await this.prisma.user.findFirst({
+      where: {
+        id: dto.corretorId,
+        tenantId,
+        status: UserStatus.ativo,
+        role: {
+          in: [Role.corretor, Role.treinee, Role.admin, Role.gerente],
+        },
       },
-      requester,
-    );
-    return this.createComissao(
-      {
-        documentacaoId: doc.id,
-        dataPrevistaRecebimento: dto.dataPrevistaRecebimento,
-        percentualImobiliaria: dto.percentualImobiliaria,
-        percentualTributos: dto.percentualTributos,
-        percentualCorretor: dto.percentualCorretor,
-        percentualGerente: dto.percentualGerente,
-        percentualCaixa: dto.percentualCaixa,
-        percentualSocios: dto.percentualSocios,
-        status: dto.status,
-        valorPremiacao: dto.valorPremiacao,
-        percentualPremiacaoCorretor: dto.percentualPremiacaoCorretor,
-        percentualPremiacaoImposto: dto.percentualPremiacaoImposto,
-        percentualPremiacaoImobiliaria: dto.percentualPremiacaoImobiliaria,
-        percentualPremiacaoGerente: dto.percentualPremiacaoGerente,
-        observacao: dto.observacao,
+      select: {
+        id: true,
+        name: true,
+        equipeId: true,
+        equipe: {
+          select: {
+            name: true,
+            gerenteId: true,
+            gerente: { select: { name: true } },
+          },
+        },
       },
-      requester,
-    );
+    });
+    if (!corretor) {
+      throw new BadRequestException("Corretor inválido ou inativo.");
+    }
+
+    let empreendimento = "";
+    if (dto.empreendimentoId) {
+      const row = await this.prisma.empreendimento.findFirst({
+        where: { id: dto.empreendimentoId, tenantId },
+        select: { nome: true },
+      });
+      if (!row) {
+        throw new BadRequestException("Empreendimento inválido.");
+      }
+      empreendimento = row.nome;
+    }
+    if (dto.construtoraId) {
+      const row = await this.prisma.construtora.findFirst({
+        where: { id: dto.construtoraId, tenantId },
+        select: { id: true },
+      });
+      if (!row) {
+        throw new BadRequestException("Construtora inválida.");
+      }
+    }
+
+    const values = this.calculateComissao(dto.vgv, dto);
+    const premiacao = this.calculatePremiacao(dto);
+    const row = await this.prisma.financeiroComissao.create({
+      data: {
+        tenantId,
+        corretorId: corretor.id,
+        gerenteId: corretor.equipe?.gerenteId ?? null,
+        equipeId: corretor.equipeId,
+        corretor: corretor.name,
+        gerente: corretor.equipe?.gerente.name ?? "",
+        equipe: corretor.equipe?.name ?? "",
+        empreendimento,
+        cliente: clienteNome,
+        dataVenda: parseDayStart(dto.dataVenda),
+        dataPrevistaRecebimento: parseDayStart(dto.dataPrevistaRecebimento),
+        status: dto.status ?? FinanceiroComissaoStatus.pendente,
+        observacao: (dto.observacao ?? "").trim(),
+        ...values,
+        ...premiacao,
+      },
+    });
+    await this.syncTitulosDaComissao(row);
+    return this.mapComissao(row, requester);
   }
 
   async createTituloComissaoAvulsa(
