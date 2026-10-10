@@ -126,9 +126,15 @@ export class MetaOAuthService {
       client_id: this.appId(),
       redirect_uri: redirectUri,
       response_type: 'code',
-      scope: SCOPES,
       state,
+      auth_type: 'rerequest',
     });
+    const configId = this.config.get<string>('META_LOGIN_CONFIG_ID')?.trim();
+    if (configId) {
+      params.set('config_id', configId);
+    } else {
+      params.set('scope', SCOPES);
+    }
     return `https://www.facebook.com/${version}/dialog/oauth?${params.toString()}`;
   }
 

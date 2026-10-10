@@ -163,24 +163,92 @@ export class MetaGraphApiService {
   async listUserPages(userAccessToken: string): Promise<
     Array<{ id: string; name: string; access_token: string }>
   > {
-    const rows = await this.collectPages<{
+    const accounts = await this.collectPagesSafe<{
       id?: string;
       name?: string;
       access_token?: string;
-    }>(
-      'me/accounts',
-      'id,name,access_token',
+    }>('me/accounts', 'id,name,access_token', userAccessToken);
+    const fromBusinesses = await this.listPagesFromBusinesses(userAccessToken);
+    const merged = new Map<
+      string,
+      { id: string; name: string; access_token?: string }
+    >();
+    for (const row of [...accounts, ...fromBusinesses]) {
+      if (!row.id) continue;
+      const prev = merged.get(row.id);
+      merged.set(row.id, {
+        id: row.id,
+        name: row.name ?? prev?.name ?? row.id,
+        access_token: row.access_token || prev?.access_token,
+      });
+    }
+
+    const pages: Array<{ id: string; name: string; access_token: string }> = [];
+    for (const row of merged.values()) {
+      let token = row.access_token;
+      if (!token) {
+        token = await this.fetchPageAccessToken(row.id, userAccessToken);
+      }
+      if (!token) continue;
+      pages.push({ id: row.id, name: row.name, access_token: token });
+    }
+
+    this.logger.log(
+      `Páginas Meta me/accounts=${accounts.length} business=${fromBusinesses.length} utilizáveis=${pages.length}`,
+    );
+    return pages;
+  }
+
+  private async listPagesFromBusinesses(userAccessToken: string): Promise<
+    Array<{ id?: string; name?: string; access_token?: string }>
+  > {
+    const businesses = await this.collectPagesSafe<{ id?: string }>(
+      'me/businesses',
+      'id,name',
       userAccessToken,
     );
-    return rows
-      .filter((row): row is { id: string; name: string; access_token: string } =>
-        Boolean(row.id && row.access_token),
-      )
-      .map((row) => ({
-        id: row.id,
-        name: row.name ?? row.id,
-        access_token: row.access_token,
-      }));
+    const pages: Array<{ id?: string; name?: string; access_token?: string }> =
+      [];
+    for (const business of businesses) {
+      if (!business.id) continue;
+      for (const edge of ['owned_pages', 'client_pages'] as const) {
+        const rows = await this.collectPagesSafe<{
+          id?: string;
+          name?: string;
+          access_token?: string;
+        }>(
+          `${encodeURIComponent(business.id)}/${edge}`,
+          'id,name,access_token',
+          userAccessToken,
+        );
+        pages.push(...rows);
+      }
+    }
+    return pages;
+  }
+
+  private async fetchPageAccessToken(
+    pageId: string,
+    userAccessToken: string,
+  ): Promise<string | undefined> {
+    const version = this.graphVersion();
+    const url = new URL(
+      `https://graph.facebook.com/${version}/${encodeURIComponent(pageId)}`,
+    );
+    url.searchParams.set('fields', 'access_token');
+    url.searchParams.set('access_token', userAccessToken);
+    try {
+      const body = await this.graphGet<{
+        access_token?: string;
+        error?: { message?: string; code?: number };
+      }>(url);
+      return body.access_token;
+    } catch (err) {
+      this.logger.warn(
+        `Sem page token page_id=${pageId}: ${err instanceof Error ? err.message : err}`,
+      );
+      return undefined;
+    }
   }
 
   async listAdAccounts(userAccessToken: string): Promise<
@@ -253,6 +321,21 @@ export class MetaGraphApiService {
       throw new ServiceUnavailableException('META_APP_SECRET não configurado.');
     }
     return value;
+  }
+
+  private async collectPagesSafe<T extends { id?: string }>(
+    path: string,
+    fields: string,
+    accessToken: string,
+  ): Promise<T[]> {
+    try {
+      return await this.collectPages(path, fields, accessToken);
+    } catch (err) {
+      this.logger.warn(
+        `Graph ${path} falhou: ${err instanceof Error ? err.message : err}`,
+      );
+      return [];
+    }
   }
 
   private async collectPages<T extends { id?: string }>(
