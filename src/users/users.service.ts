@@ -77,6 +77,10 @@ export class UsersService {
     dto: CreateUserDto,
     requester: AuthenticatedUser,
   ): Promise<PublicUser> {
+    if (requester.role === Role.super_admin) {
+      return this.createPlatformSuperAdmin(dto);
+    }
+
     const tenantId = requireTenantId(requester);
 
     if (dto.role === Role.super_admin) {
@@ -266,6 +270,34 @@ export class UsersService {
     }
   }
 
+  private async createPlatformSuperAdmin(
+    dto: CreateUserDto,
+  ): Promise<PublicUser> {
+    if (dto.role !== Role.super_admin) {
+      throw new ForbiddenException(
+        'Na plataforma só é possível cadastrar outros super admins.',
+      );
+    }
+    const email = dto.email.toLowerCase().trim();
+    await this.ensureEmailIsAvailable(null, email);
+    return this.prisma.user.create({
+      data: {
+        tenantId: null,
+        name: dto.name.trim(),
+        email,
+        notifyEmail: this.requireNotifyEmail(dto.notifyEmail) ?? null,
+        password: await bcrypt.hash(dto.password, SALT_ROUNDS),
+        phone: dto.phone,
+        whatsapp: dto.whatsapp,
+        dataNascimento: parseDataNascimento(dto.dataNascimento) ?? null,
+        cargo: dto.cargo,
+        role: Role.super_admin,
+        status: dto.status ?? UserStatus.ativo,
+      },
+      select: publicUserSelect,
+    });
+  }
+
   private assertCanCreateRole(requester: AuthenticatedUser, role: Role) {
     if (requester.role === Role.admin) return;
 
@@ -434,6 +466,17 @@ export class UsersService {
     id: string,
     requester: AuthenticatedUser,
   ): Promise<PublicUser> {
+    if (requester.role === Role.super_admin) {
+      const platformUser = await this.prisma.user.findFirst({
+        where: { id, tenantId: null, role: Role.super_admin },
+        select: publicUserSelect,
+      });
+      if (!platformUser) {
+        throw new NotFoundException('Usuário não encontrado.');
+      }
+      return platformUser;
+    }
+
     const tenantId = requireTenantId(requester);
     const user = await this.prisma.user.findFirst({
       where: { id, tenantId },
@@ -453,6 +496,34 @@ export class UsersService {
     dto: UpdateUserDto,
     requester: AuthenticatedUser,
   ): Promise<PublicUser> {
+    if (requester.role === Role.super_admin) {
+      await this.ensurePlatformSuperAdmin(id);
+      const email = dto.email?.toLowerCase().trim();
+      if (email) {
+        await this.ensureEmailIsAvailable(null, email, id);
+      }
+      if (dto.role !== undefined && dto.role !== Role.super_admin) {
+        throw new ForbiddenException(
+          'Um super admin da plataforma não pode ter outro perfil.',
+        );
+      }
+      return this.prisma.user.update({
+        where: { id },
+        data: {
+          ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+          ...(email ? { email } : {}),
+          ...(dto.notifyEmail !== undefined
+            ? { notifyEmail: this.requireNotifyEmail(dto.notifyEmail) ?? null }
+            : {}),
+          ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
+          ...(dto.whatsapp !== undefined ? { whatsapp: dto.whatsapp } : {}),
+          ...(dto.cargo !== undefined ? { cargo: dto.cargo } : {}),
+          ...(dto.status !== undefined ? { status: dto.status } : {}),
+        },
+        select: publicUserSelect,
+      });
+    }
+
     const tenantId = requireTenantId(requester);
     await this.ensureExists(id, tenantId);
 
@@ -551,6 +622,28 @@ export class UsersService {
   }
 
   async remove(id: string, requester: AuthenticatedUser): Promise<void> {
+    if (requester.role === Role.super_admin) {
+      if (id === requester.id) {
+        throw new ForbiddenException('Você não pode excluir a própria conta.');
+      }
+      await this.ensurePlatformSuperAdmin(id);
+      const otherAdmins = await this.prisma.user.count({
+        where: {
+          tenantId: null,
+          role: Role.super_admin,
+          id: { not: id },
+          status: UserStatus.ativo,
+        },
+      });
+      if (otherAdmins === 0) {
+        throw new BadRequestException(
+          'Não é possível excluir o último super admin da plataforma.',
+        );
+      }
+      await this.prisma.user.delete({ where: { id } });
+      return;
+    }
+
     const tenantId = requireTenantId(requester);
     if (id === requester.id) {
       throw new ForbiddenException('Você não pode excluir a própria conta.');
@@ -624,6 +717,39 @@ export class UsersService {
     status: UserStatus,
     requester: AuthenticatedUser,
   ): Promise<PublicUser> {
+    if (requester.role === Role.super_admin) {
+      if (id === requester.id && status === UserStatus.inativo) {
+        throw new ForbiddenException('Você não pode inativar a própria conta.');
+      }
+      await this.ensurePlatformSuperAdmin(id);
+      if (status === UserStatus.inativo) {
+        const otherAdmins = await this.prisma.user.count({
+          where: {
+            tenantId: null,
+            role: Role.super_admin,
+            id: { not: id },
+            status: UserStatus.ativo,
+          },
+        });
+        if (otherAdmins === 0) {
+          throw new BadRequestException(
+            'Não é possível inativar o último super admin da plataforma.',
+          );
+        }
+        await this.presence.closeOpenSegments(id);
+      }
+      return this.prisma.user.update({
+        where: { id },
+        data: {
+          status,
+          ...(status === UserStatus.inativo
+            ? { hashedRefreshToken: null }
+            : { failedLoginAttempts: 0, lockedUntil: null }),
+        },
+        select: publicUserSelect,
+      });
+    }
+
     const tenantId = requireTenantId(requester);
     if (id === requester.id && status === UserStatus.inativo) {
       throw new ForbiddenException('Você não pode inativar a própria conta.');
@@ -722,6 +848,25 @@ export class UsersService {
     password: string | undefined,
     requester: AuthenticatedUser,
   ): Promise<{ user: PublicUser; temporaryPassword?: string }> {
+    if (requester.role === Role.super_admin) {
+      await this.ensurePlatformSuperAdmin(id);
+      const temporaryPassword = password ? undefined : this.generatePassword();
+      const finalPassword = password ?? temporaryPassword!;
+      const user = await this.prisma.user.update({
+        where: { id },
+        data: {
+          password: await bcrypt.hash(finalPassword, SALT_ROUNDS),
+          hashedRefreshToken: null,
+          passwordResetToken: null,
+          passwordResetExpires: null,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
+        select: publicUserSelect,
+      });
+      return { user, temporaryPassword };
+    }
+
     const tenantId = requireTenantId(requester);
     const target = await this.prisma.user.findFirst({
       where: { id, tenantId },
@@ -756,6 +901,10 @@ export class UsersService {
   private async teamUserFilter(
     requester: AuthenticatedUser,
   ): Promise<Prisma.UserWhereInput> {
+    if (requester.role === Role.super_admin) {
+      return { tenantId: null, role: Role.super_admin };
+    }
+
     const tenantId = requireTenantId(requester);
 
     if (requester.role === Role.admin) {
@@ -982,6 +1131,15 @@ export class UsersService {
     });
   }
 
+  private async ensurePlatformSuperAdmin(id: string): Promise<void> {
+    const count = await this.prisma.user.count({
+      where: { id, tenantId: null, role: Role.super_admin },
+    });
+    if (count === 0) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+  }
+
   private async ensureExists(id: string, tenantId: string): Promise<void> {
     const count = await this.prisma.user.count({ where: { id, tenantId } });
     if (count === 0) {
@@ -990,7 +1148,7 @@ export class UsersService {
   }
 
   private async ensureEmailIsAvailable(
-    tenantId: string,
+    tenantId: string | null,
     email: string,
     ignoreId?: string,
   ): Promise<void> {

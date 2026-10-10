@@ -98,6 +98,7 @@ export class CreateUserDto {
 
   @IsIn(
     [
+      Role.super_admin,
       Role.admin,
       Role.gerente,
       Role.corretor,

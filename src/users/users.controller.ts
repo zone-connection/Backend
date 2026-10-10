@@ -37,7 +37,7 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  @Roles(Role.admin, Role.gerente, Role.analista)
+  @Roles(Role.admin, Role.gerente, Role.analista, Role.super_admin)
   create(
     @Body() dto: CreateUserDto,
     @CurrentUser() requester: AuthenticatedUser,
@@ -76,7 +76,7 @@ export class UsersController {
   }
 
   @Get(':id')
-  @Roles(Role.admin, Role.gerente, Role.analista)
+  @Roles(Role.admin, Role.gerente, Role.analista, Role.super_admin)
   findOne(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() requester: AuthenticatedUser,
@@ -94,7 +94,7 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @Roles(Role.admin)
+  @Roles(Role.admin, Role.super_admin)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateUserDto,
@@ -104,7 +104,7 @@ export class UsersController {
   }
 
   @Patch(':id/status')
-  @Roles(Role.admin)
+  @Roles(Role.admin, Role.super_admin)
   updateStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateStatusDto,
@@ -114,7 +114,7 @@ export class UsersController {
   }
 
   @Patch(':id/reset-password')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   resetPassword(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ResetUserPasswordDto,
@@ -142,7 +142,7 @@ export class UsersController {
   }
 
   @Delete(':id')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
     @Param('id', ParseUUIDPipe) id: string,
