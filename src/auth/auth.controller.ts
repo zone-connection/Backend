@@ -1,12 +1,16 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Post,
   Req,
   Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
@@ -18,6 +22,7 @@ import {
   RequestContext,
   type ClientContext,
 } from '../common/decorators/request-context.decorator';
+import { AuthenticatedUser } from '../common/types/authenticated-user';
 import {
   clearAuthCookies,
   COOKIE,
@@ -25,16 +30,20 @@ import {
 } from '../common/utils/auth-cookies';
 import { THROTTLE } from '../config/security.constants';
 import { AuthService } from './auth.service';
+import { TurnstileService } from './turnstile.service';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateAppearanceDto } from './dto/update-appearance.dto';
+import { imageUploadInterceptor } from '../media/media.constants';
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly config: ConfigService,
+    private readonly turnstile: TurnstileService,
   ) {}
 
   @Public()
@@ -46,6 +55,8 @@ export class AuthController {
     @RequestContext() context: ClientContext,
     @Res({ passthrough: true }) res: Response,
   ) {
+    await this.turnstile.assertValid(dto.captchaToken, context.ip);
+
     const result = await this.authService.login(
       dto.email,
       dto.password,
@@ -53,15 +64,19 @@ export class AuthController {
       dto.tenantSlug,
     );
 
+    return this.sessionResponse(res, result);
+  }
+
+  private sessionResponse(
+    res: Response,
+    result: { accessToken: string; refreshToken: string; user: unknown },
+  ) {
     const csrfToken = randomBytes(32).toString('hex');
     setAuthCookies(res, this.config, {
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
       csrfToken,
     });
-
-    // Tokens JWT ficam só nos cookies httpOnly.
-    // csrfToken no body para frontends cross-origin (Vercel → Render).
     return { user: result.user, csrfToken };
   }
 
@@ -96,9 +111,37 @@ export class AuthController {
     clearAuthCookies(res, this.config);
   }
 
+  @Post('heartbeat')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async heartbeat(@CurrentUser() user: AuthenticatedUser) {
+    await this.authService.heartbeat(user.id, user.tenantId);
+  }
+
   @Get('me')
   me(@CurrentUser('id') userId: string) {
     return this.authService.me(userId);
+  }
+
+  @Patch('me')
+  updateMe(
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateAppearanceDto,
+  ) {
+    return this.authService.updateAppearance(userId, dto);
+  }
+
+  @Post('me/avatar')
+  @UseInterceptors(imageUploadInterceptor())
+  uploadAvatar(
+    @CurrentUser('id') userId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.authService.uploadAvatar(userId, file);
+  }
+
+  @Delete('me/avatar')
+  removeAvatar(@CurrentUser('id') userId: string) {
+    return this.authService.removeAvatar(userId);
   }
 
   @Throttle({ default: THROTTLE.changePassword })

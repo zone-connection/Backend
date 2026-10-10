@@ -3,14 +3,24 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AnaliseStatus, FunilEtapaPapel, Prisma, Role } from '@prisma/client';
+import {
+  AnaliseStatus,
+  FunilEtapaPapel,
+  Prisma,
+  Role,
+  TriagemOrigem,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { NotificacoesService } from '../notificacoes/notificacoes.service';
 import { FunisService } from '../funis/funis.service';
+import { LeadMonitoramentoService } from '../leads/monitoramento/lead-monitoramento.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import { isCorretorLike } from '../common/utils/roles';
 import { QueryAnaliseDto, UpdateAnaliseDto } from './dto/analise.dto';
+
+const BRASIL_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 const analiseSelect = {
   id: true,
@@ -50,6 +60,7 @@ const analiseSelect = {
         select: {
           id: true,
           name: true,
+          role: true,
           whatsapp: true,
           equipe: {
             select: {
@@ -73,15 +84,125 @@ export class AnaliseService {
     private readonly teamScope: TeamScopeService,
     private readonly notificacoes: NotificacoesService,
     private readonly funis: FunisService,
+    private readonly monitoramento: LeadMonitoramentoService,
   ) {}
 
   async list(query: QueryAnaliseDto, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
     await this.backfillMissing(requester);
+    const where = await this.buildListWhere(query, requester, tenantId);
+
+    return this.prisma.analise.findMany({
+      where,
+      select: analiseSelect,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Totais e ranking por corretor a partir das fichas reais de análise. */
+  async resumo(query: QueryAnaliseDto, requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    await this.backfillMissing(requester);
+    const where = await this.buildListWhere(query, requester, tenantId);
+
+    const vendaSlugs = await this.funis.getSlugsByPapel(
+      tenantId,
+      FunilEtapaPapel.venda,
+    );
+    const vendaSet = new Set(vendaSlugs);
+
+    const rows = await this.prisma.analise.findMany({
+      where,
+      select: {
+        status: true,
+        stageSituacao: true,
+        lead: {
+          select: {
+            stage: true,
+            corretorId: true,
+            corretor: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    const totais = {
+      emAnalise: 0,
+      aprovado: 0,
+      reprovado: 0,
+      vendidos: 0,
+    };
+    type RankingBucket = {
+      corretorId: string | null;
+      nome: string;
+      total: number;
+      emAnalise: number;
+      aprovados: number;
+      reprovados: number;
+      vendidos: number;
+    };
+    const byCorretor = new Map<string, RankingBucket>();
+
+    const isVendido = (stage: string, stageSituacao: string) =>
+      vendaSet.has(stage) || vendaSet.has(stageSituacao);
+
+    for (const row of rows) {
+      const vendido = isVendido(row.lead.stage, row.stageSituacao);
+      if (
+        row.status === AnaliseStatus.em_analise ||
+        row.status === AnaliseStatus.pendente
+      ) {
+        totais.emAnalise += 1;
+      } else if (row.status === AnaliseStatus.aprovado) {
+        totais.aprovado += 1;
+      } else if (row.status === AnaliseStatus.reprovado) {
+        totais.reprovado += 1;
+      }
+      if (vendido) totais.vendidos += 1;
+
+      const key = row.lead.corretorId ?? '__none__';
+      const bucket = byCorretor.get(key) ?? {
+        corretorId: row.lead.corretorId,
+        nome: row.lead.corretor?.name ?? 'Sem corretor',
+        total: 0,
+        emAnalise: 0,
+        aprovados: 0,
+        reprovados: 0,
+        vendidos: 0,
+      };
+      bucket.total += 1;
+      if (
+        row.status === AnaliseStatus.em_analise ||
+        row.status === AnaliseStatus.pendente
+      ) {
+        bucket.emAnalise += 1;
+      } else if (row.status === AnaliseStatus.aprovado) {
+        bucket.aprovados += 1;
+      } else if (row.status === AnaliseStatus.reprovado) {
+        bucket.reprovados += 1;
+      }
+      if (vendido) bucket.vendidos += 1;
+      byCorretor.set(key, bucket);
+    }
+
+    const ranking = [...byCorretor.values()].sort(
+      (a, b) => b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'),
+    );
+
+    return { totais, ranking, vendaSlugs };
+  }
+
+  private async buildListWhere(
+    query: QueryAnaliseDto,
+    requester: AuthenticatedUser,
+    tenantId: string,
+  ): Promise<Prisma.AnaliseWhereInput> {
+    const isGlobal =
+      requester.role === Role.admin || requester.role === Role.analista;
 
     const leadFilter: Prisma.LeadWhereInput = {
       perdidoAt: null,
-      ...(await this.teamScope.leadScope(requester)),
+      ...(isGlobal ? {} : await this.teamScope.leadScope(requester)),
     };
 
     if (query.corretorId) {
@@ -90,20 +211,61 @@ export class AnaliseService {
         query.corretorId,
       );
       if (!allowed) {
-        return [];
+        return { id: '__none__' };
       }
       leadFilter.corretorId = query.corretorId;
     }
 
-    return this.prisma.analise.findMany({
-      where: {
-        tenantId,
-        lead: leadFilter,
-        ...(query.status ? { status: query.status as AnaliseStatus } : {}),
-      },
-      select: analiseSelect,
-      orderBy: { createdAt: 'desc' },
-    });
+    const mesRange = this.mesRange(query.mes);
+    const mesAtual = this.mesAtualBrasil();
+    const mesEhAtual = Boolean(query.mes && query.mes === mesAtual);
+
+    const mesWhere: Prisma.AnaliseWhereInput | undefined = mesRange
+      ? {
+          OR: [
+            {
+              status: { in: [AnaliseStatus.aprovado, AnaliseStatus.reprovado] },
+              updatedAt: { gte: mesRange.gte, lt: mesRange.lt },
+            },
+            mesEhAtual
+              ? {
+                  status: {
+                    in: [AnaliseStatus.pendente, AnaliseStatus.em_analise],
+                  },
+                }
+              : {
+                  status: {
+                    in: [AnaliseStatus.pendente, AnaliseStatus.em_analise],
+                  },
+                  createdAt: { gte: mesRange.gte, lt: mesRange.lt },
+                },
+          ],
+        }
+      : undefined;
+
+    return {
+      tenantId,
+      lead: leadFilter,
+      ...(query.status ? { status: query.status as AnaliseStatus } : {}),
+      ...(mesWhere ?? {}),
+    };
+  }
+
+  private mesAtualBrasil(): string {
+    const dataBrasil = new Date(Date.now() - BRASIL_UTC_OFFSET_MS);
+    const mes = String(dataBrasil.getUTCMonth() + 1).padStart(2, '0');
+    return `${dataBrasil.getUTCFullYear()}-${mes}`;
+  }
+
+  private mesRange(mes?: string): { gte: Date; lt: Date } | null {
+    if (!mes || !/^\d{4}-\d{2}$/.test(mes)) return null;
+    const [ano, mesNum] = mes.split('-').map(Number);
+    const inicioLocal = new Date(Date.UTC(ano, mesNum - 1, 1));
+    const fimLocal = new Date(Date.UTC(ano, mesNum, 1));
+    return {
+      gte: new Date(inicioLocal.getTime() + BRASIL_UTC_OFFSET_MS),
+      lt: new Date(fimLocal.getTime() + BRASIL_UTC_OFFSET_MS),
+    };
   }
 
   async findOne(id: string, requester: AuthenticatedUser) {
@@ -137,7 +299,7 @@ export class AnaliseService {
       );
     }
 
-    return this.prisma.analise.update({
+    const updated = await this.prisma.analise.update({
       where: { id },
       data: {
         status: AnaliseStatus.em_analise,
@@ -145,6 +307,8 @@ export class AnaliseService {
       },
       select: analiseSelect,
     });
+
+    return updated;
   }
 
   async update(
@@ -204,28 +368,132 @@ export class AnaliseService {
     if (
       statusChanged &&
       (newStatus === AnaliseStatus.aprovado ||
-        newStatus === AnaliseStatus.reprovado) &&
-      existing.lead.corretorId &&
-      existing.lead.corretorId !== requester.id
+        newStatus === AnaliseStatus.reprovado)
     ) {
-      await this.notificacoes.createAnaliseResultado({
-        userId: existing.lead.corretorId,
-        leadId: existing.leadId,
-        analiseId: updated.id,
-        nomeProcesso: updated.nome,
-        status: newStatus,
-        parecer: updated.parecer,
-      });
+      if (newStatus === AnaliseStatus.aprovado) {
+        await this.leaveAnaliseAfterParecer(
+          tenantId,
+          existing.leadId,
+          requester.id,
+          newStatus,
+        );
+      }
+
+      const notifyIds = new Set<string>();
+      if (
+        existing.lead.corretorId &&
+        existing.lead.corretorId !== requester.id
+      ) {
+        notifyIds.add(existing.lead.corretorId);
+      }
+      if (existing.lead.corretorId) {
+        const gerenteId = await this.resolveGerenteOfCorretor(
+          existing.lead.corretorId,
+          tenantId,
+        );
+        if (gerenteId && gerenteId !== requester.id) {
+          notifyIds.add(gerenteId);
+        }
+      }
+      await Promise.all(
+        [...notifyIds].map((userId) =>
+          this.notificacoes.createAnaliseResultado({
+            userId,
+            leadId: existing.leadId,
+            analiseId: updated.id,
+            nomeProcesso: updated.nome,
+            status: newStatus,
+            parecer: updated.parecer,
+          }),
+        ),
+      );
     }
 
     return updated;
+  }
+
+  /** Tira o lead da etapa Em análise após parecer aprovado. Reprovado fica até dar perda. */
+  private async leaveAnaliseAfterParecer(
+    tenantId: string,
+    leadId: string,
+    autorId: string,
+    analiseStatus: typeof AnaliseStatus.aprovado | typeof AnaliseStatus.reprovado,
+  ) {
+    const analiseSlugs = await this.funis.getSlugsByPapel(
+      tenantId,
+      FunilEtapaPapel.analise,
+    );
+
+    if (analiseSlugs.length === 0) return;
+
+    const lead = await this.prisma.lead.findFirst({
+      where: {
+        id: leadId,
+        tenantId,
+        perdidoAt: null,
+        stage: { in: analiseSlugs },
+      },
+      select: { id: true, stage: true },
+    });
+    if (!lead) return;
+
+    const lastEntry = await this.prisma.triagemEvent.findFirst({
+      where: {
+        leadId,
+        stageNovo: { in: analiseSlugs },
+        stageAnterior: { not: null },
+        NOT: { stageAnterior: { in: analiseSlugs } },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { stageAnterior: true },
+    });
+
+    const targetStage = lastEntry?.stageAnterior ?? null;
+    // Sem etapa anterior, não empurra o card para a primeira coluna do funil.
+    if (!targetStage || analiseSlugs.includes(targetStage)) return;
+
+    const parecerLabel =
+      analiseStatus === AnaliseStatus.aprovado ? 'aprovado' : 'reprovado';
+    const now = new Date();
+    const timing = await this.monitoramento.stageChangeData(
+      tenantId,
+      targetStage,
+      now,
+    );
+    await this.prisma.$transaction([
+      this.prisma.lead.update({
+        where: { id: leadId },
+        data: { stage: targetStage, ...timing, lastTriagemAt: now },
+      }),
+      this.prisma.triagemEvent.create({
+        data: {
+          leadId,
+          autorId,
+          texto: `Parecer ${parecerLabel} na análise — saiu da etapa Em análise.`,
+          stageAnterior: lead.stage,
+          stageNovo: targetStage,
+          origem: TriagemOrigem.funil,
+        },
+      }),
+    ]);
   }
 
   /**
    * Cria a ficha de análise ao entrar na etapa com papel análise (idempotente).
    * Usa snapshot do lead + última documentação, se houver.
    */
-  async ensureForLead(leadId: string, autorId: string, tenantId: string) {
+  async ensureForLead(
+    leadId: string,
+    autorId: string,
+    tenantId: string,
+    finance?: {
+      temEntrada?: boolean;
+      valorEntrada?: number | null;
+      temFgts?: boolean;
+      valorFgts?: number | null;
+      temDependente?: boolean;
+    },
+  ) {
     const existing = await this.prisma.analise.findUnique({
       where: { leadId },
       select: { id: true },
@@ -252,7 +520,14 @@ export class AnaliseService {
         documentacoes: {
           orderBy: { createdAt: 'desc' },
           take: 1,
-          select: { nome: true },
+          select: {
+            nome: true,
+            temEntrada: true,
+            valorEntrada: true,
+            temFgts: true,
+            valorFgts: true,
+            temDependente: true,
+          },
         },
       },
     });
@@ -262,6 +537,10 @@ export class AnaliseService {
     }
 
     const doc = lead.documentacoes[0];
+    const temEntrada = finance?.temEntrada ?? doc?.temEntrada ?? false;
+    const temFgts = finance?.temFgts ?? doc?.temFgts ?? false;
+    const temDependente =
+      finance?.temDependente ?? doc?.temDependente ?? false;
 
     try {
       return await this.prisma.analise.create({
@@ -281,12 +560,16 @@ export class AnaliseService {
           prioridade: lead.prioridade,
           renda: lead.renda ?? null,
           tags: lead.tags ?? [],
-          temFgts: false,
-          valorFgts: null,
-          temEntrada: false,
-          valorEntrada: null,
-          temDependente: false,
-          status: AnaliseStatus.pendente,
+          temFgts,
+          valorFgts: temFgts
+            ? (finance?.valorFgts ?? doc?.valorFgts ?? null)
+            : null,
+          temEntrada,
+          valorEntrada: temEntrada
+            ? (finance?.valorEntrada ?? doc?.valorEntrada ?? null)
+            : null,
+          temDependente,
+          status: AnaliseStatus.em_analise,
         },
         select: { id: true },
       });
@@ -306,27 +589,37 @@ export class AnaliseService {
 
   private async backfillMissing(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    const leadScope = await this.teamScope.leadScope(requester);
-    const analiseSlug = await this.funis.getSlugByPapel(
+    const analiseSlugs = await this.funis.getSlugsByPapel(
       tenantId,
       FunilEtapaPapel.analise,
     );
-    if (!analiseSlug) return;
 
-    const leads = await this.prisma.lead.findMany({
-      where: {
-        perdidoAt: null,
-        stage: analiseSlug,
-        analise: null,
-        ...leadScope,
-      },
-      select: { id: true, corretorId: true },
-      take: 50,
-    });
+    const isGlobal =
+      requester.role === Role.admin || requester.role === Role.analista;
+    const leadScope = isGlobal
+      ? { tenantId }
+      : await this.teamScope.leadScope(requester);
 
-    for (const lead of leads) {
-      const autorId = lead.corretorId ?? requester.id;
-      await this.ensureForLead(lead.id, autorId, tenantId);
+    const pendingIds = new Map<string, string>();
+
+    if (analiseSlugs.length > 0) {
+      const leads = await this.prisma.lead.findMany({
+        where: {
+          perdidoAt: null,
+          stage: { in: analiseSlugs },
+          analise: null,
+          ...leadScope,
+        },
+        select: { id: true, corretorId: true },
+        take: 200,
+      });
+      for (const lead of leads) {
+        pendingIds.set(lead.id, lead.corretorId ?? requester.id);
+      }
+    }
+
+    for (const [leadId, autorId] of pendingIds) {
+      await this.ensureForLead(leadId, autorId, tenantId);
     }
   }
 
@@ -348,7 +641,7 @@ export class AnaliseService {
       throw new NotFoundException('Análise não encontrada.');
     }
 
-    if (requester.role === Role.corretor) {
+    if (isCorretorLike(requester.role)) {
       throw new NotFoundException('Análise não encontrada.');
     }
 
@@ -361,5 +654,16 @@ export class AnaliseService {
     }
 
     return lead;
+  }
+
+  private async resolveGerenteOfCorretor(
+    corretorId: string,
+    tenantId: string,
+  ): Promise<string | null> {
+    const corretor = await this.prisma.user.findFirst({
+      where: { id: corretorId, tenantId },
+      select: { equipe: { select: { gerenteId: true } } },
+    });
+    return corretor?.equipe?.gerenteId ?? null;
   }
 }

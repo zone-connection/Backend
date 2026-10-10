@@ -20,7 +20,7 @@ import { MetasService } from './metas.service';
 
 @Controller('metas')
 @UseGuards(RolesGuard)
-@Roles(Role.admin, Role.gerente, Role.corretor)
+@Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.super_admin)
 export class MetasController {
   constructor(private readonly metasService: MetasService) {}
 
