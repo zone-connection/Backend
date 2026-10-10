@@ -10,7 +10,6 @@ import type { UserPermissions } from '../../common/utils/user-permissions';
 import { sanitizeUserPermissions } from '../../common/utils/user-permissions';
 import { applyPlanoModules } from '../../tenants/tenant-plan';
 import { PrismaService } from '../../prisma/prisma.service';
-import { roleNeedsTotp } from '../totp';
 
 export interface JwtPayload {
   sub: string;
@@ -60,8 +59,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     }
     if (
       (payload as { kind?: string }).kind === 'portal_proprietario' ||
-      (payload as { kind?: string }).kind === 'portal_parceiro' ||
-      (payload as { kind?: string }).kind === 'totp_pending'
+      (payload as { kind?: string }).kind === 'portal_parceiro'
     ) {
       throw new UnauthorizedException('Sessão inválida.');
     }
@@ -80,19 +78,12 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         financeiroCanEdit: true,
         financeiroCanDelete: true,
         permissions: true,
-        totpEnabledAt: true,
         tenant: { select: { plano: true, modules: true, status: true } },
       },
     });
 
     if (!row || row.status !== UserStatus.ativo) {
       throw new UnauthorizedException('Sessão inválida.');
-    }
-
-    if (roleNeedsTotp(row.role) && !row.totpEnabledAt) {
-      throw new UnauthorizedException(
-        'Cadastre o autenticador para continuar como administrador.',
-      );
     }
 
     if (

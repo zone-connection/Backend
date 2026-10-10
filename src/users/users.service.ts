@@ -772,52 +772,6 @@ export class UsersService {
     });
   }
 
-  async resetTwoFactor(
-    id: string,
-    requester: AuthenticatedUser,
-  ): Promise<PublicUser> {
-    if (id === requester.id) {
-      throw new ForbiddenException(
-        'Peça a outro administrador para desbloquear o seu 2FA.',
-      );
-    }
-    const target =
-      requester.role === Role.super_admin
-        ? await this.prisma.user.findUnique({
-            where: { id },
-            select: { ...publicUserSelect, totpEnabledAt: true },
-          })
-        : await this.prisma.user.findFirst({
-            where: { id, tenantId: requireTenantId(requester) },
-            select: { ...publicUserSelect, totpEnabledAt: true },
-          });
-    if (!target) {
-      throw new NotFoundException('Usuário não encontrado.');
-    }
-    if (target.role !== Role.admin && target.role !== Role.super_admin) {
-      throw new ForbiddenException(
-        'Este perfil não usa verificação em duas etapas.',
-      );
-    }
-    if (
-      requester.role === Role.admin &&
-      target.role === Role.super_admin
-    ) {
-      throw new ForbiddenException('Acesso negado.');
-    }
-
-    return this.prisma.user.update({
-      where: { id },
-      data: {
-        totpSecret: null,
-        totpEnabledAt: null,
-        totpBackupHashes: [],
-        totpTicketNonce: null,
-      },
-      select: publicUserSelect,
-    });
-  }
-
   /** Libera manualmente uma conta bloqueada por excesso de tentativas. */
   async unlock(
     id: string,

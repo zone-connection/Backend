@@ -32,7 +32,6 @@ import { THROTTLE } from '../config/security.constants';
 import { AuthService } from './auth.service';
 import { TurnstileService } from './turnstile.service';
 import { LoginDto } from './dto/login.dto';
-import { TotpCodeDto, TotpTicketDto, TotpVerifyDto } from './dto/totp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -65,68 +64,7 @@ export class AuthController {
       dto.tenantSlug,
     );
 
-    if ('twoFactor' in result) {
-      return result;
-    }
-
     return this.sessionResponse(res, result);
-  }
-
-  @Public()
-  @Throttle({ default: THROTTLE.login })
-  @Post('login/2fa')
-  @HttpCode(HttpStatus.OK)
-  async loginTwoFactor(
-    @Body() dto: TotpVerifyDto,
-    @RequestContext() context: ClientContext,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const result = await this.authService.verifyTotpLogin(
-      dto.ticket,
-      dto.code,
-      context,
-    );
-    return this.sessionResponse(res, result);
-  }
-
-  @Public()
-  @Throttle({ default: THROTTLE.login })
-  @Post('2fa/setup')
-  @HttpCode(HttpStatus.OK)
-  startTotpSetup(@Body() dto: TotpTicketDto) {
-    return this.authService.startTotpSetup(dto.ticket);
-  }
-
-  @Public()
-  @Throttle({ default: THROTTLE.login })
-  @Post('2fa/enable')
-  @HttpCode(HttpStatus.OK)
-  async enableTotp(
-    @Body() dto: TotpVerifyDto,
-    @RequestContext() context: ClientContext,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const result = await this.authService.enableTotp(
-      dto.ticket,
-      dto.code,
-      context,
-    );
-    const session = this.sessionResponse(res, result);
-    return { ...session, backupCodes: result.backupCodes };
-  }
-
-  @Throttle({ default: THROTTLE.changePassword })
-  @Post('2fa/backup-codes')
-  @HttpCode(HttpStatus.OK)
-  async regenerateBackupCodes(
-    @CurrentUser('id') userId: string,
-    @Body() dto: TotpCodeDto,
-  ) {
-    const backupCodes = await this.authService.regenerateBackupCodes(
-      userId,
-      dto.code,
-    );
-    return { backupCodes };
   }
 
   private sessionResponse(

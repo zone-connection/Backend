@@ -378,12 +378,6 @@ model User {
   passwordResetToken   String?
   passwordResetExpires DateTime?
 
-  /// Segredo TOTP cifrado (admin / super_admin).
-  totpSecret       String?
-  totpEnabledAt    DateTime?
-  totpBackupHashes String[] @default([])
-  totpTicketNonce  String?
-
   // Carteira de leads/clientes atribuídos a este corretor.
   leads Lead[] @relation("LeadCorretor")
 
@@ -3017,6 +3011,7 @@ enum FinanceiroMovimentoTipo {
 }
 
 enum FinanceiroComissaoStatus {
+  rascunho
   pendente
   liberada
   paga
