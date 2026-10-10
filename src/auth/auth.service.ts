@@ -881,6 +881,7 @@ export class AuthService {
       lastLoginAt: user.lastLoginAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+      totpEnabledAt: user.totpEnabledAt,
       totpEnabled: Boolean(user.totpEnabledAt),
       temVendaVinculada: await this.resolveTemVendaVinculada(user),
       tenant: tenant
