@@ -34,11 +34,22 @@ import { oruloPublicOrigin } from './orulo-frontend-origin';
 import { extractOruloBuildingIds, oruloTotalPages } from './orulo-ids';
 import type { OruloWebhookPayload } from './orulo-api.types';
 import { slugifyPublico } from '../empreendimentos/empreendimentos.service';
+import {
+  isOruloRemoval,
+  routeOruloWebhook,
+} from './orulo-webhook-policy';
+
+/** Janela em que o mesmo aviso não é processado de novo. A Órulo deduplica em ~5 min. */
+const WEBHOOK_DEDUPE_MS = 3 * 60 * 1000;
+/** Teto de conferências em andamento. O excedente fica para a reconciliação. */
+const WEBHOOK_MAX_PENDING = 400;
 
 @Injectable()
 export class OruloSyncService implements OnModuleInit {
   private readonly logger = new Logger(OruloSyncService.name);
   private ticking = false;
+  private pendingWebhooks = 0;
+  private readonly seenWebhooks = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -57,15 +68,60 @@ export class OruloSyncService implements OnModuleInit {
   async handleWebhook(payload: OruloWebhookPayload) {
     const buildingId = Number(payload.properties?.building_id);
     const status = String(payload.properties?.status ?? '').trim();
-    const clientId = payload.properties?.client_id?.trim();
-    if (!Number.isFinite(buildingId) || !status) {
+    const clientId = payload.properties?.client_id?.trim() || undefined;
+    if (!Number.isFinite(buildingId) || buildingId <= 0 || !status) {
       this.logger.warn('Webhook Órulo sem building_id ou status.');
       return { ok: true };
     }
 
-    const connections = await this.connectionsForEvent(clientId);
+    const route = routeOruloWebhook({ status, clientId });
+    if (route === 'ignore') {
+      this.logger.warn(
+        `Webhook Órulo ignorado (status=${status}, client_id=${clientId ? 'sim' : 'não'}).`,
+      );
+      return { ok: true };
+    }
+
+    const dedupeKey = `${status}:${buildingId}:${clientId ?? '*'}`;
+    if (this.seenWebhookRecently(dedupeKey)) {
+      return { ok: true };
+    }
+
+    let connections =
+      route === 'distribution'
+        ? await this.connectionsForEvent(clientId)
+        : await this.connectionsForEvent(undefined);
+
+    if (isOruloRemoval(status) && connections.length > 0) {
+      const local = await this.prisma.empreendimento.findMany({
+        where: {
+          oruloBuildingId: buildingId,
+          tenantId: { in: connections.map((item) => item.tenantId) },
+        },
+        select: { tenantId: true },
+      });
+      const tenants = new Set(local.map((item) => item.tenantId));
+      connections = connections.filter((item) => tenants.has(item.tenantId));
+    }
+
+    if (connections.length === 0) return { ok: true };
+
+    if (this.pendingWebhooks + connections.length > WEBHOOK_MAX_PENDING) {
+      this.forgetWebhook(dedupeKey);
+      this.logger.warn(
+        `Fila do webhook Órulo cheia — #${buildingId} fica para a reconciliação.`,
+      );
+      return { ok: true };
+    }
+
+    this.pendingWebhooks += connections.length;
     setImmediate(() => {
-      void this.processEvent(connections, buildingId, status);
+      void this.processEvent(connections, buildingId, status).finally(() => {
+        this.pendingWebhooks = Math.max(
+          0,
+          this.pendingWebhooks - connections.length,
+        );
+      });
     });
     return { ok: true };
   }
@@ -165,15 +221,22 @@ export class OruloSyncService implements OnModuleInit {
     for (const connection of connections) {
       try {
         const row = await this.requireConnection(connection.id);
+        if (isOruloRemoval(status)) {
+          const gone = await this.confirmBuildingGone(row, buildingId);
+          if (!gone) {
+            this.logger.warn(
+              `Órulo ${status} #${buildingId} tenant ${row.tenantId} ignorado: a API ainda lista o empreendimento.`,
+            );
+            continue;
+          }
+          if (status === 'removed') {
+            await this.softRemove(row.tenantId, buildingId);
+          } else {
+            await this.hardRemove(row.tenantId, buildingId);
+          }
+          continue;
+        }
         const token = await this.ensureClientToken(row);
-        if (status === 'removed') {
-          await this.softRemove(row.tenantId, buildingId);
-          continue;
-        }
-        if (status === 'excluded_from_distribution') {
-          await this.hardRemove(row.tenantId, buildingId);
-          continue;
-        }
         if (status === 'active' || status === 'added_to_distribution') {
           await this.upsertBuilding(row.tenantId, token, buildingId, false);
         }
@@ -485,6 +548,74 @@ export class OruloSyncService implements OnModuleInit {
     const min = String(safe.getUTCMinutes()).padStart(2, '0');
     const ss = String(safe.getUTCSeconds()).padStart(2, '0');
     return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+  }
+
+  /**
+   * Remoção só acontece se a própria Órulo deixar de devolver o empreendimento
+   * para essa credencial (404). Aviso forjado, com o imóvel ainda no catálogo,
+   * não desativa nem apaga. Falha de rede ou token também não apaga: a
+   * reconciliação diária cobre o evento verdadeiro.
+   */
+  private async confirmBuildingGone(
+    connection: {
+      id: string;
+      clientId: string;
+      clientSecret: string;
+      accessToken: string | null;
+    },
+    buildingId: number,
+  ): Promise<boolean> {
+    const missing = async (token: string) => {
+      try {
+        await this.api.getBuilding(token, buildingId);
+        return false;
+      } catch (error) {
+        if (error instanceof OruloApiError && error.status === 404) return true;
+        throw error;
+      }
+    };
+
+    try {
+      return await missing(await this.ensureClientToken(connection));
+    } catch (error) {
+      if (error instanceof OruloApiError && error.status === 401) {
+        try {
+          return await missing(await this.refreshClientToken(connection));
+        } catch (retry) {
+          if (retry instanceof OruloApiError && retry.status === 404) return true;
+          this.logger.warn(
+            `Órulo não confirmou a remoção #${buildingId}: ${
+              retry instanceof Error ? retry.message : retry
+            }`,
+          );
+          return false;
+        }
+      }
+      this.logger.warn(
+        `Órulo não confirmou a remoção #${buildingId}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+      return false;
+    }
+  }
+
+  private seenWebhookRecently(key: string): boolean {
+    const now = Date.now();
+    const previous = this.seenWebhooks.get(key);
+    if (previous !== undefined && now - previous < WEBHOOK_DEDUPE_MS) {
+      return true;
+    }
+    this.seenWebhooks.set(key, now);
+    if (this.seenWebhooks.size > 2000) {
+      const oldest = this.seenWebhooks.keys().next().value;
+      if (oldest !== undefined) this.seenWebhooks.delete(oldest);
+    }
+    return false;
+  }
+
+  private forgetWebhook(key: string) {
+    this.seenWebhooks.delete(key);
   }
 
   private async connectionsForEvent(clientId?: string) {
