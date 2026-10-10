@@ -25,6 +25,10 @@ import {
   catalogoFromTipologias,
   normalizeEmpreendimentoVitrine,
 } from "./empreendimento-vitrine";
+import {
+  CAPTACAO_IMOVEL_TIPO_LABEL,
+  imovelTitulo,
+} from "../captacao/captacao.constants";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -140,7 +144,17 @@ export class EmpreendimentosService {
       select: this.publicSelect(),
     });
     if (!item) throw new NotFoundException("Empreendimento não encontrado.");
-    return this.presentPublic(item);
+    const vinculados = await this.prisma.imovel.findMany({
+      where: { empreendimentoId: item.id, tenantId: item.tenantId },
+      select: this.publicImovelSelect(),
+      orderBy: { updatedAt: "desc" },
+    });
+    return {
+      ...this.presentPublic(item),
+      imoveis: vinculados.map((row) =>
+        this.presentPublicImovel(row, item.tenant.slug),
+      ),
+    };
   }
 
   async findPublicBySlug(tenantSlug: string, slug: string) {
@@ -157,6 +171,94 @@ export class EmpreendimentosService {
     const hit = rows.find((row) => slugifyPublico(row.nome) === slug);
     if (!hit) throw new NotFoundException("Empreendimento não encontrado.");
     return this.findPublic(hit.id);
+  }
+
+  async listPublicCatalog(tenantSlug: string) {
+    const tenant = await this.requirePublicTenant(tenantSlug);
+    const [empreendimentos, imoveis] = await Promise.all([
+      this.prisma.empreendimento.findMany({
+        where: { tenantId: tenant.id, ativo: true },
+        select: this.publicSelect(),
+        orderBy: { nome: "asc" },
+      }),
+      this.prisma.imovel.findMany({
+        where: {
+          tenantId: tenant.id,
+          empreendimentoId: { not: null },
+        },
+        select: this.publicImovelSelect(),
+        orderBy: { updatedAt: "desc" },
+      }),
+    ]);
+    return {
+      tenantSlug: tenant.slug,
+      imobiliaria: tenant.name,
+      empreendimentos: empreendimentos
+        .filter((row) => !row.externalKey.startsWith("captacao-imovel-"))
+        .map((row) => this.presentPublicCard(row)),
+      imoveis: imoveis.map((row) => this.presentPublicImovel(row, tenant.slug)),
+    };
+  }
+
+  async findPublicImovel(tenantSlug: string, id: string) {
+    if (!UUID_RE.test(id)) {
+      throw new NotFoundException("Imóvel não encontrado.");
+    }
+    const tenant = await this.requirePublicTenant(tenantSlug);
+    const item = await this.prisma.imovel.findFirst({
+      where: {
+        id,
+        tenantId: tenant.id,
+        empreendimentoId: { not: null },
+      },
+      select: this.publicImovelSelect(),
+    });
+    if (!item) throw new NotFoundException("Imóvel não encontrado.");
+    return this.presentPublicImovel(item, tenant.slug);
+  }
+
+  private async requirePublicTenant(tenantSlug: string) {
+    const tenant = await this.prisma.tenant.findFirst({
+      where: { slug: tenantSlug, status: "ativo" },
+      select: { id: true, slug: true, name: true },
+    });
+    if (!tenant) throw new NotFoundException("Catálogo não encontrado.");
+    return tenant;
+  }
+
+  private publicImovelSelect() {
+    return {
+      id: true,
+      tipo: true,
+      logradouro: true,
+      numero: true,
+      complemento: true,
+      bairro: true,
+      cidade: true,
+      estado: true,
+      area: true,
+      quartos: true,
+      suites: true,
+      banheiros: true,
+      vagas: true,
+      fotoUrl: true,
+      fotos: {
+        select: { url: true, sortOrder: true },
+        orderBy: { sortOrder: "asc" as const },
+      },
+      empreendimento: {
+        select: {
+          id: true,
+          nome: true,
+          status: true,
+          tipo: true,
+          cidade: true,
+        },
+      },
+      vendaUsado: {
+        select: { status: true, precoVenda: true },
+      },
+    } as const;
   }
 
   private publicSelect() {
@@ -194,7 +296,10 @@ export class EmpreendimentosService {
     },
   ) {
     const stored = resolveEmpreendimentoImages(item);
+    const vitrine = normalizeEmpreendimentoVitrine(item.vitrine);
     return {
+      kind: "empreendimento" as const,
+      id: item.id,
       nome: item.nome,
       cidade: item.cidade,
       endereco: item.endereco,
@@ -205,13 +310,16 @@ export class EmpreendimentosService {
         : null,
       quartos: item.quartos,
       banheiros: item.banheiros,
+      suites: vitrine?.suites ?? null,
       vagas: item.vagas,
       valorReferencia: item.valorReferencia,
+      valor: item.valorReferencia,
       areaM2: item.areaM2,
+      badge: item.status?.trim() || "Empreendimento",
       imagens: stored.slice(0, 15).map((image) => image.largeUrl || image.url),
       localidade: item.localidade?.nome ?? null,
       construtora: item.construtora?.nome ?? null,
-      vitrine: normalizeEmpreendimentoVitrine(item.vitrine),
+      vitrine,
       imobiliaria: item.tenant.name,
       tenantSlug: item.tenant.slug,
       slug: slugifyPublico(item.nome),
@@ -222,6 +330,90 @@ export class EmpreendimentosService {
       imobiliariaCidade: item.tenant.cidade || null,
       creci: item.tenant.creci || null,
       cor: item.tenant.primaryColor || item.cor,
+    };
+  }
+
+  private presentPublicCard(
+    item: EmpreendimentoRow & {
+      tenant: { name: string; slug: string };
+    },
+  ) {
+    const stored = resolveEmpreendimentoImages(item);
+    const imagens = stored.slice(0, 15).map((image) => image.largeUrl || image.url);
+    const vitrine = normalizeEmpreendimentoVitrine(item.vitrine);
+    const valor =
+      item.valorReferencia ??
+      vitrine?.tipologias
+        .map((row) => row.valor)
+        .filter((value): value is number => value != null)
+        .sort((a, b) => a - b)[0] ??
+      null;
+    return {
+      kind: "empreendimento" as const,
+      id: item.id,
+      slug: slugifyPublico(item.nome),
+      nome: item.nome,
+      cidade: item.cidade,
+      endereco: item.endereco,
+      localidade: item.localidade?.nome ?? null,
+      tipo: item.tipo,
+      status: item.status,
+      badge: item.status?.trim() || "Empreendimento",
+      quartos: item.quartos,
+      banheiros: item.banheiros,
+      suites: vitrine?.suites ?? null,
+      vagas: item.vagas,
+      areaM2: item.areaM2,
+      valor,
+      imagens,
+      construtora: item.construtora?.nome ?? null,
+    };
+  }
+
+  private presentPublicImovel(
+    item: Prisma.ImovelGetPayload<{ select: ReturnType<EmpreendimentosService["publicImovelSelect"]> }>,
+    tenantSlug: string,
+  ) {
+    const imagens = item.fotos.length
+      ? item.fotos.map((foto) => foto.url)
+      : item.fotoUrl
+        ? [item.fotoUrl]
+        : [];
+    const endereco = [item.logradouro, item.numero, item.complemento]
+      .map((parte) => parte.trim())
+      .filter(Boolean)
+      .join(", ");
+    const area = item.area == null ? null : Number(item.area);
+    const preco =
+      item.vendaUsado?.precoVenda == null
+        ? null
+        : Number(item.vendaUsado.precoVenda);
+    return {
+      kind: "imovel" as const,
+      id: item.id,
+      slug: `imovel-${item.id}`,
+      nome: imovelTitulo(item),
+      cidade: item.cidade || item.empreendimento?.cidade || null,
+      endereco: endereco || null,
+      bairro: item.bairro || null,
+      estado: item.estado || null,
+      localidade: item.bairro || item.cidade || null,
+      tipo: CAPTACAO_IMOVEL_TIPO_LABEL[item.tipo] ?? item.tipo,
+      status: item.vendaUsado?.status ?? item.empreendimento?.status ?? null,
+      badge: item.vendaUsado ? "Usado" : "Imóvel",
+      quartos: item.quartos,
+      banheiros: item.banheiros,
+      suites: item.suites,
+      vagas: item.vagas,
+      areaM2: area != null && Number.isFinite(area) ? area : null,
+      valor: Number.isFinite(preco) ? preco : null,
+      imagens,
+      empreendimentoId: item.empreendimento?.id ?? null,
+      empreendimentoNome: item.empreendimento?.nome ?? null,
+      empreendimentoSlug: item.empreendimento
+        ? slugifyPublico(item.empreendimento.nome)
+        : null,
+      tenantSlug,
     };
   }
 

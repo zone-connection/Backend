@@ -7,6 +7,21 @@ export class PublicoEmpreendimentosController {
   constructor(private readonly empreendimentos: EmpreendimentosService) {}
 
   @Public()
+  @Get('catalogo/:tenantSlug/imoveis/:id')
+  findPublicImovel(
+    @Param('tenantSlug') tenantSlug: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.empreendimentos.findPublicImovel(tenantSlug, id);
+  }
+
+  @Public()
+  @Get('catalogo/:tenantSlug')
+  listPublicCatalog(@Param('tenantSlug') tenantSlug: string) {
+    return this.empreendimentos.listPublicCatalog(tenantSlug);
+  }
+
+  @Public()
   @Get(':tenantSlug/:slug')
   findPublicBySlug(
     @Param('tenantSlug') tenantSlug: string,
