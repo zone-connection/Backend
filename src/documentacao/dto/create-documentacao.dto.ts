@@ -22,7 +22,7 @@ function toOptionalInt({ value }: { value: unknown }) {
 }
 
 export class CreateDocumentacaoDto {
-  /** Ignorado: a ficha não puxa nem cria card no funil. */
+  /** Lead ou cliente já cadastrado. Só vincula — não cria contato. */
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID('4', { message: 'Lead/cliente inválido.' })

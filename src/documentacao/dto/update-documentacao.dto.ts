@@ -23,6 +23,11 @@ function toOptionalInt({ value }: { value: unknown }) {
 
 export class UpdateDocumentacaoDto {
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Lead/cliente inválido.' })
+  leadId?: string | null;
+
+  @IsOptional()
   @IsString()
   @MinLength(2, { message: 'O nome deve ter ao menos 2 caracteres.' })
   @MaxLength(120)

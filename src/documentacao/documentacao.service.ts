@@ -275,13 +275,15 @@ export class DocumentacaoService {
       dto.vgv,
     );
     const createdAt = parseOptionalCreatedAt(dto.createdAt);
+    const linked = await this.resolveLinkedLead(tenantId, dto.leadId);
 
-    return this.prisma.documentacao.create({
+    const created = await this.prisma.documentacao.create({
       data: {
         tenantId,
         autorId: requester.id,
-        tipoContato: ContatoTipo.lead,
-        stageSituacao: '',
+        leadId: linked?.id ?? null,
+        tipoContato: linked?.tipo ?? ContatoTipo.lead,
+        stageSituacao: linked?.stage ?? '',
         nome: dto.nome.trim(),
         construtoraId: dto.construtoraId || null,
         empreendimentoId: dto.empreendimentoId || null,
@@ -305,6 +307,10 @@ export class DocumentacaoService {
       },
       select: docSelect,
     });
+    if (created.leadId) {
+      await this.syncLeadDocumentacaoTags(created.leadId, tenantId);
+    }
+    return created;
   }
 
   async update(
@@ -317,6 +323,7 @@ export class DocumentacaoService {
       where: { id, tenantId },
       select: {
         id: true,
+        leadId: true,
         dataAnalise: true,
         dataVenda: true,
         corretorId: true,
@@ -338,6 +345,14 @@ export class DocumentacaoService {
     }
 
     const data: Prisma.DocumentacaoUpdateInput = {};
+    if (dto.leadId !== undefined) {
+      const linked = await this.resolveLinkedLead(tenantId, dto.leadId);
+      data.lead = linked ? { connect: { id: linked.id } } : { disconnect: true };
+      if (linked) {
+        data.tipoContato = linked.tipo;
+        data.stageSituacao = linked.stage ?? '';
+      }
+    }
     if (dto.nome !== undefined) data.nome = dto.nome.trim();
     if (dto.construtoraId !== undefined) {
       data.construtora = dto.construtoraId
@@ -455,11 +470,18 @@ export class DocumentacaoService {
       if (createdAt) data.createdAt = createdAt;
     }
 
-    return this.prisma.documentacao.update({
+    const updated = await this.prisma.documentacao.update({
       where: { id },
       data,
       select: docSelect,
     });
+    const tagLeadIds = new Set(
+      [existing.leadId, updated.leadId].filter((value): value is string => Boolean(value)),
+    );
+    for (const leadId of tagLeadIds) {
+      await this.syncLeadDocumentacaoTags(leadId, tenantId);
+    }
+    return updated;
   }
 
   async remove(id: string, requester: AuthenticatedUser) {
@@ -468,6 +490,7 @@ export class DocumentacaoService {
       where: { id, tenantId },
       select: {
         id: true,
+        leadId: true,
       },
     });
     if (!existing) {
@@ -482,6 +505,9 @@ export class DocumentacaoService {
     }
 
     await this.prisma.documentacao.delete({ where: { id } });
+    if (existing.leadId) {
+      await this.syncLeadDocumentacaoTags(existing.leadId, tenantId);
+    }
     return { ok: true };
   }
 
@@ -600,6 +626,75 @@ export class DocumentacaoService {
     return corretor?.equipe?.gerenteId ?? null;
   }
 
+
+  private async resolveLinkedLead(
+    tenantId: string,
+    leadId: string | null | undefined,
+  ) {
+    if (leadId == null || leadId === '') return null;
+    const lead = await this.prisma.lead.findFirst({
+      where: { id: leadId, tenantId, perdidoAt: null },
+      select: { id: true, tipo: true, stage: true },
+    });
+    if (!lead) {
+      throw new BadRequestException(
+        'Lead ou cliente inválido. Selecione um cadastro existente.',
+      );
+    }
+    return lead;
+  }
+
+  /** Espelha o status da ficha mais recente como tag no card do lead/cliente. */
+  private async syncLeadDocumentacaoTags(leadId: string, tenantId: string) {
+    const [lead, latest, catalog] = await Promise.all([
+      this.prisma.lead.findFirst({
+        where: { id: leadId, tenantId },
+        select: { id: true, tags: true },
+      }),
+      this.prisma.documentacao.findFirst({
+        where: { leadId, tenantId },
+        orderBy: { updatedAt: 'desc' },
+        select: { status1: true, status2: true },
+      }),
+      this.prisma.catalogItem.findMany({
+        where: {
+          tenantId,
+          type: {
+            in: [
+              CatalogType.documentacao_status1,
+              CatalogType.documentacao_status2,
+            ],
+          },
+        },
+        select: { label: true },
+      }),
+    ]);
+    if (!lead) return;
+
+    const catalogKeys = new Set(
+      catalog.map((item) => item.label.trim().toLowerCase()).filter(Boolean),
+    );
+    const kept = lead.tags.filter(
+      (tag) => !catalogKeys.has(tag.trim().toLowerCase()),
+    );
+    const next = [...kept];
+    for (const label of [latest?.status1, latest?.status2]) {
+      const value = label?.trim();
+      if (!value) continue;
+      if (next.some((tag) => tag.trim().toLowerCase() === value.toLowerCase())) {
+        continue;
+      }
+      next.push(value);
+    }
+    const same =
+      next.length === lead.tags.length &&
+      next.every((tag, index) => tag === lead.tags[index]);
+    if (same) return;
+    await this.prisma.lead.update({
+      where: { id: lead.id },
+      data: { tags: next },
+    });
+  }
 
   private async resolveCatalogLabel(
     tenantId: string,
