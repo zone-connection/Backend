@@ -123,6 +123,15 @@ export class UsersController {
     return this.usersService.resetPassword(id, dto.password, requester);
   }
 
+  @Patch(':id/reset-2fa')
+  @Roles(Role.admin, Role.super_admin)
+  resetTwoFactor(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.usersService.resetTwoFactor(id, requester);
+  }
+
   @Patch(':id/unlock')
   @Roles(Role.admin)
   unlock(

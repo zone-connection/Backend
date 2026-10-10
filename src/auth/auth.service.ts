@@ -38,6 +38,16 @@ import {
   SALT_ROUNDS,
 } from '../config/security.constants';
 import { formatLockoutWait, lockoutWaitMinutes } from './login-lockout';
+import {
+  consumeBackupCode,
+  generateBackupCodes,
+  generateTotpSecret,
+  hashBackupCode,
+  otpauthUrl,
+  roleNeedsTotp,
+  totpValid,
+} from './totp';
+import { decryptTotpSecret, encryptTotpSecret } from './totp-crypto';
 import { JwtPayload } from './strategies/jwt.strategy';
 import { UpdateAppearanceDto } from './dto/update-appearance.dto';
 import { sanitizeUserPermissions } from '../common/utils/user-permissions';
@@ -53,11 +63,20 @@ export interface AuthTokens {
 export type AuthUserPayload = PublicUser & {
   tenant: TenantBranding | null;
   temVendaVinculada?: boolean;
+  totpEnabled?: boolean;
 };
 
 export interface AuthResult extends AuthTokens {
   user: AuthUserPayload;
 }
+
+export type TotpChallenge = {
+  twoFactor: 'code' | 'setup';
+  ticket: string;
+};
+
+const TOTP_TICKET_KIND = 'totp_pending';
+const TOTP_TICKET_EXPIRES = '2m';
 
 /** Origem da requisição, usada na trilha de auditoria. */
 export interface RequestContext {
@@ -100,7 +119,7 @@ export class AuthService {
     password: string,
     context: RequestContext = {},
     tenantSlug?: string,
-  ): Promise<AuthResult> {
+  ): Promise<AuthResult | TotpChallenge> {
     const normalizedEmail = email.toLowerCase().trim();
 
     // O bloqueio é contado por e-mail na trilha de auditoria — vale também
@@ -145,6 +164,136 @@ export class AuthService {
       await this.recordAttempt(normalizedEmail, false, context, 'usuario_inativo');
     });
 
+    if (roleNeedsTotp(user.role)) {
+      return this.issueTotpChallenge(
+        user,
+        user.totpEnabledAt ? 'code' : 'setup',
+      );
+    }
+
+    return this.finishLogin(user, context);
+  }
+
+  async verifyTotpLogin(
+    ticket: string,
+    code: string,
+    context: RequestContext = {},
+  ): Promise<AuthResult> {
+    const pending = await this.readTotpTicket(ticket, 'code');
+    const waitMinutes = await this.lockoutWaitMinutesFor(pending.email);
+    if (waitMinutes !== null) {
+      await this.recordAttempt(pending.email, false, context, 'conta_bloqueada');
+      throw new ForbiddenException(
+        `Muitas tentativas de acesso. Tente novamente em ${formatLockoutWait(waitMinutes)}.`,
+      );
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: pending.sub } });
+    if (!user || !user.totpEnabledAt || !user.totpSecret) {
+      throw new UnauthorizedException('Sessão de verificação expirada.');
+    }
+
+    const secret = decryptTotpSecret(user.totpSecret, this.config);
+    const totpOk = totpValid(secret, code);
+    const leftover = totpOk
+      ? null
+      : consumeBackupCode(user.totpBackupHashes, code);
+    if (!totpOk && leftover === null) {
+      await this.registerFailure(user, user.email, context, 'senha_incorreta');
+      throw new UnauthorizedException(GENERIC_CREDENTIALS_ERROR);
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        totpTicketNonce: null,
+        ...(leftover ? { totpBackupHashes: leftover } : {}),
+      },
+    });
+    return this.finishLogin(user, context);
+  }
+
+  async startTotpSetup(ticket: string) {
+    const pending = await this.readTotpTicket(ticket, 'setup');
+    const user = await this.prisma.user.findUnique({ where: { id: pending.sub } });
+    if (!user || !roleNeedsTotp(user.role) || user.totpEnabledAt) {
+      throw new UnauthorizedException('Sessão de verificação expirada.');
+    }
+
+    const secret = generateTotpSecret();
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { totpSecret: encryptTotpSecret(secret, this.config) },
+    });
+
+    const otpauth = otpauthUrl({ email: user.email, secret });
+    const QRCode = await import('qrcode');
+    const qrDataUrl = await QRCode.toDataURL(otpauth, {
+      margin: 1,
+      width: 220,
+    });
+    return { otpauthUrl: otpauth, qrDataUrl };
+  }
+
+  async enableTotp(
+    ticket: string,
+    code: string,
+    context: RequestContext = {},
+  ): Promise<AuthResult & { backupCodes: string[] }> {
+    const pending = await this.readTotpTicket(ticket, 'setup');
+    const user = await this.prisma.user.findUnique({ where: { id: pending.sub } });
+    if (!user?.totpSecret || user.totpEnabledAt) {
+      throw new UnauthorizedException('Sessão de verificação expirada.');
+    }
+    const secret = decryptTotpSecret(user.totpSecret, this.config);
+    if (!totpValid(secret, code)) {
+      await this.registerFailure(user, user.email, context, 'senha_incorreta');
+      throw new UnauthorizedException('Código inválido.');
+    }
+
+    const backupCodes = generateBackupCodes();
+    const enabledAt = new Date();
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        totpEnabledAt: enabledAt,
+        totpBackupHashes: backupCodes.map(hashBackupCode),
+        totpTicketNonce: null,
+      },
+    });
+    const session = await this.finishLogin(
+      { ...user, totpEnabledAt: enabledAt },
+      context,
+    );
+    return { ...session, backupCodes };
+  }
+
+  async regenerateBackupCodes(userId: string, code: string): Promise<string[]> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (
+      !user ||
+      !roleNeedsTotp(user.role) ||
+      !user.totpEnabledAt ||
+      !user.totpSecret
+    ) {
+      throw new ForbiddenException('Verificação em duas etapas não está ativa.');
+    }
+    const secret = decryptTotpSecret(user.totpSecret, this.config);
+    if (!totpValid(secret, code)) {
+      throw new UnauthorizedException('Código inválido.');
+    }
+    const backupCodes = generateBackupCodes();
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { totpBackupHashes: backupCodes.map(hashBackupCode) },
+    });
+    return backupCodes;
+  }
+
+  private async finishLogin(
+    user: User,
+    context: RequestContext,
+  ): Promise<AuthResult> {
     const tokens = await this.issueTokens(user);
     await this.prisma.user.update({
       where: { id: user.id },
@@ -155,10 +304,71 @@ export class AuthService {
         hashedRefreshToken: await bcrypt.hash(tokens.refreshToken, SALT_ROUNDS),
       },
     });
-    await this.recordAttempt(normalizedEmail, true, context);
+    await this.recordAttempt(user.email, true, context);
     await this.presence.heartbeat(user.id, user.tenantId);
-
     return { ...tokens, user: await this.toPublicUser(user) };
+  }
+
+  private async issueTotpChallenge(
+    user: User,
+    twoFactor: 'code' | 'setup',
+  ): Promise<TotpChallenge> {
+    const nonce = randomBytes(16).toString('hex');
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { totpTicketNonce: nonce },
+    });
+    const ticket = await this.jwt.signAsync(
+      {
+        sub: user.id,
+        email: user.email,
+        kind: TOTP_TICKET_KIND,
+        purpose: twoFactor,
+        nonce,
+      },
+      {
+        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+        expiresIn: TOTP_TICKET_EXPIRES as unknown as number,
+      },
+    );
+    return { twoFactor, ticket };
+  }
+
+  private async readTotpTicket(
+    ticket: string,
+    purpose: 'code' | 'setup',
+  ): Promise<{ sub: string; email: string }> {
+    let payload: {
+      sub?: string;
+      email?: string;
+      kind?: string;
+      purpose?: string;
+      nonce?: string;
+    };
+    try {
+      payload = await this.jwt.verifyAsync(ticket, {
+        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+      });
+    } catch {
+      throw new UnauthorizedException('Sessão de verificação expirada.');
+    }
+    if (
+      payload.kind !== TOTP_TICKET_KIND ||
+      payload.purpose !== purpose ||
+      !payload.sub ||
+      !payload.email ||
+      !payload.nonce
+    ) {
+      throw new UnauthorizedException('Sessão de verificação expirada.');
+    }
+    const row = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { totpTicketNonce: true },
+    });
+    if (!row?.totpTicketNonce || row.totpTicketNonce !== payload.nonce) {
+      throw new UnauthorizedException('Sessão de verificação expirada.');
+    }
+    return { sub: payload.sub, email: payload.email };
   }
 
   /**
@@ -315,6 +525,7 @@ export class AuthService {
     const branding = tenant ? stripTenantStatus(tenant) : null;
     return {
       ...rest,
+      totpEnabled: Boolean(rest.totpEnabledAt),
       temVendaVinculada: await this.resolveTemVendaVinculada(rest),
       tenant: branding
         ? {
@@ -670,6 +881,7 @@ export class AuthService {
       lastLoginAt: user.lastLoginAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+      totpEnabled: Boolean(user.totpEnabledAt),
       temVendaVinculada: await this.resolveTemVendaVinculada(user),
       tenant: tenant
         ? {

@@ -30,6 +30,7 @@ export const publicUserSelect = {
   status: true,
   avatar: true,
   lastLoginAt: true,
+  totpEnabledAt: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.UserSelect;
