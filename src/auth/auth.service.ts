@@ -455,6 +455,16 @@ export class AuthService {
 
     await this.assertTenantAllowsAccess(user.tenantId);
 
+    if (roleNeedsTotp(user.role) && !user.totpEnabledAt) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { hashedRefreshToken: null },
+      });
+      throw new UnauthorizedException(
+        'Cadastre o autenticador para continuar como administrador.',
+      );
+    }
+
     const tokenMatches = await bcrypt.compare(
       refreshToken,
       user.hashedRefreshToken,
