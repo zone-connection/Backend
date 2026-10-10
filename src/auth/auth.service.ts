@@ -30,12 +30,14 @@ import {
   parseOptionalNotifyEmail,
 } from '../mailer/mailer.service';
 import {
-  FAILED_LOGIN_WINDOW_MS,
+  DAILY_FAILURE_WINDOW_MS,
+  DAILY_LOCKOUT_DURATION_MS,
   LOCKOUT_DURATION_MS,
   MAX_FAILED_LOGIN_ATTEMPTS,
   PASSWORD_RESET_TTL_MS,
   SALT_ROUNDS,
 } from '../config/security.constants';
+import { formatLockoutWait, lockoutWaitMinutes } from './login-lockout';
 import { JwtPayload } from './strategies/jwt.strategy';
 import { UpdateAppearanceDto } from './dto/update-appearance.dto';
 import { sanitizeUserPermissions } from '../common/utils/user-permissions';
@@ -104,12 +106,11 @@ export class AuthService {
     // O bloqueio é contado por e-mail na trilha de auditoria — vale também
     // para e-mails inexistentes, então a resposta é idêntica nos dois casos
     // e não dá para descobrir quais contas existem.
-    if (await this.isTemporarilyLocked(normalizedEmail)) {
+    const waitMinutes = await this.lockoutWaitMinutesFor(normalizedEmail);
+    if (waitMinutes !== null) {
       await this.recordAttempt(normalizedEmail, false, context, 'conta_bloqueada');
       throw new ForbiddenException(
-        `Muitas tentativas de acesso. Tente novamente em ${Math.round(
-          LOCKOUT_DURATION_MS / 60000,
-        )} minutos.`,
+        `Muitas tentativas de acesso. Tente novamente em ${formatLockoutWait(waitMinutes)}.`,
       );
     }
 
@@ -515,18 +516,27 @@ export class AuthService {
     });
   }
 
-  /** Conta as falhas recentes do e-mail, existindo ele ou não. */
-  private async isTemporarilyLocked(email: string): Promise<boolean> {
-    const since = new Date(Date.now() - FAILED_LOGIN_WINDOW_MS);
-    const failures = await this.prisma.loginAttempt.count({
+  /**
+   * Bloqueio por e-mail, exista a conta ou não.
+   * 5 falhas em 15 minutos, ou 15 falhas em 24 horas (12 horas parado).
+   */
+  private async lockoutWaitMinutesFor(email: string): Promise<number | null> {
+    const since = new Date(
+      Date.now() - DAILY_FAILURE_WINDOW_MS - DAILY_LOCKOUT_DURATION_MS,
+    );
+    const failures = await this.prisma.loginAttempt.findMany({
       where: {
         email,
         success: false,
         reason: { not: 'conta_bloqueada' },
         createdAt: { gte: since },
       },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
     });
-    return failures >= MAX_FAILED_LOGIN_ATTEMPTS;
+    return lockoutWaitMinutes(
+      failures.map((row) => row.createdAt),
+    );
   }
 
   private async registerFailure(

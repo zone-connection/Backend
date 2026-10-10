@@ -105,6 +105,12 @@ export function validateEnv(config: Record<string, unknown>) {
     errors.push('FRONTEND_URL é obrigatório em produção (define o CORS).');
   }
 
+  if (isProd && !String(config.TURNSTILE_SECRET_KEY ?? '').trim()) {
+    errors.push(
+      'TURNSTILE_SECRET_KEY é obrigatório em produção (captcha do login).',
+    );
+  }
+
   // Admin de sistema: recomendado em production, mas não derruba o boot
   // (permite subir o serviço e configurar as vars no painel depois).
   if (

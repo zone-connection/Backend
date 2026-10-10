@@ -30,6 +30,7 @@ import {
 } from '../common/utils/auth-cookies';
 import { THROTTLE } from '../config/security.constants';
 import { AuthService } from './auth.service';
+import { TurnstileService } from './turnstile.service';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -42,6 +43,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly config: ConfigService,
+    private readonly turnstile: TurnstileService,
   ) {}
 
   @Public()
@@ -53,6 +55,8 @@ export class AuthController {
     @RequestContext() context: ClientContext,
     @Res({ passthrough: true }) res: Response,
   ) {
+    await this.turnstile.assertValid(dto.captchaToken, context.ip);
+
     const result = await this.authService.login(
       dto.email,
       dto.password,
