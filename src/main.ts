@@ -115,7 +115,9 @@ async function bootstrap() {
         (/^https:\/\/frontend(-[a-z0-9]+)?-eduardoalvesdesena\.vercel\.app$/i.test(
           origin,
         ) ||
-          origin === 'https://frontend-seven-wine-46.vercel.app'));
+          origin === 'https://frontend-seven-wine-46.vercel.app' ||
+          origin === 'https://openhaus-delta.vercel.app' ||
+          /^https:\/\/openhaus(-[a-z0-9]+)?-.*\.vercel\.app$/i.test(origin)));
     callback(null, allowed);
   };
 
