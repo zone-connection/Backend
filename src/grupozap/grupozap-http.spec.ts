@@ -263,6 +263,19 @@ describe('HTTP Grupo OLX', () => {
     assert.equal(denied.status, 401);
   });
 
+  it('responde 200 ao lead de exemplo da homologação, sem criar contato', async () => {
+    const response = await fetch(`${base}/api/grupozap/lead`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: authHeader() },
+      body: JSON.stringify(adLead),
+    });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { ok: boolean; leadId?: string };
+    assert.equal(body.ok, true);
+    assert.equal(body.leadId, undefined);
+    assert.equal(state.leads.length, 0);
+  });
+
   it('responde 400 se o lead de anúncio não traz clientListingId', async () => {
     const response = await fetch(`${base}/api/grupozap/lead/${ANUNCIANTE_ID}`, {
       method: 'POST',

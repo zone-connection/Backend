@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   formatGrupoZapPhone,
+  isGrupoZapHomologationProbe,
   leadRejectionReason,
   parseGrupoZapLead,
 } from './grupozap-lead.parser';
@@ -48,6 +49,15 @@ describe('webhook de leads Grupo OLX', () => {
     assert.equal(lead.leadTypeLabel, 'Chat');
     assert.equal(lead.leadCerto, true);
     assert.equal(lead.clientListingId, 'a40171');
+    assert.equal(isGrupoZapHomologationProbe(lead), true);
+    assert.equal(
+      isGrupoZapHomologationProbe({
+        originLeadId: 'lead-real',
+        clientListingId: '11111111-1111-4111-8111-111111111111',
+        email: 'cliente@email.com',
+      }),
+      false,
+    );
   });
 
   it('trata simulação MCMV como lead sem anúncio', () => {

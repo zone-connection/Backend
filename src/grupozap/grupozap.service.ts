@@ -23,6 +23,7 @@ import {
   type FeedImovel,
 } from './grupozap-feed';
 import {
+  isGrupoZapHomologationProbe,
   isValidEmail,
   leadRejectionReason,
   parseGrupoZapLead,
@@ -253,6 +254,12 @@ export class GrupoZapService {
 
     const tenantId = await this.resolveTenant(anuncianteId, lead);
     if (!tenantId) {
+      if (!anuncianteId && isGrupoZapHomologationProbe(lead)) {
+        this.logger.log(
+          `Lead de homologação Grupo OLX originLeadId=${lead.originLeadId}`,
+        );
+        return { ok: true };
+      }
       throw new BadRequestException(
         'Anunciante não encontrado para este lead.',
       );

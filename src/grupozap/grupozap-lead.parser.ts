@@ -157,3 +157,19 @@ export function parseGrupoZapLead(body: unknown): GrupoZapLead {
 export function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
+
+/**
+ * Payload de exemplo publicado no manual. O validador de homologação envia
+ * esse lead e só aceita HTTP 200. O imóvel "a40171" não existe no CRM.
+ */
+export function isGrupoZapHomologationProbe(lead: {
+  originLeadId: string;
+  clientListingId: string;
+  email: string;
+}): boolean {
+  return (
+    lead.clientListingId === 'a40171' ||
+    lead.originLeadId === '59ee0fc6e4b043e1b2a6d863' ||
+    lead.email.toLowerCase() === 'nome.consumidor@email.com'
+  );
+}
