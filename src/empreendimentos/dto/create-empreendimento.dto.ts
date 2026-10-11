@@ -146,6 +146,10 @@ export class CreateEmpreendimentoDto {
   ativo?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  visivelNoSite?: boolean;
+
+  @IsOptional()
   @Allow()
   vitrine?: EmpreendimentoVitrineDto | null;
 }

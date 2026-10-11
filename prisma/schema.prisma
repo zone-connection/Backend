@@ -1053,6 +1053,8 @@ model Empreendimento {
   /// Chave estável interna (ex.: manual-slug-timestamp).
   externalKey String
   ativo       Boolean @default(true)
+  /// Visível na landing / catálogo público do site do tenant.
+  visivelNoSite Boolean @default(true)
   /// ID imutável do empreendimento na Órulo (quando originado do catálogo).
   oruloBuildingId   Int?
   oruloImageIds     String[]  @default([])

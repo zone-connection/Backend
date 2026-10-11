@@ -81,6 +81,7 @@ const empreendimentoSelect = {
   imagens: true,
   externalKey: true,
   ativo: true,
+  visivelNoSite: true,
   oruloBuildingId: true,
   oruloStatus: true,
   oruloSyncedAt: true,
@@ -144,6 +145,9 @@ export class EmpreendimentosService {
       select: this.publicSelect(),
     });
     if (!item) throw new NotFoundException("Empreendimento não encontrado.");
+    if (!item.ativo || !item.visivelNoSite) {
+      throw new NotFoundException("Empreendimento não encontrado.");
+    }
     const vinculados = await this.prisma.imovel.findMany({
       where: { empreendimentoId: item.id, tenantId: item.tenantId },
       select: this.publicImovelSelect(),
@@ -177,7 +181,7 @@ export class EmpreendimentosService {
     const tenant = await this.requirePublicTenant(tenantSlug);
     const [empreendimentos, imoveis] = await Promise.all([
       this.prisma.empreendimento.findMany({
-        where: { tenantId: tenant.id, ativo: true },
+        where: { tenantId: tenant.id, ativo: true, visivelNoSite: true },
         select: this.publicSelect(),
         orderBy: { nome: "asc" },
       }),
@@ -185,6 +189,7 @@ export class EmpreendimentosService {
         where: {
           tenantId: tenant.id,
           empreendimentoId: { not: null },
+          empreendimento: { visivelNoSite: true, ativo: true },
         },
         select: this.publicImovelSelect(),
         orderBy: { updatedAt: "desc" },
@@ -210,6 +215,7 @@ export class EmpreendimentosService {
         id,
         tenantId: tenant.id,
         empreendimentoId: { not: null },
+        empreendimento: { visivelNoSite: true, ativo: true },
       },
       select: this.publicImovelSelect(),
     });
@@ -472,6 +478,7 @@ export class EmpreendimentosService {
         imagens: [],
         externalKey: `manual-${key}-${Date.now()}`,
         ativo: dto.ativo ?? true,
+        visivelNoSite: dto.visivelNoSite ?? true,
       },
       select: empreendimentoSelect,
     });
@@ -487,6 +494,11 @@ export class EmpreendimentosService {
     requester: AuthenticatedUser,
   ) {
     this.assertCanManage(requester);
+    if (dto.visivelNoSite !== undefined && requester.role !== Role.admin) {
+      throw new ForbiddenException(
+        "Apenas administradores podem publicar empreendimentos no site.",
+      );
+    }
     const row = await this.findRow(id, requester);
     const localidade =
       dto.localidadeId !== undefined
@@ -565,6 +577,9 @@ export class EmpreendimentosService {
           ? { externalUrl: dto.externalUrl?.trim() || null }
           : {}),
         ...(dto.ativo !== undefined ? { ativo: dto.ativo } : {}),
+        ...(dto.visivelNoSite !== undefined
+          ? { visivelNoSite: dto.visivelNoSite }
+          : {}),
         ...(vitrine !== undefined
           ? {
               vitrine:

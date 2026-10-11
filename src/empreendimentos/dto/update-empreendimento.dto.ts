@@ -137,6 +137,10 @@ export class UpdateEmpreendimentoDto {
   ativo?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  visivelNoSite?: boolean;
+
+  @IsOptional()
   @Allow()
   vitrine?: EmpreendimentoVitrineDto | null;
 }
