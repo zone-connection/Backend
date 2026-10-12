@@ -155,6 +155,16 @@ describe('OzapApiClient.sendText', () => {
     );
   });
 
+  it('aceita áudio público no S3 da OZap', async () => {
+    const client = new OzapApiClient({
+      get: (key: string) => (key === 'OZAP_API_KEY' ? 'test-key' : undefined),
+    } as never);
+    const url =
+      'https://zap-gpt-media-tools.s3.us-east-1.amazonaws.com/media-tools/1143/audio/a.ogg';
+    assert.equal(client.isAllowedMediaHost(url), true);
+    assert.equal(client.needsMediaProxy(url), false);
+  });
+
   it('recusa número inválido', async () => {
     const client = new OzapApiClient({
       get: (key: string) => (key === 'OZAP_API_KEY' ? 'test-key' : undefined),

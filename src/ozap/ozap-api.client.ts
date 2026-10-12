@@ -163,16 +163,18 @@ export class OzapApiClient {
     body: Buffer;
     contentType: string;
   }> {
-    const apiKey = this.requireApiKey();
     const url = this.resolveMediaUrl(rawUrl);
     if (!url || !this.isAllowedMediaHost(url)) {
-      throw new OzapApiError(0, 'URL de mídia inválida.');
+      throw new OzapApiError(400, 'URL de mídia inválida.');
     }
+    const headers = this.needsMediaProxy(url)
+      ? this.authHeaders(this.requireApiKey())
+      : { Accept: '*/*' };
     let response: Response;
     try {
       response = await fetch(url, {
         method: 'GET',
-        headers: this.authHeaders(apiKey),
+        headers,
         signal: AbortSignal.timeout(OZAP_MEDIA_TIMEOUT_MS),
         redirect: 'follow',
       });
@@ -613,7 +615,16 @@ export class OzapApiClient {
     return raw;
   }
 
-  private isAllowedMediaHost(url: string): boolean {
+  needsMediaProxy(url: string): boolean {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      return host === 'api.ozaponline.com' || host.endsWith('.ozaponline.com');
+    } catch {
+      return true;
+    }
+  }
+
+  isAllowedMediaHost(url: string): boolean {
     try {
       const host = new URL(url).hostname.toLowerCase();
       return (
@@ -623,7 +634,9 @@ export class OzapApiClient {
         host.endsWith('.whatsapp.net') ||
         host === 'whatsapp.net' ||
         host.endsWith('.whatsapp.com') ||
-        host.endsWith('.fbcdn.net')
+        host.endsWith('.fbcdn.net') ||
+        host === 's3.amazonaws.com' ||
+        /\.s3([.-][a-z0-9-]+)?\.amazonaws\.com$/i.test(host)
       );
     } catch {
       return false;

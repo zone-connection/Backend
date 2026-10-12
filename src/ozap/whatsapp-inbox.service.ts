@@ -98,6 +98,12 @@ export class WhatsappInboxService {
 
   private toCrmMediaUrl(url: string | null): string | null {
     if (!url) return null;
+    if (
+      this.ozapApi.isAllowedMediaHost(url) &&
+      !this.ozapApi.needsMediaProxy(url)
+    ) {
+      return url;
+    }
     return `/api/whatsapp/media?url=${encodeURIComponent(url)}`;
   }
 
@@ -173,6 +179,9 @@ export class WhatsappInboxService {
 
   private throwOzap(error: unknown): never {
     if (error instanceof OzapApiError) {
+      if (error.status === 400) {
+        throw new BadRequestException(error.message);
+      }
       throw new ServiceUnavailableException(error.message);
     }
     throw error;
