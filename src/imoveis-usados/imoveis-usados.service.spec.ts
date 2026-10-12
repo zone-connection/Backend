@@ -132,6 +132,7 @@ describe('ImoveisUsadosService', () => {
           id: 'v1',
           tenantId: 't1',
           precoVenda: 100,
+          createdAt: new Date('2026-01-01'),
           imovel: {
             tipo: CaptacaoImovelTipo.casa,
             logradouro: 'Rua',
@@ -166,6 +167,7 @@ describe('ImoveisUsadosService', () => {
           id: 'v1',
           tenantId: 't1',
           precoVenda: 100,
+          createdAt: new Date('2026-01-01'),
           imovel: {
             tipo: CaptacaoImovelTipo.casa,
             logradouro: 'Rua',

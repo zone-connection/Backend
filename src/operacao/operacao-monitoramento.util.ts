@@ -88,9 +88,9 @@ export function computeOperacaoMonitoramento(
   const now = input.now ?? new Date();
   const etapa = input.etapa;
   const terminal = isEtapaTerminal(etapa?.papel);
-  const enteredAt = input.stageEnteredAt ?? input.createdAt;
+  const enteredAt = input.stageEnteredAt ?? input.createdAt ?? now;
   const lastMovementAt =
-    input.lastMovementAt ?? input.lastHistoricoAt ?? input.createdAt;
+    input.lastMovementAt ?? input.lastHistoricoAt ?? input.createdAt ?? now;
   const slaStart =
     lastMovementAt.getTime() > enteredAt.getTime()
       ? lastMovementAt
