@@ -29,6 +29,7 @@ import {
 } from './dto/mark-leads-lost-bulk.dto';
 import { CheckImportLeadsDto, ImportLeadsDto } from './dto/import-leads.dto';
 import { AdiarPrazoDto } from './dto/adiar-prazo.dto';
+import { SendLeadWhatsappDto } from './dto/send-lead-whatsapp.dto';
 import {
   CreateLeadInteresseDto,
   UpdateLeadInteresseDto,
@@ -190,6 +191,23 @@ export class LeadsController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.leadsService.pegarCacaLead(id, requester);
+  }
+
+  @Get(':id/whatsapp-chat')
+  getWhatsappChat(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.getWhatsappChat(id, requester);
+  }
+
+  @Post(':id/whatsapp-chat')
+  sendWhatsappChat(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SendLeadWhatsappDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.sendWhatsappChat(id, dto.content, requester);
   }
 
   @Get(':id')

@@ -1,9 +1,11 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   ContatoTipo,
@@ -64,6 +66,11 @@ import {
 } from './lead-redistribuicao.util';
 import type { LeadNotifySnapshot } from '../lead-notify/lead-notify.messages';
 import { PresenceService } from '../presence/presence.service';
+import {
+  OzapApiClient,
+  OzapApiError,
+  type OzapChatMessage,
+} from '../ozap/ozap-api.client';
 
 /** Dígitos nacionais (DDD + número), ignora DDI 55. */
 function nationalPhoneKey(value: string): string {
@@ -146,6 +153,7 @@ export class LeadsService {
     private readonly monitoramento: LeadMonitoramentoService,
     private readonly leadNotify: LeadNotifyService,
     private readonly presence: PresenceService,
+    private readonly ozapApi: OzapApiClient,
   ) {}
 
   async create(
@@ -2887,6 +2895,94 @@ export class LeadsService {
       where: { id: leadId },
       data: { empreendimentoId: nextId },
     });
+  }
+
+  async getWhatsappChat(
+    id: string,
+    requester: AuthenticatedUser,
+  ): Promise<{
+    available: boolean;
+    reason?: 'not_linked' | 'not_configured';
+    chatId: string | null;
+    messages: OzapChatMessage[];
+  }> {
+    await this.findOne(id, requester);
+    const link = await this.prisma.leadOzapLink.findUnique({
+      where: { leadId: id },
+      select: { instanceId: true, chatId: true },
+    });
+    if (!link) {
+      return {
+        available: false,
+        reason: 'not_linked',
+        chatId: null,
+        messages: [],
+      };
+    }
+    if (!this.ozapApi.isConfigured()) {
+      return {
+        available: false,
+        reason: 'not_configured',
+        chatId: link.chatId,
+        messages: [],
+      };
+    }
+    try {
+      const messages = await this.ozapApi.listMessages({
+        instanceId: link.instanceId,
+        chatId: link.chatId,
+      });
+      return {
+        available: true,
+        chatId: link.chatId,
+        messages,
+      };
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  async sendWhatsappChat(
+    id: string,
+    content: string,
+    requester: AuthenticatedUser,
+  ): Promise<{ ok: true }> {
+    await this.findOne(id, requester);
+    const text = content.trim();
+    if (!text) {
+      throw new BadRequestException('Informe a mensagem.');
+    }
+    const link = await this.prisma.leadOzapLink.findUnique({
+      where: { leadId: id },
+      select: { instanceId: true, chatId: true },
+    });
+    if (!link) {
+      throw new NotFoundException(
+        'Este lead ainda não tem conversa da IA no WhatsApp.',
+      );
+    }
+    if (!this.ozapApi.isConfigured()) {
+      throw new ServiceUnavailableException(
+        'Integração WhatsApp (OZap) não configurada.',
+      );
+    }
+    try {
+      await this.ozapApi.sendChatText({
+        instanceId: link.instanceId,
+        chatId: link.chatId,
+        text,
+      });
+      return { ok: true };
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  private throwOzap(error: unknown): never {
+    if (error instanceof OzapApiError) {
+      throw new BadGatewayException(error.message);
+    }
+    throw error;
   }
 
   private async decorateOne(

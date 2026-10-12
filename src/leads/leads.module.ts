@@ -10,6 +10,7 @@ import { LeadAtrasoLiberacaoService } from './lead-atraso-liberacao.service';
 import { LeadDistribuicaoAutoService } from './lead-distribuicao-auto.service';
 import { LeadNotifyModule } from '../lead-notify/lead-notify.module';
 import { PresenceModule } from '../presence/presence.module';
+import { OzapApiModule } from '../ozap/ozap-api.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PresenceModule } from '../presence/presence.module';
     LeadMonitoramentoModule,
     LeadNotifyModule,
     PresenceModule,
+    OzapApiModule,
   ],
   controllers: [LeadsController],
   providers: [

@@ -62,6 +62,47 @@ describe('OzapApiClient.sendText', () => {
     ]);
   });
 
+  it('GET lista mensagens do chat', async () => {
+    globalThis.fetch = (async (url: string | URL) => {
+      assert.equal(
+        String(url),
+        'https://api.ozaponline.com/api/v1/1143/chats/5511999998888/messages',
+      );
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: '1',
+              content: 'Oi',
+              direction: 'in',
+              timestamp: '2026-10-12T12:00:00.000Z',
+            },
+            {
+              id: '2',
+              content: 'Qual sua renda?',
+              source: 'ai',
+              timestamp: '2026-10-12T12:01:00.000Z',
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const client = new OzapApiClient({
+      get: (key: string) => (key === 'OZAP_API_KEY' ? 'test-key' : undefined),
+    } as never);
+
+    const messages = await client.listMessages({
+      instanceId: 1143,
+      chatId: '5511999998888',
+    });
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0]!.direction, 'in');
+    assert.equal(messages[1]!.direction, 'out');
+    assert.equal(messages[1]!.text, 'Qual sua renda?');
+  });
+
   it('recusa número inválido', async () => {
     const client = new OzapApiClient({
       get: (key: string) => (key === 'OZAP_API_KEY' ? 'test-key' : undefined),
