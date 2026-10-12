@@ -17,12 +17,30 @@ export class OzapApiError extends Error {
   }
 }
 
+export type OzapChatKind = 'client' | 'ai' | 'agent' | 'follow_up';
+
 export type OzapChatMessage = {
   id: string;
   direction: 'in' | 'out';
+  kind: OzapChatKind;
   text: string;
   at: string | null;
   source: string | null;
+  mediaType: string | null;
+  mediaUrl: string | null;
+};
+
+export type OzapInboxChat = {
+  chatId: string;
+  name: string;
+  phone: string | null;
+  lastMessage: string | null;
+  lastMessageAt: string | null;
+  unread: number;
+  isGroup: boolean;
+  aiPaused: boolean;
+  pausedUntil: string | null;
+  leadStatus: string | null;
 };
 
 @Injectable()
@@ -132,6 +150,63 @@ export class OzapApiClient {
       }
     }
     throw lastError ?? new OzapApiError(0, 'OZap recusou a leitura.');
+  }
+
+  async listChats(instanceId: number): Promise<OzapInboxChat[]> {
+    const apiKey = this.requireApiKey();
+    const chats: OzapInboxChat[] = [];
+    let page = 1;
+    let totalPages = 1;
+    while (page <= totalPages && page <= 10) {
+      const payload = await this.getJson(
+        `${this.baseUrl()}/api/v1/${instanceId}/chats?limit=100&page=${page}`,
+        apiKey,
+      );
+      const rec = this.asRecord(payload);
+      const data = this.asRecord(rec?.data) ?? rec;
+      const rows = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.chats)
+          ? data.chats
+          : this.extractList(payload);
+      for (const row of rows) {
+        const chat = this.normalizeChat(row);
+        if (chat) chats.push(chat);
+      }
+      const pagination = this.asRecord(
+        this.asRecord(data)?.pagination ?? rec?.pagination,
+      );
+      const reported = Number(pagination?.totalPages ?? 1);
+      totalPages = Number.isFinite(reported) && reported > 0 ? reported : 1;
+      page += 1;
+    }
+    return chats;
+  }
+
+  async pauseChat(params: {
+    instanceId: number;
+    chatId: string;
+    pausedUntil: string | null;
+  }): Promise<void> {
+    const apiKey = this.requireApiKey();
+    let lastError: OzapApiError | null = null;
+    for (const id of this.chatIdVariants(params.chatId)) {
+      const url = `${this.baseUrl()}/api/v1/${params.instanceId}/chats/${encodeURIComponent(id)}`;
+      try {
+        await this.patchJson(url, apiKey, { paused_until: params.pausedUntil });
+        return;
+      } catch (error) {
+        if (
+          error instanceof OzapApiError &&
+          (error.status === 404 || error.status === 405)
+        ) {
+          lastError = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw lastError ?? new OzapApiError(0, 'OZap recusou pausar a IA.');
   }
 
   private chatIdVariants(chatId: string): string[] {
@@ -264,6 +339,71 @@ export class OzapApiClient {
     }
   }
 
+  private async patchJson(
+    url: string,
+    apiKey: string,
+    body: Record<string, string | null>,
+  ): Promise<void> {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          ...this.authHeaders(apiKey),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(OZAP_SEND_TIMEOUT_MS),
+      });
+    } catch (error) {
+      const timedOut =
+        error instanceof Error &&
+        (error.name === 'TimeoutError' || error.name === 'AbortError');
+      throw new OzapApiError(
+        0,
+        timedOut ? 'Timeout ao atualizar o chat no OZap.' : 'Falha de rede no OZap.',
+      );
+    }
+    if (!response.ok) {
+      const snippet = (await response.text().catch(() => '')).slice(0, 200);
+      this.logger.warn(`OZap patch HTTP ${response.status}: ${snippet}`);
+      throw new OzapApiError(
+        response.status,
+        `OZap recusou atualizar o chat (${response.status}).`,
+      );
+    }
+  }
+
+  private normalizeChat(raw: unknown): OzapInboxChat | null {
+    const rec = this.asRecord(raw);
+    if (!rec) return null;
+    const chatId =
+      this.asString(rec.chat_id) ?? this.asString(rec.chatId) ?? this.asString(rec.id);
+    if (!chatId) return null;
+    const last =
+      this.asString(rec.last_message) ?? this.asString(rec.lastMessage);
+    return {
+      chatId,
+      name: this.asString(rec.name) ?? this.asString(rec.contact_name) ?? chatId,
+      phone:
+        this.asString(rec.phone_number) ??
+        this.asString(rec.phone) ??
+        (this.phoneDigits(chatId) || null),
+      lastMessage: last,
+      lastMessageAt:
+        this.asString(rec.last_message_timestamp) ??
+        this.asString(rec.lastMessageAt) ??
+        this.asTimestamp(rec),
+      unread: Number(rec.unread_count ?? rec.unread ?? 0) || 0,
+      isGroup: rec.is_group === true || rec.isGroup === true,
+      aiPaused: Boolean(rec.response_paused_until ?? rec.paused_until),
+      pausedUntil:
+        this.asString(rec.response_paused_until) ??
+        this.asString(rec.paused_until),
+      leadStatus: this.asString(rec.lead_status) ?? this.asString(rec.leadStatus),
+    };
+  }
+
   private extractList(payload: unknown): unknown[] {
     if (Array.isArray(payload)) return payload;
     const rec = this.asRecord(payload);
@@ -287,14 +427,18 @@ export class OzapApiClient {
     const rec = this.asRecord(raw);
     if (!rec) return null;
     const nestedContent = this.asRecord(rec.content);
+    const mediaType =
+      this.asString(rec.media_type) ?? this.asString(rec.mediaType);
+    const mediaUrl = this.asString(rec.media_url) ?? this.asString(rec.mediaUrl);
     const text =
       this.asString(rec.content) ??
       this.asString(rec.text) ??
       this.asString(rec.body) ??
       this.asString(rec.message) ??
       this.asString(nestedContent?.text) ??
-      this.asString(nestedContent?.body);
-    if (!text) return null;
+      this.asString(nestedContent?.body) ??
+      (mediaType && mediaType !== 'text' ? `[${mediaType}]` : null);
+    if (!text && !mediaUrl) return null;
 
     const messageType = this.asString(rec.message_type);
     const source =
@@ -331,15 +475,24 @@ export class OzapApiClient {
       direction = 'in';
     }
 
+    let kind: OzapChatKind = direction === 'in' ? 'client' : 'agent';
+    if (source === 'lead_message') kind = 'client';
+    if (source === 'ai_message' || source === 'ai') kind = 'ai';
+    if (source === 'follow_up') kind = 'follow_up';
+    if (source === 'user_message' || source === 'manual') kind = 'agent';
+
     return {
       id:
         this.asString(rec.id) ??
         this.asString(rec.message_id) ??
         `msg-${index}`,
       direction,
-      text,
+      kind,
+      text: text ?? '',
       at: this.asTimestamp(rec),
       source,
+      mediaType,
+      mediaUrl,
     };
   }
 

@@ -1,0 +1,151 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuthenticatedUser } from '../common/types/authenticated-user';
+import { requireTenantId } from '../common/utils/tenant';
+import {
+  OzapApiClient,
+  OzapApiError,
+  type OzapChatMessage,
+  type OzapInboxChat,
+} from './ozap-api.client';
+
+const IA_PAUSED_UNTIL = '2099-12-31T23:59:59.000Z';
+
+@Injectable()
+export class WhatsappInboxService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ozapApi: OzapApiClient,
+  ) {}
+
+  async listChats(requester: AuthenticatedUser) {
+    const { instanceId } = await this.requireInstance(requester);
+    try {
+      const chats = await this.ozapApi.listChats(instanceId);
+      const links = await this.prisma.leadOzapLink.findMany({
+        where: { instanceId },
+        select: {
+          chatId: true,
+          leadId: true,
+          lead: { select: { id: true, nome: true } },
+        },
+      });
+      const byChat = new Map(
+        links.map((link) => [link.chatId, link] as const),
+      );
+      return {
+        available: true as const,
+        instanceId,
+        chats: chats.map((chat) => {
+          const link =
+            byChat.get(chat.chatId) ??
+            byChat.get(chat.phone ?? '') ??
+            [...byChat.entries()].find(([id]) =>
+              id.includes(chat.phone ?? '___'),
+            )?.[1];
+          return {
+            ...chat,
+            leadId: link?.leadId ?? null,
+            leadNome: link?.lead.nome ?? null,
+          };
+        }),
+      };
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  async listMessages(chatId: string, requester: AuthenticatedUser) {
+    const { instanceId } = await this.requireInstance(requester);
+    try {
+      const messages = await this.ozapApi.listMessages({ instanceId, chatId });
+      return { available: true as const, chatId, messages };
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  async sendMessage(
+    chatId: string,
+    content: string,
+    requester: AuthenticatedUser,
+  ) {
+    const { instanceId } = await this.requireInstance(requester);
+    const text = content.trim();
+    if (!text) {
+      throw new BadRequestException('Informe a mensagem.');
+    }
+    try {
+      await this.ozapApi.pauseChat({
+        instanceId,
+        chatId,
+        pausedUntil: IA_PAUSED_UNTIL,
+      });
+      await this.ozapApi.sendChatText({ instanceId, chatId, text });
+      return { ok: true as const, aiPaused: true as const };
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  async assumeChat(chatId: string, requester: AuthenticatedUser) {
+    const { instanceId } = await this.requireInstance(requester);
+    try {
+      await this.ozapApi.pauseChat({
+        instanceId,
+        chatId,
+        pausedUntil: IA_PAUSED_UNTIL,
+      });
+      return { ok: true as const, aiPaused: true as const };
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  async resumeChat(chatId: string, requester: AuthenticatedUser) {
+    const { instanceId } = await this.requireInstance(requester);
+    try {
+      await this.ozapApi.pauseChat({
+        instanceId,
+        chatId,
+        pausedUntil: null,
+      });
+      return { ok: true as const, aiPaused: false as const };
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  private async requireInstance(requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    if (!this.ozapApi.isConfigured()) {
+      throw new ServiceUnavailableException(
+        'Integração WhatsApp (OZap) não configurada.',
+      );
+    }
+    const connection = await this.prisma.tenantOzapConnection.findFirst({
+      where: { tenantId, ativo: true },
+      select: { instanceId: true },
+    });
+    if (!connection) {
+      throw new NotFoundException(
+        'A imobiliária ainda não tem instância WhatsApp conectada.',
+      );
+    }
+    return connection;
+  }
+
+  private throwOzap(error: unknown): never {
+    if (error instanceof OzapApiError) {
+      throw new ServiceUnavailableException(error.message);
+    }
+    throw error;
+  }
+}
+
+export type { OzapChatMessage, OzapInboxChat };
