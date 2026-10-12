@@ -101,9 +101,35 @@ export class OzapApiClient {
       throw new OzapApiError(0, 'Chat do WhatsApp inválido.');
     }
 
-    const url = this.messagesUrl(params.instanceId, chatId);
-    const payload = await this.getJson(url, apiKey);
-    return this.normalizeMessages(payload);
+    let lastError: OzapApiError | null = null;
+    for (const id of this.chatIdVariants(chatId)) {
+      try {
+        const payload = await this.getJson(
+          this.messagesUrl(params.instanceId, id),
+          apiKey,
+        );
+        return this.normalizeMessages(payload);
+      } catch (error) {
+        if (
+          error instanceof OzapApiError &&
+          (error.status === 404 || error.status === 405)
+        ) {
+          lastError = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw lastError ?? new OzapApiError(0, 'OZap recusou a leitura.');
+  }
+
+  private chatIdVariants(chatId: string): string[] {
+    const raw = chatId.trim();
+    const digits = raw.replace(/@c\.us$/i, '').replace(/\D/g, '');
+    const variants = [raw];
+    if (digits && digits !== raw) variants.push(digits);
+    if (digits) variants.push(`${digits}@c.us`);
+    return [...new Set(variants)];
   }
 
   normalizeMessages(payload: unknown): OzapChatMessage[] {

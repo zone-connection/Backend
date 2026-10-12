@@ -1,5 +1,4 @@
 import {
-  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -2902,7 +2901,8 @@ export class LeadsService {
     requester: AuthenticatedUser,
   ): Promise<{
     available: boolean;
-    reason?: 'not_linked' | 'not_configured';
+    reason?: 'not_linked' | 'not_configured' | 'ozap_error';
+    error?: string;
     chatId: string | null;
     messages: OzapChatMessage[];
   }> {
@@ -2938,7 +2938,17 @@ export class LeadsService {
         messages,
       };
     } catch (error) {
-      this.throwOzap(error);
+      const message =
+        error instanceof OzapApiError
+          ? error.message
+          : 'Não foi possível ler o WhatsApp no OZap.';
+      return {
+        available: false,
+        reason: 'ozap_error',
+        error: message,
+        chatId: link.chatId,
+        messages: [],
+      };
     }
   }
 
@@ -2980,7 +2990,7 @@ export class LeadsService {
 
   private throwOzap(error: unknown): never {
     if (error instanceof OzapApiError) {
-      throw new BadGatewayException(error.message);
+      throw new ServiceUnavailableException(error.message);
     }
     throw error;
   }
