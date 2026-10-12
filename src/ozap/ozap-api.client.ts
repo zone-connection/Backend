@@ -154,31 +154,21 @@ export class OzapApiClient {
 
   async listChats(instanceId: number): Promise<OzapInboxChat[]> {
     const apiKey = this.requireApiKey();
+    const payload = await this.getJson(
+      `${this.baseUrl()}/api/v1/${instanceId}/chats?limit=40&page=1`,
+      apiKey,
+    );
+    const rec = this.asRecord(payload);
+    const data = this.asRecord(rec?.data) ?? rec;
+    const rows = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.chats)
+        ? data.chats
+        : this.extractList(payload);
     const chats: OzapInboxChat[] = [];
-    let page = 1;
-    let totalPages = 1;
-    while (page <= totalPages && page <= 10) {
-      const payload = await this.getJson(
-        `${this.baseUrl()}/api/v1/${instanceId}/chats?limit=100&page=${page}`,
-        apiKey,
-      );
-      const rec = this.asRecord(payload);
-      const data = this.asRecord(rec?.data) ?? rec;
-      const rows = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.chats)
-          ? data.chats
-          : this.extractList(payload);
-      for (const row of rows) {
-        const chat = this.normalizeChat(row);
-        if (chat) chats.push(chat);
-      }
-      const pagination = this.asRecord(
-        this.asRecord(data)?.pagination ?? rec?.pagination,
-      );
-      const reported = Number(pagination?.totalPages ?? 1);
-      totalPages = Number.isFinite(reported) && reported > 0 ? reported : 1;
-      page += 1;
+    for (const row of rows) {
+      const chat = this.normalizeChat(row);
+      if (chat) chats.push(chat);
     }
     return chats;
   }
@@ -212,8 +202,9 @@ export class OzapApiClient {
   private chatIdVariants(chatId: string): string[] {
     const raw = chatId.trim();
     const digits = this.phoneDigits(raw);
-    const variants = [raw];
-    if (digits && digits !== raw) variants.push(digits);
+    const variants: string[] = [];
+    if (digits) variants.push(digits);
+    if (raw && raw !== digits) variants.push(raw);
     if (digits) {
       variants.push(`${digits}@s.whatsapp.net`);
       variants.push(`${digits}@c.us`);

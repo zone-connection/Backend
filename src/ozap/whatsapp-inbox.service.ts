@@ -27,27 +27,32 @@ export class WhatsappInboxService {
     const { instanceId } = await this.requireInstance(requester);
     try {
       const chats = await this.ozapApi.listChats(instanceId);
-      const links = await this.prisma.leadOzapLink.findMany({
-        where: { instanceId },
-        select: {
-          chatId: true,
-          leadId: true,
-          lead: { select: { id: true, nome: true } },
-        },
-      });
-      const byChat = new Map(
-        links.map((link) => [link.chatId, link] as const),
-      );
+      const chatIds = [
+        ...new Set(
+          chats.flatMap((chat) =>
+            [chat.chatId, chat.phone].filter((id): id is string => Boolean(id)),
+          ),
+        ),
+      ];
+      const links =
+        chatIds.length === 0
+          ? []
+          : await this.prisma.leadOzapLink.findMany({
+              where: { instanceId, chatId: { in: chatIds } },
+              select: {
+                chatId: true,
+                leadId: true,
+                lead: { select: { id: true, nome: true } },
+              },
+            });
+      const byChat = new Map(links.map((link) => [link.chatId, link] as const));
       return {
         available: true as const,
         instanceId,
         chats: chats.map((chat) => {
           const link =
             byChat.get(chat.chatId) ??
-            byChat.get(chat.phone ?? '') ??
-            [...byChat.entries()].find(([id]) =>
-              id.includes(chat.phone ?? '___'),
-            )?.[1];
+            (chat.phone ? byChat.get(chat.phone) : undefined);
           return {
             ...chat,
             leadId: link?.leadId ?? null,
