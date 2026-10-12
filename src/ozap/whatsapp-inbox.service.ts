@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
@@ -21,6 +22,7 @@ export class WhatsappInboxService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ozapApi: OzapApiClient,
+    private readonly config: ConfigService,
   ) {}
 
   async listChats(requester: AuthenticatedUser, page = 1, limit = 50) {
@@ -91,6 +93,64 @@ export class WhatsappInboxService {
     await this.requireInstance(requester);
     try {
       return await this.ozapApi.fetchMedia(url, hint);
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  publicMediaUrl(raw: string | undefined): string | null {
+    const url = raw?.trim() || null;
+    if (!url) return null;
+    if (
+      this.ozapApi.isAllowedMediaHost(url) &&
+      !this.ozapApi.needsMediaProxy(url)
+    ) {
+      return url;
+    }
+    return null;
+  }
+
+  async transcribeAudio(rawUrl: string, requester: AuthenticatedUser) {
+    await this.requireInstance(requester);
+    const url = rawUrl.trim();
+    if (!url) {
+      throw new BadRequestException('Informe o áudio.');
+    }
+    const apiKey = this.config.get<string>('OPENAI_API_KEY')?.trim();
+    if (!apiKey) {
+      throw new ServiceUnavailableException(
+        'Transcrição indisponível: OPENAI_API_KEY não configurada.',
+      );
+    }
+    try {
+      const file = await this.ozapApi.fetchMedia(url, 'audio');
+      const form = new FormData();
+      form.append(
+        'file',
+        new Blob([new Uint8Array(file.body)], {
+          type: file.contentType || 'audio/ogg',
+        }),
+        'audio.ogg',
+      );
+      form.append('model', 'whisper-1');
+      form.append('language', 'pt');
+      const response = await fetch(
+        'https://api.openai.com/v1/audio/transcriptions',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}` },
+          body: form,
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { text?: string; error?: { message?: string } }
+        | null;
+      if (!response.ok) {
+        throw new ServiceUnavailableException(
+          payload?.error?.message || 'A OpenAI recusou a transcrição.',
+        );
+      }
+      return { text: payload?.text?.trim() || '' };
     } catch (error) {
       this.throwOzap(error);
     }

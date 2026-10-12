@@ -5,8 +5,9 @@ import {
   Param,
   Post,
   Query,
-  StreamableFile,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { SendLeadWhatsappDto } from '../leads/dto/send-lead-whatsapp.dto';
@@ -21,9 +22,25 @@ export class WhatsappInboxController {
     @Query('url') url: string,
     @Query('type') type: string | undefined,
     @CurrentUser() requester: AuthenticatedUser,
+    @Res() res: Response,
   ) {
+    const publicUrl = this.inbox.publicMediaUrl(url);
+    if (publicUrl) {
+      res.redirect(302, publicUrl);
+      return;
+    }
     const file = await this.inbox.streamMedia(url, type, requester);
-    return new StreamableFile(file.body, { type: file.contentType });
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(file.body);
+  }
+
+  @Post('media/transcribe')
+  transcribe(
+    @Body() body: { url?: string },
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.inbox.transcribeAudio(body.url ?? '', requester);
   }
 
   @Get('chats')
