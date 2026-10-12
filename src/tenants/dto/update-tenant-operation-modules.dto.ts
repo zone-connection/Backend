@@ -1,0 +1,45 @@
+import { IsBoolean, IsOptional } from 'class-validator';
+
+/** Só operações imobiliárias — o admin do tenant não altera o plano CRM. */
+export class UpdateTenantOperationModulesDto {
+  @IsOptional()
+  @IsBoolean()
+  captacao?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  imoveisUsados?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  locacao?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  parcerias?: boolean;
+
+  /** Oculta Clientes e Funil de Clientes do menu (telas continuam acessíveis). */
+  @IsOptional()
+  @IsBoolean()
+  hideClientesNav?: boolean;
+
+  /** Admin vê clientes dos corretores na lista e no funil. */
+  @IsOptional()
+  @IsBoolean()
+  adminVerClientesCorretor?: boolean;
+
+  /** Gerentes veem leads de outras equipes e o pool geral. */
+  @IsOptional()
+  @IsBoolean()
+  gerenteVerLeadsGerais?: boolean;
+
+  /** Corretor, trainee e analista criam propostas da própria carteira. */
+  @IsOptional()
+  @IsBoolean()
+  corretoresCriamPropostas?: boolean;
+
+  /** Mostra o Mural de Chaves em Gestão, se captação, locação ou usados estiver ativo. */
+  @IsOptional()
+  @IsBoolean()
+  muralChavesOptIn?: boolean;
+}

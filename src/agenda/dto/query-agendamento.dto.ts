@@ -5,9 +5,9 @@ import {
 } from './create-agendamento.dto';
 
 export class QueryAgendamentoDto {
-  /** Admin/gerente: filtra pelo corretor dono do lead. */
+  /** Admin/gerente: filtra pela agenda de um corretor (ou gerente, se admin). */
   @IsOptional()
-  @IsUUID('4', { message: 'Corretor inválido.' })
+  @IsUUID('4', { message: 'Usuário inválido.' })
   corretorId?: string;
 
   /** Admin/gerente: filtra pela equipe (membros + gerente). */
@@ -32,4 +32,14 @@ export class QueryAgendamentoDto {
   @IsOptional()
   @IsISO8601({}, { message: 'Data final inválida.' })
   to?: string;
+
+  /** Mostra na agenda principal as visitas deste empreendimento. */
+  @IsOptional()
+  @IsUUID('4', { message: 'Empreendimento inválido.' })
+  empreendimentoId?: string;
+
+  /** Mostra na agenda principal as visitas deste imóvel. */
+  @IsOptional()
+  @IsUUID('4', { message: 'Imóvel inválido.' })
+  imovelId?: string;
 }

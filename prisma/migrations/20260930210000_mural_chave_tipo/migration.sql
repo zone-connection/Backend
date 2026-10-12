@@ -1,0 +1,1 @@
+ALTER TABLE "mural_chaves" ADD COLUMN "tipo" TEXT NOT NULL DEFAULT '';
