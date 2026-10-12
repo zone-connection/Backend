@@ -29,20 +29,23 @@ describe('OzapApiClient.sendText', () => {
     assert.equal(calls.length, 1);
     assert.equal(
       calls[0]!.url,
-      'https://api.ozaponline.com/api/v1/1143/chats/5511999998888/messages',
+      'https://api.ozaponline.com/api/v1/1143/messages/send',
     );
     assert.equal(
-      (calls[0]!.init.headers as Record<string, string>).Authorization,
-      'Bearer test-key',
+      (calls[0]!.init.headers as Record<string, string>)['X-API-Key'],
+      'test-key',
     );
-    assert.equal(calls[0]!.init.body, JSON.stringify({ content: 'Novo lead' }));
+    assert.equal(
+      calls[0]!.init.body,
+      JSON.stringify({ to: '5511999998888', message: 'Novo lead' }),
+    );
   });
 
   it('cai no fallback /messages quando o chat retorna 404', async () => {
     const urls: string[] = [];
     globalThis.fetch = (async (url: string | URL) => {
       urls.push(String(url));
-      if (urls.length === 1) return new Response('not found', { status: 404 });
+      if (urls.length < 3) return new Response('not found', { status: 404 });
       return new Response('{}', { status: 200 });
     }) as typeof fetch;
 
@@ -57,30 +60,36 @@ describe('OzapApiClient.sendText', () => {
     });
 
     assert.deepEqual(urls, [
+      'https://api.ozaponline.com/api/v1/1143/messages/send',
       'https://api.ozaponline.com/api/v1/1143/chats/5511999998888/messages',
       'https://api.ozaponline.com/api/v1/1143/messages',
     ]);
   });
 
   it('GET lista mensagens do chat', async () => {
-    globalThis.fetch = (async (url: string | URL) => {
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
       assert.equal(
         String(url),
         'https://api.ozaponline.com/api/v1/1143/chats/5511999998888/messages',
       );
+      assert.equal(
+        (init?.headers as Record<string, string>)['X-API-Key'],
+        'test-key',
+      );
       return new Response(
         JSON.stringify({
+          success: true,
           data: [
             {
-              id: '1',
+              id: 1,
               content: 'Oi',
-              direction: 'in',
+              message_type: 'lead_message',
               timestamp: '2026-10-12T12:00:00.000Z',
             },
             {
-              id: '2',
+              id: 2,
               content: 'Qual sua renda?',
-              source: 'ai',
+              message_type: 'ai_message',
               timestamp: '2026-10-12T12:01:00.000Z',
             },
           ],

@@ -40,21 +40,21 @@ export class OzapApiClient {
   }
 
   /**
-   * Envia texto para um número via API de entrada do OZap.
-   * Documentação no painel: GET/POST /api/v1/{instanceId}/chats/{chatId}/messages
+   * Envia texto via API de entrada do OZap.
+   * Docs: POST /api/v1/{instanceId}/messages/send  header X-API-Key
    */
   async sendText(params: {
     instanceId: number;
     to: string;
     text: string;
   }): Promise<void> {
-    const chatId = toWhatsAppChatId(params.to);
-    if (!chatId) {
+    const to = toWhatsAppChatId(params.to);
+    if (!to) {
       throw new OzapApiError(0, 'Número de WhatsApp inválido.');
     }
     await this.sendChatText({
       instanceId: params.instanceId,
-      chatId,
+      chatId: to,
       text: params.text,
     });
   }
@@ -65,29 +65,40 @@ export class OzapApiClient {
     text: string;
   }): Promise<void> {
     const apiKey = this.requireApiKey();
-    const chatId = params.chatId.trim();
-    if (!chatId) {
+    const to = this.phoneDigits(params.chatId);
+    if (!to) {
       throw new OzapApiError(0, 'Chat do WhatsApp inválido.');
     }
 
     const base = this.baseUrl();
-    const primary = this.messagesUrl(params.instanceId, chatId);
-    const fallback = `${base}/api/v1/${params.instanceId}/messages`;
+    const primary = `${base}/api/v1/${params.instanceId}/messages/send`;
+    const legacyChat = this.messagesUrl(params.instanceId, to);
+    const legacyMessages = `${base}/api/v1/${params.instanceId}/messages`;
 
     try {
-      await this.postJson(primary, apiKey, { content: params.text });
+      await this.postJson(primary, apiKey, { to, message: params.text });
     } catch (error) {
       if (
-        error instanceof OzapApiError &&
-        (error.status === 404 || error.status === 405)
+        !(error instanceof OzapApiError) ||
+        (error.status !== 404 && error.status !== 405)
       ) {
-        await this.postJson(fallback, apiKey, {
-          to: chatId,
-          content: params.text,
-        });
-        return;
+        throw error;
       }
-      throw error;
+      try {
+        await this.postJson(legacyChat, apiKey, { content: params.text });
+      } catch (legacyError) {
+        if (
+          legacyError instanceof OzapApiError &&
+          (legacyError.status === 404 || legacyError.status === 405)
+        ) {
+          await this.postJson(legacyMessages, apiKey, {
+            to,
+            content: params.text,
+          });
+          return;
+        }
+        throw legacyError;
+      }
     }
   }
 
@@ -125,11 +136,29 @@ export class OzapApiClient {
 
   private chatIdVariants(chatId: string): string[] {
     const raw = chatId.trim();
-    const digits = raw.replace(/@c\.us$/i, '').replace(/\D/g, '');
+    const digits = this.phoneDigits(raw);
     const variants = [raw];
     if (digits && digits !== raw) variants.push(digits);
-    if (digits) variants.push(`${digits}@c.us`);
+    if (digits) {
+      variants.push(`${digits}@s.whatsapp.net`);
+      variants.push(`${digits}@c.us`);
+    }
     return [...new Set(variants)];
+  }
+
+  private phoneDigits(chatId: string): string {
+    return chatId
+      .trim()
+      .replace(/@s\.whatsapp\.net$/i, '')
+      .replace(/@c\.us$/i, '')
+      .replace(/\D/g, '');
+  }
+
+  private authHeaders(apiKey: string): Record<string, string> {
+    return {
+      'X-API-Key': apiKey,
+      Accept: 'application/json',
+    };
   }
 
   normalizeMessages(payload: unknown): OzapChatMessage[] {
@@ -161,10 +190,7 @@ export class OzapApiClient {
     try {
       response = await fetch(url, {
         method: 'GET',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-        },
+        headers: this.authHeaders(apiKey),
         signal: AbortSignal.timeout(OZAP_LIST_TIMEOUT_MS),
       });
     } catch (error) {
@@ -209,8 +235,7 @@ export class OzapApiClient {
       response = await fetch(url, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
+          ...this.authHeaders(apiKey),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
@@ -271,7 +296,9 @@ export class OzapApiClient {
       this.asString(nestedContent?.body);
     if (!text) return null;
 
+    const messageType = this.asString(rec.message_type);
     const source =
+      messageType ??
       this.asString(rec.source) ??
       this.asString(rec.role) ??
       this.asString(rec.sender);
@@ -286,6 +313,9 @@ export class OzapApiClient {
       source === 'ai' ||
       source === 'bot' ||
       source === 'agent' ||
+      source === 'ai_message' ||
+      source === 'user_message' ||
+      source === 'follow_up' ||
       directionRaw === 'out' ||
       directionRaw === 'outgoing' ||
       directionRaw === 'sent'
@@ -293,6 +323,7 @@ export class OzapApiClient {
       direction = 'out';
     }
     if (
+      source === 'lead_message' ||
       directionRaw === 'in' ||
       directionRaw === 'incoming' ||
       directionRaw === 'received'
@@ -330,6 +361,9 @@ export class OzapApiClient {
   }
 
   private asString(value: unknown): string | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed || null;
