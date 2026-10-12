@@ -46,6 +46,7 @@ export type OzapInboxChat = {
 @Injectable()
 export class OzapApiClient {
   private readonly logger = new Logger(OzapApiClient.name);
+  private readonly resolvedChatIds = new Map<string, string>();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -131,12 +132,13 @@ export class OzapApiClient {
     }
 
     let lastError: OzapApiError | null = null;
-    for (const id of this.chatIdVariants(chatId)) {
+    for (const id of this.orderedChatIds(params.instanceId, chatId)) {
       try {
         const payload = await this.getJson(
-          this.messagesUrl(params.instanceId, id),
+          `${this.messagesUrl(params.instanceId, id)}?limit=80`,
           apiKey,
         );
+        this.rememberChatId(params.instanceId, chatId, id);
         return this.normalizeMessages(payload);
       } catch (error) {
         if (
@@ -180,10 +182,11 @@ export class OzapApiClient {
   }): Promise<void> {
     const apiKey = this.requireApiKey();
     let lastError: OzapApiError | null = null;
-    for (const id of this.chatIdVariants(params.chatId)) {
+    for (const id of this.orderedChatIds(params.instanceId, params.chatId)) {
       const url = `${this.baseUrl()}/api/v1/${params.instanceId}/chats/${encodeURIComponent(id)}`;
       try {
         await this.patchJson(url, apiKey, { paused_until: params.pausedUntil });
+        this.rememberChatId(params.instanceId, params.chatId, id);
         return;
       } catch (error) {
         if (
@@ -199,12 +202,27 @@ export class OzapApiClient {
     throw lastError ?? new OzapApiError(0, 'OZap recusou pausar a IA.');
   }
 
+  private orderedChatIds(instanceId: number, chatId: string): string[] {
+    const remembered = this.resolvedChatIds.get(this.chatCacheKey(instanceId, chatId));
+    const variants = this.chatIdVariants(chatId);
+    if (!remembered) return variants;
+    return [remembered, ...variants.filter((id) => id !== remembered)];
+  }
+
+  private rememberChatId(instanceId: number, chatId: string, resolved: string) {
+    this.resolvedChatIds.set(this.chatCacheKey(instanceId, chatId), resolved);
+  }
+
+  private chatCacheKey(instanceId: number, chatId: string): string {
+    return `${instanceId}:${this.phoneDigits(chatId) || chatId.trim()}`;
+  }
+
   private chatIdVariants(chatId: string): string[] {
     const raw = chatId.trim();
     const digits = this.phoneDigits(raw);
     const variants: string[] = [];
-    if (digits) variants.push(digits);
-    if (raw && raw !== digits) variants.push(raw);
+    if (raw) variants.push(raw);
+    if (digits && digits !== raw) variants.push(digits);
     if (digits) {
       variants.push(`${digits}@s.whatsapp.net`);
       variants.push(`${digits}@c.us`);

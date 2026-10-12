@@ -70,7 +70,7 @@ describe('OzapApiClient.sendText', () => {
     globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
       assert.equal(
         String(url),
-        'https://api.ozaponline.com/api/v1/1143/chats/5511999998888/messages',
+        'https://api.ozaponline.com/api/v1/1143/chats/5511999998888/messages?limit=80',
       );
       assert.equal(
         (init?.headers as Record<string, string>)['X-API-Key'],
