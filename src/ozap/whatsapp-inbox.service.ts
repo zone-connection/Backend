@@ -74,10 +74,31 @@ export class WhatsappInboxService {
     const { instanceId } = await this.requireInstance(requester);
     try {
       const messages = await this.ozapApi.listMessages({ instanceId, chatId });
-      return { available: true as const, chatId, messages };
+      return {
+        available: true as const,
+        chatId,
+        messages: messages.map((message) => ({
+          ...message,
+          mediaUrl: this.toCrmMediaUrl(message.mediaUrl),
+        })),
+      };
     } catch (error) {
       this.throwOzap(error);
     }
+  }
+
+  async streamMedia(url: string, hint: string | undefined, requester: AuthenticatedUser) {
+    await this.requireInstance(requester);
+    try {
+      return await this.ozapApi.fetchMedia(url, hint);
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  private toCrmMediaUrl(url: string | null): string | null {
+    if (!url) return null;
+    return `/api/whatsapp/media?url=${encodeURIComponent(url)}`;
   }
 
   async sendMessage(

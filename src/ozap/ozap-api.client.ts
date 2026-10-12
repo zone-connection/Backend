@@ -4,6 +4,8 @@ import { toWhatsAppChatId } from '../common/utils/phone';
 import {
   OZAP_API_BASE_DEFAULT,
   OZAP_LIST_TIMEOUT_MS,
+  OZAP_MEDIA_MAX_BYTES,
+  OZAP_MEDIA_TIMEOUT_MS,
   OZAP_SEND_TIMEOUT_MS,
 } from './ozap.constants';
 
@@ -152,6 +154,53 @@ export class OzapApiClient {
       }
     }
     throw lastError ?? new OzapApiError(0, 'OZap recusou a leitura.');
+  }
+
+  async fetchMedia(
+    rawUrl: string,
+    hint?: string | null,
+  ): Promise<{
+    body: Buffer;
+    contentType: string;
+  }> {
+    const apiKey = this.requireApiKey();
+    const url = this.resolveMediaUrl(rawUrl);
+    if (!url || !this.isAllowedMediaHost(url)) {
+      throw new OzapApiError(0, 'URL de mídia inválida.');
+    }
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers: this.authHeaders(apiKey),
+        signal: AbortSignal.timeout(OZAP_MEDIA_TIMEOUT_MS),
+        redirect: 'follow',
+      });
+    } catch {
+      throw new OzapApiError(0, 'Não foi possível baixar o áudio.');
+    }
+    if (!response.ok) {
+      throw new OzapApiError(
+        response.status,
+        `OZap recusou a mídia (${response.status}).`,
+      );
+    }
+    const buf = Buffer.from(await response.arrayBuffer());
+    if (buf.byteLength > OZAP_MEDIA_MAX_BYTES) {
+      throw new OzapApiError(0, 'Arquivo de mídia grande demais.');
+    }
+    let contentType =
+      response.headers.get('content-type')?.split(';')[0]?.trim() ||
+      this.guessMediaType(url);
+    if (
+      !contentType.startsWith('audio/') &&
+      !contentType.startsWith('image/')
+    ) {
+      if (buf.subarray(0, 4).toString() === 'OggS') contentType = 'audio/ogg';
+      else if (hint === 'audio') contentType = 'audio/ogg';
+      else if (hint === 'image') contentType = 'image/jpeg';
+    }
+    return { body: buf, contentType };
   }
 
   async listChats(
@@ -464,9 +513,22 @@ export class OzapApiClient {
     const rec = this.asRecord(raw);
     if (!rec) return null;
     const nestedContent = this.asRecord(rec.content);
-    const mediaType =
-      this.asString(rec.media_type) ?? this.asString(rec.mediaType);
-    const mediaUrl = this.asString(rec.media_url) ?? this.asString(rec.mediaUrl);
+    const nestedMedia = this.asRecord(rec.media);
+    const mediaType = (
+      this.asString(rec.media_type) ??
+      this.asString(rec.mediaType) ??
+      this.asString(nestedMedia?.type) ??
+      this.asString(nestedContent?.media_type)
+    )?.toLowerCase() ?? null;
+    const mediaUrl = this.resolveMediaUrl(
+      this.asString(rec.media_url) ??
+        this.asString(rec.mediaUrl) ??
+        this.asString(nestedMedia?.url) ??
+        this.asString(nestedContent?.media_url) ??
+        this.asString(rec.file_url) ??
+        this.asString(rec.audio_url) ??
+        this.asString(rec.image_url),
+    );
     const text =
       this.asString(rec.content) ??
       this.asString(rec.text) ??
@@ -541,6 +603,43 @@ export class OzapApiClient {
       return new Date(ms).toISOString();
     }
     return this.asString(raw);
+  }
+
+  private resolveMediaUrl(raw: string | null): string | null {
+    if (!raw) return null;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith('//')) return `https:${raw}`;
+    if (raw.startsWith('/')) return `${this.baseUrl()}${raw}`;
+    return raw;
+  }
+
+  private isAllowedMediaHost(url: string): boolean {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      return (
+        host === 'api.ozaponline.com' ||
+        host.endsWith('.ozaponline.com') ||
+        host === 'ozaponline.com' ||
+        host.endsWith('.whatsapp.net') ||
+        host === 'whatsapp.net' ||
+        host.endsWith('.whatsapp.com') ||
+        host.endsWith('.fbcdn.net')
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private guessMediaType(url: string): string {
+    const lower = url.toLowerCase();
+    if (lower.includes('.ogg') || lower.includes('.opus')) return 'audio/ogg';
+    if (lower.includes('.mp3')) return 'audio/mpeg';
+    if (lower.includes('.m4a') || lower.includes('.mp4')) return 'audio/mp4';
+    if (lower.includes('.wav')) return 'audio/wav';
+    if (lower.includes('.jpg') || lower.includes('.jpeg')) return 'image/jpeg';
+    if (lower.includes('.png')) return 'image/png';
+    if (lower.includes('.webp')) return 'image/webp';
+    return 'application/octet-stream';
   }
 
   private asRecord(value: unknown): Record<string, unknown> | null {

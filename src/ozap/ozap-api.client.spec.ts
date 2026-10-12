@@ -112,6 +112,49 @@ describe('OzapApiClient.sendText', () => {
     assert.equal(messages[1]!.text, 'Qual sua renda?');
   });
 
+  it('normaliza áudio com media_url', async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: [
+            {
+              id: 9,
+              content: 'Audio',
+              message_type: 'lead_message',
+              media_type: 'audio',
+              media_url:
+                'https://api.ozaponline.com/media/voice.ogg',
+            },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    const client = new OzapApiClient({
+      get: (key: string) => (key === 'OZAP_API_KEY' ? 'test-key' : undefined),
+    } as never);
+    const messages = await client.listMessages({
+      instanceId: 1143,
+      chatId: '5511999998888',
+    });
+    assert.equal(messages[0]!.mediaType, 'audio');
+    assert.equal(
+      messages[0]!.mediaUrl,
+      'https://api.ozaponline.com/media/voice.ogg',
+    );
+  });
+
+  it('recusa mídia de host estranho', async () => {
+    const client = new OzapApiClient({
+      get: (key: string) => (key === 'OZAP_API_KEY' ? 'test-key' : undefined),
+    } as never);
+    await assert.rejects(
+      () => client.fetchMedia('https://evil.example/audio.ogg'),
+      OzapApiError,
+    );
+  });
+
   it('recusa número inválido', async () => {
     const client = new OzapApiClient({
       get: (key: string) => (key === 'OZAP_API_KEY' ? 'test-key' : undefined),

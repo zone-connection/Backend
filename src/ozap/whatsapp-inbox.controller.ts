@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  StreamableFile,
+} from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { SendLeadWhatsappDto } from '../leads/dto/send-lead-whatsapp.dto';
@@ -7,6 +15,16 @@ import { WhatsappInboxService } from './whatsapp-inbox.service';
 @Controller('whatsapp')
 export class WhatsappInboxController {
   constructor(private readonly inbox: WhatsappInboxService) {}
+
+  @Get('media')
+  async media(
+    @Query('url') url: string,
+    @Query('type') type: string | undefined,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    const file = await this.inbox.streamMedia(url, type, requester);
+    return new StreamableFile(file.body, { type: file.contentType });
+  }
 
   @Get('chats')
   listChats(
