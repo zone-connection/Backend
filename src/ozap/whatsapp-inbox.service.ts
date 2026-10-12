@@ -1,13 +1,20 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import {
+  canSendWhatsappInbox,
+  seesAllWhatsappInbox,
+} from '../common/utils/roles';
+import { TeamScopeService } from '../equipes/team-scope.service';
 import {
   OzapApiClient,
   OzapApiError,
@@ -23,10 +30,14 @@ export class WhatsappInboxService {
     private readonly prisma: PrismaService,
     private readonly ozapApi: OzapApiClient,
     private readonly config: ConfigService,
+    private readonly teamScope: TeamScopeService,
   ) {}
 
   async listChats(requester: AuthenticatedUser, page = 1, limit = 50) {
     const { instanceId } = await this.requireInstance(requester);
+    if (!seesAllWhatsappInbox(requester.role)) {
+      return this.listScopedChats(requester, instanceId, page, limit);
+    }
     try {
       const listed = await this.ozapApi.listChats(instanceId, page, limit);
       const chats = listed.chats;
@@ -56,6 +67,7 @@ export class WhatsappInboxService {
         limit: listed.limit,
         total: listed.total,
         hasMore: listed.hasMore,
+        canSend: true,
         chats: chats.map((chat) => {
           const link =
             byChat.get(chat.chatId) ??
@@ -74,6 +86,7 @@ export class WhatsappInboxService {
 
   async listMessages(chatId: string, requester: AuthenticatedUser) {
     const { instanceId } = await this.requireInstance(requester);
+    await this.assertCanViewChat(requester, instanceId, chatId);
     try {
       const messages = await this.ozapApi.listMessages({ instanceId, chatId });
       return {
@@ -172,7 +185,9 @@ export class WhatsappInboxService {
     content: string,
     requester: AuthenticatedUser,
   ) {
+    this.assertCanSend(requester);
     const { instanceId } = await this.requireInstance(requester);
+    await this.assertCanViewChat(requester, instanceId, chatId);
     const text = content.trim();
     if (!text) {
       throw new BadRequestException('Informe a mensagem.');
@@ -191,7 +206,9 @@ export class WhatsappInboxService {
   }
 
   async assumeChat(chatId: string, requester: AuthenticatedUser) {
+    this.assertCanSend(requester);
     const { instanceId } = await this.requireInstance(requester);
+    await this.assertCanViewChat(requester, instanceId, chatId);
     try {
       await this.ozapApi.pauseChat({
         instanceId,
@@ -205,7 +222,9 @@ export class WhatsappInboxService {
   }
 
   async resumeChat(chatId: string, requester: AuthenticatedUser) {
+    this.assertCanSend(requester);
     const { instanceId } = await this.requireInstance(requester);
+    await this.assertCanViewChat(requester, instanceId, chatId);
     try {
       await this.ozapApi.pauseChat({
         instanceId,
@@ -215,6 +234,119 @@ export class WhatsappInboxService {
       return { ok: true as const, aiPaused: false as const };
     } catch (error) {
       this.throwOzap(error);
+    }
+  }
+
+  private assertCanSend(requester: AuthenticatedUser) {
+    if (!canSendWhatsappInbox(requester.role)) {
+      throw new ForbiddenException(
+        'Seu perfil não pode enviar mensagens no WhatsApp.',
+      );
+    }
+  }
+
+  private async chatLeadWhere(
+    requester: AuthenticatedUser,
+  ): Promise<Prisma.LeadWhereInput> {
+    const tenantId = requireTenantId(requester);
+    if (requester.role === Role.gerente) {
+      return this.teamScope.leadScope(requester);
+    }
+    return { tenantId, corretorId: requester.id };
+  }
+
+  private async listScopedChats(
+    requester: AuthenticatedUser,
+    instanceId: number,
+    page: number,
+    limit: number,
+  ) {
+    const safePage = Math.max(1, Math.floor(page) || 1);
+    const safeLimit = Math.min(100, Math.max(10, Math.floor(limit) || 50));
+    const leadWhere = await this.chatLeadWhere(requester);
+    const where = { instanceId, lead: leadWhere };
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.leadOzapLink.count({ where }),
+      this.prisma.leadOzapLink.findMany({
+        where,
+        orderBy: { lastMessageAt: 'desc' },
+        skip: (safePage - 1) * safeLimit,
+        take: safeLimit,
+        select: {
+          chatId: true,
+          lastMessageAt: true,
+          lead: { select: { id: true, nome: true, telefone: true } },
+        },
+      }),
+    ]);
+    let ozapByChat = new Map<string, OzapInboxChat>();
+    try {
+      const listed = await this.ozapApi.listChats(instanceId, 1, 50);
+      ozapByChat = new Map(
+        listed.chats.map((chat) => [chat.chatId, chat] as const),
+      );
+    } catch {
+      /* lista do CRM continua mesmo se o OZap falhar no preview */
+    }
+    return {
+      available: true as const,
+      instanceId,
+      page: safePage,
+      limit: safeLimit,
+      total,
+      hasMore: safePage * safeLimit < total,
+      canSend: canSendWhatsappInbox(requester.role),
+      chats: rows.map((row) => {
+        const ozap =
+          ozapByChat.get(row.chatId) ??
+          (row.lead.telefone
+            ? ozapByChat.get(row.lead.telefone.replace(/\D/g, ''))
+            : undefined);
+        return {
+          chatId: row.chatId,
+          name: row.lead.nome,
+          phone: row.lead.telefone || ozap?.phone || null,
+          lastMessage: ozap?.lastMessage ?? null,
+          lastMessageAt:
+            ozap?.lastMessageAt ?? row.lastMessageAt?.toISOString() ?? null,
+          unread: ozap?.unread ?? 0,
+          isGroup: ozap?.isGroup ?? false,
+          aiPaused: ozap?.aiPaused ?? false,
+          pausedUntil: ozap?.pausedUntil ?? null,
+          leadStatus: ozap?.leadStatus ?? null,
+          leadId: row.lead.id,
+          leadNome: row.lead.nome,
+        };
+      }),
+    };
+  }
+
+  private async assertCanViewChat(
+    requester: AuthenticatedUser,
+    instanceId: number,
+    chatId: string,
+  ) {
+    if (seesAllWhatsappInbox(requester.role)) return;
+    const leadWhere = await this.chatLeadWhere(requester);
+    const digits = chatId.replace(/\D/g, '');
+    const ids = [
+      chatId.trim(),
+      digits,
+      digits ? `${digits}@s.whatsapp.net` : '',
+      digits ? `${digits}@c.us` : '',
+    ].filter(Boolean);
+    const link = await this.prisma.leadOzapLink.findFirst({
+      where: {
+        instanceId,
+        chatId: { in: ids },
+        lead: leadWhere,
+      },
+      select: { id: true },
+    });
+    if (!link) {
+      throw new ForbiddenException(
+        'Você só pode ver conversas dos seus leads.',
+      );
     }
   }
 

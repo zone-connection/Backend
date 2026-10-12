@@ -25,7 +25,7 @@ import {
   canViewLostLeads,
 } from '../common/utils/tenant';
 import { prismaTableOrderBy } from '../common/utils/table-sort';
-import { isCorretorLike } from '../common/utils/roles';
+import { canSendWhatsappInbox, isCorretorLike } from '../common/utils/roles';
 import { hasUserAction } from '../common/utils/user-permissions';
 import { CatalogService } from '../catalog/catalog.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
@@ -2957,6 +2957,11 @@ export class LeadsService {
     content: string,
     requester: AuthenticatedUser,
   ): Promise<{ ok: true }> {
+    if (!canSendWhatsappInbox(requester.role)) {
+      throw new ForbiddenException(
+        'Seu perfil não pode enviar mensagens no WhatsApp.',
+      );
+    }
     await this.findOne(id, requester);
     const text = content.trim();
     if (!text) {
