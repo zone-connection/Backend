@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { SendLeadWhatsappDto } from '../leads/dto/send-lead-whatsapp.dto';
@@ -9,8 +9,16 @@ export class WhatsappInboxController {
   constructor(private readonly inbox: WhatsappInboxService) {}
 
   @Get('chats')
-  listChats(@CurrentUser() requester: AuthenticatedUser) {
-    return this.inbox.listChats(requester);
+  listChats(
+    @CurrentUser() requester: AuthenticatedUser,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.inbox.listChats(
+      requester,
+      Number(page) || 1,
+      Number(limit) || 50,
+    );
   }
 
   @Get('chats/:chatId/messages')

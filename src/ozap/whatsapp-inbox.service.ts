@@ -23,10 +23,11 @@ export class WhatsappInboxService {
     private readonly ozapApi: OzapApiClient,
   ) {}
 
-  async listChats(requester: AuthenticatedUser) {
+  async listChats(requester: AuthenticatedUser, page = 1, limit = 50) {
     const { instanceId } = await this.requireInstance(requester);
     try {
-      const chats = await this.ozapApi.listChats(instanceId);
+      const listed = await this.ozapApi.listChats(instanceId, page, limit);
+      const chats = listed.chats;
       const chatIds = [
         ...new Set(
           chats.flatMap((chat) =>
@@ -49,6 +50,10 @@ export class WhatsappInboxService {
       return {
         available: true as const,
         instanceId,
+        page: listed.page,
+        limit: listed.limit,
+        total: listed.total,
+        hasMore: listed.hasMore,
         chats: chats.map((chat) => {
           const link =
             byChat.get(chat.chatId) ??

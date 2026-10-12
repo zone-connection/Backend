@@ -154,10 +154,22 @@ export class OzapApiClient {
     throw lastError ?? new OzapApiError(0, 'OZap recusou a leitura.');
   }
 
-  async listChats(instanceId: number): Promise<OzapInboxChat[]> {
+  async listChats(
+    instanceId: number,
+    page = 1,
+    limit = 50,
+  ): Promise<{
+    chats: OzapInboxChat[];
+    page: number;
+    limit: number;
+    total: number | null;
+    hasMore: boolean;
+  }> {
     const apiKey = this.requireApiKey();
+    const safePage = Math.max(1, Math.floor(page) || 1);
+    const safeLimit = Math.min(100, Math.max(10, Math.floor(limit) || 50));
     const payload = await this.getJson(
-      `${this.baseUrl()}/api/v1/${instanceId}/chats?limit=40&page=1`,
+      `${this.baseUrl()}/api/v1/${instanceId}/chats?limit=${safeLimit}&page=${safePage}`,
       apiKey,
     );
     const rec = this.asRecord(payload);
@@ -172,7 +184,23 @@ export class OzapApiClient {
       const chat = this.normalizeChat(row);
       if (chat) chats.push(chat);
     }
-    return chats;
+    const meta = this.asRecord(rec?.meta) ?? this.asRecord(data?.meta) ?? rec;
+    const totalRaw = Number(
+      rec?.total ??
+        rec?.count ??
+        data?.total ??
+        meta?.total ??
+        meta?.count,
+    );
+    const total = Number.isFinite(totalRaw) && totalRaw >= 0 ? totalRaw : null;
+    const hasMoreFlag = rec?.has_more ?? rec?.hasMore ?? data?.has_more ?? data?.hasMore;
+    const hasMore =
+      typeof hasMoreFlag === 'boolean'
+        ? hasMoreFlag
+        : total !== null
+          ? safePage * safeLimit < total
+          : chats.length >= safeLimit;
+    return { chats, page: safePage, limit: safeLimit, total, hasMore };
   }
 
   async pauseChat(params: {
