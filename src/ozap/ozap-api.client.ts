@@ -609,10 +609,30 @@ export class OzapApiClient {
 
   private resolveMediaUrl(raw: string | null): string | null {
     if (!raw) return null;
+    const nested = /[?&]url=([^&]+)/.exec(raw);
+    if (nested?.[1]) {
+      try {
+        let inner = nested[1];
+        if (/%[0-9A-Fa-f]{2}/.test(inner)) inner = decodeURIComponent(inner);
+        if (/^https?:\/\//i.test(inner)) return inner;
+      } catch {
+        /* ignore */
+      }
+    }
     if (/^https?:\/\//i.test(raw)) return raw;
     if (raw.startsWith('//')) return `https:${raw}`;
     if (raw.startsWith('/')) return `${this.baseUrl()}${raw}`;
     return raw;
+  }
+
+  clientMediaUrl(url: string | null): string | null {
+    if (!url) return null;
+    const resolved = this.resolveMediaUrl(url);
+    if (!resolved) return null;
+    if (this.isAllowedMediaHost(resolved) && !this.needsMediaProxy(resolved)) {
+      return resolved;
+    }
+    return `/api/whatsapp/media?url=${encodeURIComponent(resolved)}`;
   }
 
   needsMediaProxy(url: string): boolean {

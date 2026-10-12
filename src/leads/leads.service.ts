@@ -2935,7 +2935,10 @@ export class LeadsService {
       return {
         available: true,
         chatId: link.chatId,
-        messages,
+        messages: messages.map((message) => ({
+          ...message,
+          mediaUrl: this.ozapApi.clientMediaUrl(message.mediaUrl),
+        })),
       };
     } catch (error) {
       const message =

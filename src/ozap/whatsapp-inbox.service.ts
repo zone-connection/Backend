@@ -129,10 +129,12 @@ export class WhatsappInboxService {
     if (!url) {
       throw new BadRequestException('Informe o áudio.');
     }
-    const apiKey = this.config.get<string>('OPENAI_API_KEY')?.trim();
+    const apiKey =
+      this.config.get<string>('OPENAI_API_KEY')?.trim() ||
+      this.config.get<string>('OPENAI_KEY')?.trim();
     if (!apiKey) {
       throw new ServiceUnavailableException(
-        'Transcrição indisponível: OPENAI_API_KEY não configurada.',
+        'Transcrição indisponível. Configure OPENAI_API_KEY no Backend (Render) e faça o deploy.',
       );
     }
     try {
@@ -170,14 +172,7 @@ export class WhatsappInboxService {
   }
 
   private toCrmMediaUrl(url: string | null): string | null {
-    if (!url) return null;
-    if (
-      this.ozapApi.isAllowedMediaHost(url) &&
-      !this.ozapApi.needsMediaProxy(url)
-    ) {
-      return url;
-    }
-    return `/api/whatsapp/media?url=${encodeURIComponent(url)}`;
+    return this.ozapApi.clientMediaUrl(url);
   }
 
   async sendMessage(
