@@ -62,7 +62,7 @@ export const PERMISSION_MODULES = [
   {
     key: 'documentacao',
     label: 'Documentação',
-    routes: ['/documentacao'],
+    routes: ['/documentacao', '/processos'],
     group: 'fechamento',
   },
   { key: 'propostas', label: 'Propostas', routes: ['/propostas'], group: 'fechamento' },
@@ -245,6 +245,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/metas',
     '/triagem',
     '/documentacao',
+    '/processos',
     '/resultado',
     '/usuarios',
     '/permissoes',
@@ -277,6 +278,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/metas',
     '/triagem',
     '/documentacao',
+    '/processos',
     '/resultado',
     '/usuarios',
     '/construtoras',
@@ -302,6 +304,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/metas',
     '/triagem',
     '/documentacao',
+    '/processos',
     '/contratos',
     '/vendas',
     '/parcerias',
@@ -316,6 +319,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/presenca',
     '/mural-chaves',
     '/documentacao',
+    '/processos',
     '/propostas',
     '/contratos',
     '/imoveis',
@@ -355,6 +359,7 @@ const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {
     '/metas',
     '/triagem',
     '/documentacao',
+    '/processos',
     '/contratos',
     '/vendas',
     '/parcerias',
@@ -535,6 +540,7 @@ export function modulesForApiPath(rawPath: string): string[] {
   if (path.startsWith('mural-chaves')) return ['muralChaves'];
   if (path.startsWith('cadastro-vendas')) return ['vendas'];
   if (path.startsWith('documentacao')) return ['documentacao', 'vendas'];
+  if (path.startsWith('processos')) return ['leads', 'documentacao'];
   if (path.startsWith('propostas')) return ['propostas'];
   if (path.startsWith('contratos')) return ['contratos'];
   if (path.startsWith('funis')) return ['funil'];

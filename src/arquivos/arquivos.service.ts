@@ -170,6 +170,11 @@ export class ArquivosService {
           where: { id: entityId, tenantId },
           select: { id: true, codigo: true },
         });
+      case ArquivoVinculoTipo.processo:
+        return this.prisma.processo.findFirst({
+          where: { id: entityId, tenantId },
+          select: { id: true, nome: true },
+        });
       default:
         return null;
     }

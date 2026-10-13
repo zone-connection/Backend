@@ -23,6 +23,7 @@ import { PortalProprietarioModule } from './portal-proprietario/portal-proprieta
 import { ParceriasModule } from './parcerias/parcerias.module';
 import { TarefasModule } from './tarefas/tarefas.module';
 import { ArquivosModule } from './arquivos/arquivos.module';
+import { ProcessosModule } from './processos/processos.module';
 import { ConstrutorasModule } from './construtoras/construtoras.module';
 import { ContratosModule } from './contratos/contratos.module';
 import { ListasDocumentosModule } from './listas-documentos/listas-documentos.module';
@@ -94,6 +95,7 @@ import { THROTTLE } from './config/security.constants';
     ParceriasModule,
     TarefasModule,
     ArquivosModule,
+    ProcessosModule,
   ],
   controllers: [AppController],
   providers: [
