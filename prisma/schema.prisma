@@ -190,6 +190,7 @@ model Tenant {
   metas             Meta[]
   metaConnections   TenantMetaConnection[]
   ozapConnections   TenantOzapConnection[]
+  whatsappUserTags  WhatsappUserTag[]
   oruloConnections  TenantOruloConnection[]
   grupoZapConnection TenantGrupoZapConnection?
   financeiroParceiros     FinanceiroParceiro[]
@@ -496,6 +497,8 @@ model User {
   tarefasResponsavel              Tarefa[] @relation("TarefaResponsavel")
   tarefasCriadas                  Tarefa[] @relation("TarefaCriador")
   tarefaComentarios               TarefaComentario[]
+  whatsappTags                    WhatsappUserTag[]
+  whatsappChatTags                WhatsappUserChatTag[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -776,6 +779,41 @@ model LeadOzapLink {
   @@unique([instanceId, chatId])
   @@index([instanceId])
   @@map("lead_ozap_links")
+}
+
+/// Tags pessoais do inbox WhatsApp (só o dono vê).
+model WhatsappUserTag {
+  id        String @id @default(uuid())
+  tenantId  String
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  color     String @default("bg-slate-500 text-white")
+  /// custom = criada pelo usuário; funil = copiada de uma etapa.
+  source    String @default("custom")
+  funilSlug String?
+  sortOrder Int    @default(0)
+  createdAt DateTime @default(now())
+  chats     WhatsappUserChatTag[]
+
+  @@unique([userId, name])
+  @@index([tenantId, userId])
+  @@map("whatsapp_user_tags")
+}
+
+model WhatsappUserChatTag {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tagId     String
+  tag       WhatsappUserTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  chatId    String
+  createdAt DateTime        @default(now())
+
+  @@unique([userId, tagId, chatId])
+  @@index([userId, chatId])
+  @@map("whatsapp_user_chat_tags")
 }
 
 /// Entrega recebida do webhook OZap, usada para impedir duplicação por retry.

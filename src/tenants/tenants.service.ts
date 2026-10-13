@@ -1339,6 +1339,7 @@ export class TenantsService {
       hideClientesNav: modules.hideClientesNav === true,
       adminVerClientesCorretor: modules.adminVerClientesCorretor === true,
       gerenteVerLeadsGerais: modules.gerenteVerLeadsGerais === true,
+      whatsappStaffCanSend: modules.whatsappStaffCanSend === true,
       corretoresCriamPropostas: modules.corretoresCriamPropostas === true,
       muralChaves: modules.muralChaves === true,
     };
@@ -1381,6 +1382,9 @@ export class TenantsService {
     if (typeof dto.gerenteVerLeadsGerais === 'boolean') {
       merged.gerenteVerLeadsGerais = dto.gerenteVerLeadsGerais;
     }
+    if (typeof dto.whatsappStaffCanSend === 'boolean') {
+      merged.whatsappStaffCanSend = dto.whatsappStaffCanSend;
+    }
     if (typeof dto.corretoresCriamPropostas === 'boolean') {
       merged.corretoresCriamPropostas = dto.corretoresCriamPropostas;
     }
@@ -1400,6 +1404,7 @@ export class TenantsService {
       hideClientesNav: modules.hideClientesNav === true,
       adminVerClientesCorretor: modules.adminVerClientesCorretor === true,
       gerenteVerLeadsGerais: modules.gerenteVerLeadsGerais === true,
+      whatsappStaffCanSend: modules.whatsappStaffCanSend === true,
       corretoresCriamPropostas: modules.corretoresCriamPropostas === true,
       muralChaves: modules.muralChaves === true,
     };

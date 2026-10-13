@@ -2973,7 +2973,7 @@ export class LeadsService {
     content: string,
     requester: AuthenticatedUser,
   ): Promise<{ ok: true }> {
-    if (!canSendWhatsappInbox(requester.role)) {
+    if (!canSendWhatsappInbox(requester)) {
       throw new ForbiddenException(
         'Seu perfil não pode enviar mensagens no WhatsApp.',
       );

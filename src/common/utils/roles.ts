@@ -7,13 +7,19 @@ export function isCorretorLike(role: Role): boolean {
   return role === Role.corretor || role === Role.treinee;
 }
 
-/** Admin e gerente enviam no inbox; demais perfis só leem conversas vinculadas. */
-export function canSendWhatsappInbox(role: Role): boolean {
-  return (
-    role === Role.admin ||
-    role === Role.super_admin ||
-    role === Role.gerente
-  );
+/** Admin e gerente enviam no inbox; demais perfis só se o admin liberar. */
+export function canSendWhatsappInbox(user: {
+  role: Role;
+  tenantModules?: Record<string, boolean> | null;
+}): boolean {
+  if (
+    user.role === Role.admin ||
+    user.role === Role.super_admin ||
+    user.role === Role.gerente
+  ) {
+    return true;
+  }
+  return user.tenantModules?.whatsappStaffCanSend === true;
 }
 
 /** Quem vê o inbox inteiro da instância, sem filtrar pela carteira. */

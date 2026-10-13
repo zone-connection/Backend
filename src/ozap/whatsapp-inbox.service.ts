@@ -6,7 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, Role } from '@prisma/client';
+import { FunilTipo, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
@@ -38,17 +38,36 @@ export class WhatsappInboxService {
     requester: AuthenticatedUser,
     page = 1,
     limit = 50,
-    filters?: { corretorId?: string; equipeId?: string },
+    filters?: { corretorId?: string; equipeId?: string; tagId?: string },
   ) {
     const { instanceId } = await this.requireInstance(requester);
     const leadFilters = this.parseLeadFilters(filters);
-    if (!seesAllWhatsappInbox(requester.role) || leadFilters) {
-      return this.listScopedChats(
-        requester,
+    const tagId = this.parseFilterId(filters?.tagId);
+    const taggedChatIds =
+      typeof tagId === 'string' ? await this.taggedChatIds(requester.id, tagId) : null;
+    if (taggedChatIds && taggedChatIds.length === 0) {
+      return {
+        available: true as const,
         instanceId,
-        page,
+        page: 1,
         limit,
-        leadFilters,
+        total: 0,
+        hasMore: false,
+        canSend: canSendWhatsappInbox(requester),
+        chats: [],
+      };
+    }
+    if (!seesAllWhatsappInbox(requester.role) || leadFilters || taggedChatIds) {
+      return this.withUserTags(
+        requester,
+        await this.listScopedChats(
+          requester,
+          instanceId,
+          page,
+          limit,
+          leadFilters,
+          taggedChatIds,
+        ),
       );
     }
     try {
@@ -73,14 +92,14 @@ export class WhatsappInboxService {
               },
             });
       const byChat = new Map(links.map((link) => [link.chatId, link] as const));
-      return {
+      return this.withUserTags(requester, {
         available: true as const,
         instanceId,
         page: listed.page,
         limit: listed.limit,
         total: listed.total,
         hasMore: listed.hasMore,
-        canSend: true,
+        canSend: canSendWhatsappInbox(requester),
         chats: chats.map((chat) => {
           const link =
             byChat.get(chat.chatId) ??
@@ -91,7 +110,7 @@ export class WhatsappInboxService {
             leadNome: link?.lead.nome ?? null,
           };
         }),
-      };
+      });
     } catch (error) {
       this.throwOzap(error);
     }
@@ -244,7 +263,7 @@ export class WhatsappInboxService {
   }
 
   private assertCanSend(requester: AuthenticatedUser) {
-    if (!canSendWhatsappInbox(requester.role)) {
+    if (!canSendWhatsappInbox(requester)) {
       throw new ForbiddenException(
         'Seu perfil não pode enviar mensagens no WhatsApp.',
       );
@@ -313,11 +332,16 @@ export class WhatsappInboxService {
     page: number,
     limit: number,
     filters?: { corretorId?: string | null; equipeId?: string | null } | null,
+    taggedChatIds?: string[] | null,
   ) {
     const safePage = Math.max(1, Math.floor(page) || 1);
     const safeLimit = Math.min(100, Math.max(10, Math.floor(limit) || 50));
     const leadWhere = await this.chatLeadWhere(requester, filters);
-    const where = { instanceId, lead: leadWhere };
+    const where: Prisma.LeadOzapLinkWhereInput = {
+      instanceId,
+      lead: leadWhere,
+      ...(taggedChatIds ? { chatId: { in: taggedChatIds } } : {}),
+    };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.leadOzapLink.count({ where }),
       this.prisma.leadOzapLink.findMany({
@@ -348,7 +372,7 @@ export class WhatsappInboxService {
       limit: safeLimit,
       total,
       hasMore: safePage * safeLimit < total,
-      canSend: canSendWhatsappInbox(requester.role),
+      canSend: canSendWhatsappInbox(requester),
       chats: rows.map((row) => {
         const ozap =
           ozapByChat.get(row.chatId) ??
@@ -430,6 +454,197 @@ export class WhatsappInboxService {
     } catch {
       return '';
     }
+  }
+
+  async listTags(requester: AuthenticatedUser) {
+    await this.requireInstance(requester);
+    return this.prisma.whatsappUserTag.findMany({
+      where: {
+        userId: requester.id,
+        tenantId: requireTenantId(requester),
+      },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async createTag(
+    requester: AuthenticatedUser,
+    input: { name?: string; color?: string },
+  ) {
+    await this.requireInstance(requester);
+    const name = input.name?.trim() ?? '';
+    if (name.length < 1 || name.length > 40) {
+      throw new BadRequestException('Informe um nome de tag (até 40 caracteres).');
+    }
+    const color = input.color?.trim() || 'bg-slate-500 text-white';
+    try {
+      return await this.prisma.whatsappUserTag.create({
+        data: {
+          tenantId: requireTenantId(requester),
+          userId: requester.id,
+          name,
+          color,
+          source: 'custom',
+        },
+      });
+    } catch {
+      throw new BadRequestException('Você já tem uma tag com esse nome.');
+    }
+  }
+
+  async deleteTag(tagId: string, requester: AuthenticatedUser) {
+    await this.requireInstance(requester);
+    const tag = await this.prisma.whatsappUserTag.findFirst({
+      where: { id: tagId, userId: requester.id },
+      select: { id: true },
+    });
+    if (!tag) throw new NotFoundException('Tag não encontrada.');
+    await this.prisma.whatsappUserTag.delete({ where: { id: tag.id } });
+    return { ok: true as const };
+  }
+
+  async importFunilTags(requester: AuthenticatedUser) {
+    await this.requireInstance(requester);
+    const tenantId = requireTenantId(requester);
+    const funil = await this.prisma.funil.findFirst({
+      where: { tenantId, tipo: FunilTipo.comercial, ativo: true },
+      select: {
+        etapas: {
+          where: { active: true },
+          orderBy: { sortOrder: 'asc' },
+          select: { label: true, slug: true, color: true, sortOrder: true },
+        },
+      },
+    });
+    if (!funil || funil.etapas.length === 0) {
+      throw new BadRequestException(
+        'Não há etapas no funil comercial ativo para copiar.',
+      );
+    }
+    const existing = await this.prisma.whatsappUserTag.findMany({
+      where: { userId: requester.id, tenantId },
+      select: { id: true, name: true, funilSlug: true },
+    });
+    const bySlug = new Map(
+      existing
+        .filter((row) => row.funilSlug)
+        .map((row) => [row.funilSlug as string, row] as const),
+    );
+    const usedNames = new Set(existing.map((row) => row.name.toLowerCase()));
+    const created: string[] = [];
+    for (const etapa of funil.etapas) {
+      const found = bySlug.get(etapa.slug);
+      if (found) {
+        await this.prisma.whatsappUserTag.update({
+          where: { id: found.id },
+          data: {
+            name: etapa.label,
+            color: etapa.color,
+            sortOrder: etapa.sortOrder,
+            source: 'funil',
+          },
+        });
+        continue;
+      }
+      let name = etapa.label.trim();
+      if (usedNames.has(name.toLowerCase())) name = `${name} (funil)`;
+      await this.prisma.whatsappUserTag.create({
+        data: {
+          tenantId,
+          userId: requester.id,
+          name,
+          color: etapa.color,
+          source: 'funil',
+          funilSlug: etapa.slug,
+          sortOrder: etapa.sortOrder,
+        },
+      });
+      usedNames.add(name.toLowerCase());
+      created.push(name);
+    }
+    return this.listTags(requester);
+  }
+
+  async setChatTag(
+    chatId: string,
+    tagId: string,
+    requester: AuthenticatedUser,
+    attach: boolean,
+  ) {
+    const { instanceId } = await this.requireInstance(requester);
+    await this.assertCanViewChat(requester, instanceId, chatId);
+    const tag = await this.prisma.whatsappUserTag.findFirst({
+      where: { id: tagId, userId: requester.id },
+      select: { id: true },
+    });
+    if (!tag) throw new NotFoundException('Tag não encontrada.');
+    if (attach) {
+      await this.prisma.whatsappUserChatTag.upsert({
+        where: {
+          userId_tagId_chatId: {
+            userId: requester.id,
+            tagId: tag.id,
+            chatId,
+          },
+        },
+        create: { userId: requester.id, tagId: tag.id, chatId },
+        update: {},
+      });
+    } else {
+      await this.prisma.whatsappUserChatTag.deleteMany({
+        where: { userId: requester.id, tagId: tag.id, chatId },
+      });
+    }
+    return { ok: true as const };
+  }
+
+  private async taggedChatIds(userId: string, tagId: string): Promise<string[]> {
+    const rows = await this.prisma.whatsappUserChatTag.findMany({
+      where: { userId, tagId },
+      select: { chatId: true },
+    });
+    return [...new Set(rows.map((row) => row.chatId))];
+  }
+
+  private async withUserTags<
+    T extends { chats: Array<{ chatId: string; phone?: string | null }> },
+  >(requester: AuthenticatedUser, result: T): Promise<T> {
+    const ids = [
+      ...new Set(
+        result.chats.flatMap((chat) =>
+          [chat.chatId, chat.phone].filter((id): id is string => Boolean(id)),
+        ),
+      ),
+    ];
+    if (ids.length === 0) {
+      return {
+        ...result,
+        chats: result.chats.map((chat) => ({ ...chat, tags: [] })),
+      };
+    }
+    const rows = await this.prisma.whatsappUserChatTag.findMany({
+      where: { userId: requester.id, chatId: { in: ids } },
+      select: {
+        chatId: true,
+        tag: { select: { id: true, name: true, color: true } },
+      },
+    });
+    const byChat = new Map<string, Array<{ id: string; name: string; color: string }>>();
+    for (const row of rows) {
+      const list = byChat.get(row.chatId) ?? [];
+      list.push(row.tag);
+      byChat.set(row.chatId, list);
+    }
+    return {
+      ...result,
+      chats: result.chats.map((chat) => ({
+        ...chat,
+        tags:
+          byChat.get(chat.chatId) ??
+          (chat.phone ? byChat.get(chat.phone) : undefined) ??
+          [],
+      })),
+    };
   }
 
   private throwOzap(error: unknown): never {

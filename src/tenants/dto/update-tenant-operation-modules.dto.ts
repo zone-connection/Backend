@@ -33,6 +33,11 @@ export class UpdateTenantOperationModulesDto {
   @IsBoolean()
   gerenteVerLeadsGerais?: boolean;
 
+  /** Usuários abaixo de gerente podem enviar no inbox WhatsApp. */
+  @IsOptional()
+  @IsBoolean()
+  whatsappStaffCanSend?: boolean;
+
   /** Corretor, trainee e analista criam propostas da própria carteira. */
   @IsOptional()
   @IsBoolean()

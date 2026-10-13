@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -50,13 +51,40 @@ export class WhatsappInboxController {
     @Query('limit') limit?: string,
     @Query('corretorId') corretorId?: string,
     @Query('equipeId') equipeId?: string,
+    @Query('tagId') tagId?: string,
   ) {
     return this.inbox.listChats(
       requester,
       Number(page) || 1,
       Number(limit) || 50,
-      { corretorId, equipeId },
+      { corretorId, equipeId, tagId },
     );
+  }
+
+  @Get('tags')
+  listTags(@CurrentUser() requester: AuthenticatedUser) {
+    return this.inbox.listTags(requester);
+  }
+
+  @Post('tags')
+  createTag(
+    @Body() body: { name?: string; color?: string },
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.inbox.createTag(requester, body);
+  }
+
+  @Post('tags/from-funil')
+  importFunilTags(@CurrentUser() requester: AuthenticatedUser) {
+    return this.inbox.importFunilTags(requester);
+  }
+
+  @Delete('tags/:tagId')
+  deleteTag(
+    @Param('tagId') tagId: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.inbox.deleteTag(tagId, requester);
   }
 
   @Get('chats/:chatId/messages')
@@ -86,6 +114,34 @@ export class WhatsappInboxController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.inbox.assumeChat(decodeURIComponent(chatId), requester);
+  }
+
+  @Post('chats/:chatId/tags')
+  attachTag(
+    @Param('chatId') chatId: string,
+    @Body() body: { tagId?: string },
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.inbox.setChatTag(
+      decodeURIComponent(chatId),
+      body.tagId ?? '',
+      requester,
+      true,
+    );
+  }
+
+  @Delete('chats/:chatId/tags/:tagId')
+  detachTag(
+    @Param('chatId') chatId: string,
+    @Param('tagId') tagId: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.inbox.setChatTag(
+      decodeURIComponent(chatId),
+      tagId,
+      requester,
+      false,
+    );
   }
 
   @Post('chats/:chatId/resume')
