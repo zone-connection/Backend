@@ -22,6 +22,8 @@ import { MediaService } from '../media/media.service';
 import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import {
   tenantBrandingSelect,
+  tenantOzapFlagSelect,
+  withOzapConnectionFlag,
   type TenantBranding,
 } from '../common/utils/tenant-branding';
 import { normalizeCor } from '../common/utils/cor';
@@ -298,7 +300,13 @@ export class AuthService {
       where: { id: userId },
       select: {
         ...publicUserSelect,
-        tenant: { select: { ...tenantBrandingSelect, status: true } },
+        tenant: {
+          select: {
+            ...tenantBrandingSelect,
+            status: true,
+            ...tenantOzapFlagSelect,
+          },
+        },
       },
     });
 
@@ -324,7 +332,7 @@ export class AuthService {
       temVendaVinculada: await this.resolveTemVendaVinculada(rest),
       tenant: branding
         ? {
-            ...branding,
+            ...withOzapConnectionFlag(branding),
             modules: applyPlanoModules(branding.plano, branding.modules),
             tarefasEnabled: tenantTemTarefas(branding),
           }
@@ -641,7 +649,7 @@ export class AuthService {
     const tenant = user.tenantId
       ? await this.prisma.tenant.findUnique({
           where: { id: user.tenantId },
-          select: tenantBrandingSelect,
+          select: { ...tenantBrandingSelect, ...tenantOzapFlagSelect },
         })
       : null;
 
@@ -679,7 +687,7 @@ export class AuthService {
       temVendaVinculada: await this.resolveTemVendaVinculada(user),
       tenant: tenant
         ? {
-            ...tenant,
+            ...withOzapConnectionFlag(tenant),
             modules: applyPlanoModules(tenant.plano, tenant.modules),
             tarefasEnabled: tenantTemTarefas(tenant),
           }

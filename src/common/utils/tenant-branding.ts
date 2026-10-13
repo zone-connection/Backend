@@ -34,7 +34,27 @@ export const tenantBrandingSelect = {
 
 export type TenantBranding = Prisma.TenantGetPayload<{
   select: typeof tenantBrandingSelect;
-}>;
+}> & {
+  hasOzapConnection?: boolean;
+};
+
+export const tenantOzapFlagSelect = {
+  ozapConnections: {
+    where: { ativo: true },
+    select: { id: true },
+    take: 1,
+  },
+} as const;
+
+export function withOzapConnectionFlag<
+  T extends { ozapConnections?: ReadonlyArray<{ id: string }> },
+>(tenant: T): Omit<T, 'ozapConnections'> & { hasOzapConnection: boolean } {
+  const { ozapConnections, ...rest } = tenant;
+  return {
+    ...rest,
+    hasOzapConnection: Boolean(ozapConnections?.length),
+  };
+}
 
 export const tenantAdminSelect = {
   ...tenantBrandingSelect,

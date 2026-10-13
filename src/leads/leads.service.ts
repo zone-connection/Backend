@@ -2907,6 +2907,19 @@ export class LeadsService {
     messages: OzapChatMessage[];
   }> {
     await this.findOne(id, requester);
+    const tenantId = requireTenantId(requester);
+    const ozap = await this.prisma.tenantOzapConnection.findFirst({
+      where: { tenantId, ativo: true },
+      select: { id: true },
+    });
+    if (!ozap) {
+      return {
+        available: false,
+        reason: 'not_configured',
+        chatId: null,
+        messages: [],
+      };
+    }
     const link = await this.prisma.leadOzapLink.findUnique({
       where: { leadId: id },
       select: { instanceId: true, chatId: true },
@@ -2966,6 +2979,16 @@ export class LeadsService {
       );
     }
     await this.findOne(id, requester);
+    const tenantId = requireTenantId(requester);
+    const ozap = await this.prisma.tenantOzapConnection.findFirst({
+      where: { tenantId, ativo: true },
+      select: { id: true },
+    });
+    if (!ozap) {
+      throw new ServiceUnavailableException(
+        'A imobiliária ainda não tem instância WhatsApp conectada.',
+      );
+    }
     const text = content.trim();
     if (!text) {
       throw new BadRequestException('Informe a mensagem.');
