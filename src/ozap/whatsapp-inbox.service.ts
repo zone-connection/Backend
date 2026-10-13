@@ -25,6 +25,29 @@ import {
 
 const IA_PAUSED_UNTIL = '2099-12-31T23:59:59.000Z';
 
+const TAG_COLORS = new Set([
+  'bg-slate-500 text-white',
+  'bg-blue-500 text-white',
+  'bg-indigo-500 text-white',
+  'bg-violet-500 text-white',
+  'bg-purple-500 text-white',
+  'bg-fuchsia-500 text-white',
+  'bg-pink-500 text-white',
+  'bg-rose-500 text-white',
+  'bg-red-500 text-white',
+  'bg-orange-500 text-white',
+  'bg-amber-500 text-amber-950',
+  'bg-yellow-400 text-yellow-950',
+  'bg-lime-500 text-lime-950',
+  'bg-green-500 text-white',
+  'bg-emerald-500 text-white',
+  'bg-teal-500 text-white',
+  'bg-cyan-500 text-white',
+  'bg-sky-500 text-white',
+]);
+
+const DEFAULT_TAG_COLOR = 'bg-slate-500 text-white';
+
 @Injectable()
 export class WhatsappInboxService {
   constructor(
@@ -476,7 +499,7 @@ export class WhatsappInboxService {
     if (name.length < 1 || name.length > 40) {
       throw new BadRequestException('Informe um nome de tag (até 40 caracteres).');
     }
-    const color = input.color?.trim() || 'bg-slate-500 text-white';
+    const color = this.normalizeTagColor(input.color);
     try {
       return await this.prisma.whatsappUserTag.create({
         data: {
@@ -486,6 +509,43 @@ export class WhatsappInboxService {
           color,
           source: 'custom',
         },
+      });
+    } catch {
+      throw new BadRequestException('Você já tem uma tag com esse nome.');
+    }
+  }
+
+  async updateTag(
+    tagId: string,
+    requester: AuthenticatedUser,
+    input: { name?: string; color?: string },
+  ) {
+    await this.requireInstance(requester);
+    const tag = await this.prisma.whatsappUserTag.findFirst({
+      where: { id: tagId, userId: requester.id },
+      select: { id: true },
+    });
+    if (!tag) throw new NotFoundException('Tag não encontrada.');
+    const data: { name?: string; color?: string } = {};
+    if (typeof input.name === 'string') {
+      const name = input.name.trim();
+      if (name.length < 1 || name.length > 40) {
+        throw new BadRequestException(
+          'Informe um nome de tag (até 40 caracteres).',
+        );
+      }
+      data.name = name;
+    }
+    if (typeof input.color === 'string') {
+      data.color = this.normalizeTagColor(input.color);
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Informe nome ou cor para atualizar.');
+    }
+    try {
+      return await this.prisma.whatsappUserTag.update({
+        where: { id: tag.id },
+        data,
       });
     } catch {
       throw new BadRequestException('Você já tem uma tag com esse nome.');
@@ -596,6 +656,13 @@ export class WhatsappInboxService {
       });
     }
     return { ok: true as const };
+  }
+
+  private normalizeTagColor(color?: string) {
+    const raw = color?.trim() || DEFAULT_TAG_COLOR;
+    if (TAG_COLORS.has(raw)) return raw;
+    if (/^#[0-9A-Fa-f]{6}$/.test(raw)) return raw;
+    return DEFAULT_TAG_COLOR;
   }
 
   private async taggedChatIds(userId: string, tagId: string): Promise<string[]> {

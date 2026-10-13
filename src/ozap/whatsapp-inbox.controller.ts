@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Res,
@@ -77,6 +78,15 @@ export class WhatsappInboxController {
   @Post('tags/from-funil')
   importFunilTags(@CurrentUser() requester: AuthenticatedUser) {
     return this.inbox.importFunilTags(requester);
+  }
+
+  @Patch('tags/:tagId')
+  updateTag(
+    @Param('tagId') tagId: string,
+    @Body() body: { name?: string; color?: string },
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.inbox.updateTag(tagId, requester, body);
   }
 
   @Delete('tags/:tagId')
