@@ -27,6 +27,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1151.0",
+    "@aws-sdk/s3-request-presigner": "^3.1151.0",
     "@nestjs/cli": "^11.0.0",
     "@nestjs/common": "^11.0.0",
     "@nestjs/config": "^4.0.0",
@@ -36,6 +38,7 @@
     "@nestjs/platform-express": "^11.2.7",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^6.2.0",
+    "archiver": "^8.0.0",
     "bcryptjs": "^2.4.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
@@ -68,6 +71,7 @@
   },
   "devDependencies": {
     "@nestjs/schematics": "^11.0.0",
+    "@types/archiver": "^8.0.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.0",

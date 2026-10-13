@@ -68,6 +68,11 @@ export class MailerService {
     subject: string;
     text: string;
     html?: string;
+    attachments?: {
+      filename: string;
+      content: Buffer;
+      contentType?: string;
+    }[];
   }): Promise<void> {
     if (!this.transporter) {
       throw new Error('SMTP não configurado.');
@@ -87,6 +92,11 @@ export class MailerService {
         subject: params.subject,
         text: params.text,
         html: params.html || this.toHtml(params.text),
+        attachments: params.attachments?.map((item) => ({
+          filename: item.filename,
+          content: item.content,
+          contentType: item.contentType,
+        })),
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'erro';

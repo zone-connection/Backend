@@ -191,6 +191,21 @@ export const PERMISSION_ACTIONS = [
     label: 'Alterar identificador da chave',
     module: 'muralChaves',
   },
+  {
+    key: 'arquivos.tags.gerir',
+    label: 'Criar e editar tags de documentos',
+    module: 'configuracoes',
+  },
+  {
+    key: 'arquivos.zip',
+    label: 'Baixar todos os documentos (ZIP)',
+    module: 'configuracoes',
+  },
+  {
+    key: 'arquivos.compartilhar',
+    label: 'Compartilhar documentos por e-mail',
+    module: 'configuracoes',
+  },
 ] as const;
 
 const ROLE_DEFAULT_ROUTES: Record<Role, readonly string[]> = {

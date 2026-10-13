@@ -242,6 +242,11 @@ model Tenant {
   propostaPublicaLinks           PropostaPublicaLink[]
   propostaHistoricos             PropostaHistorico[]
   tarefas                        Tarefa[]
+  documentoTags                  DocumentoTag[]
+  arquivosDocumentos             ArquivoDocumento[]
+  arquivoVinculos                ArquivoVinculo[]
+  arquivoEventos                 ArquivoEvento[]
+  arquivoShareLinks              ArquivoShareLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -499,6 +504,10 @@ model User {
   tarefaComentarios               TarefaComentario[]
   whatsappTags                    WhatsappUserTag[]
   whatsappChatTags                WhatsappUserChatTag[]
+  documentoTagsCriadas            DocumentoTag[]
+  arquivosEnviados                ArquivoDocumento[]
+  arquivoEventos                  ArquivoEvento[]
+  arquivoShareLinks               ArquivoShareLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3832,4 +3841,156 @@ model TarefaComentario {
 
   @@index([tarefaId])
   @@map("tarefa_comentarios")
+}
+
+enum ArquivoCategoria {
+  ficha
+  proposta
+  outro
+}
+
+enum ArquivoVinculoTipo {
+  lead
+  imovel
+  empreendimento
+  proprietario
+  venda_usado
+  documentacao
+  tarefa
+  proposta
+}
+
+enum ArquivoEventoTipo {
+  upload
+  download
+  download_zip
+  visualizar
+  excluir
+  restaurar
+  alterar_metadados
+  tags_alteradas
+  compartilhar_email
+  share_link_criar
+  share_link_usar
+  share_link_revogar
+  tag_criar
+  tag_renomear
+  tag_inativar
+  tag_ativar
+  autorizacao_negada
+}
+
+model DocumentoTag {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nome        String
+  slug        String
+  active      Boolean  @default(true)
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  arquivos    ArquivoDocumentoTag[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, active])
+  @@map("documento_tags")
+}
+
+model ArquivoDocumento {
+  id            String            @id @default(uuid())
+  tenantId      String
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  storageKey    String            @unique
+  sha256        String
+  mime          String
+  bytes         Int
+  nomeExibicao  String
+  nomeOriginal  String
+  categoria     ArquivoCategoria  @default(outro)
+  uploadedById  String?
+  uploadedBy    User?             @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  deletedAt     DateTime?
+  vinculos      ArquivoVinculo[]
+  tags          ArquivoDocumentoTag[]
+  eventos       ArquivoEvento[]
+  shareItens    ArquivoShareLinkItem[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([tenantId, deletedAt])
+  @@index([tenantId, categoria])
+  @@map("arquivo_documentos")
+}
+
+model ArquivoVinculo {
+  id         String             @id @default(uuid())
+  tenantId   String
+  tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  arquivoId  String
+  arquivo    ArquivoDocumento   @relation(fields: [arquivoId], references: [id], onDelete: Cascade)
+  entityType ArquivoVinculoTipo
+  entityId   String
+  origem     String             @default("cadastro")
+
+  @@unique([arquivoId, entityType, entityId])
+  @@index([tenantId, entityType, entityId])
+  @@map("arquivo_vinculos")
+}
+
+model ArquivoDocumentoTag {
+  arquivoId String
+  tagId     String
+  arquivo   ArquivoDocumento @relation(fields: [arquivoId], references: [id], onDelete: Cascade)
+  tag       DocumentoTag     @relation(fields: [tagId], references: [id], onDelete: Restrict)
+
+  @@id([arquivoId, tagId])
+  @@index([tagId])
+  @@map("arquivo_documento_tags")
+}
+
+model ArquivoEvento {
+  id        String            @id @default(uuid())
+  tenantId  String
+  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  arquivoId String?
+  arquivo   ArquivoDocumento? @relation(fields: [arquivoId], references: [id], onDelete: SetNull)
+  userId    String?
+  user      User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  tipo      ArquivoEventoTipo
+  detalhe   Json?
+  createdAt DateTime          @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([arquivoId])
+  @@map("arquivo_eventos")
+}
+
+model ArquivoShareLink {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tokenHash   String   @unique
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  emailTo     String?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  usedAt      DateTime?
+  itens       ArquivoShareLinkItem[]
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("arquivo_share_links")
+}
+
+model ArquivoShareLinkItem {
+  linkId    String
+  arquivoId String
+  link      ArquivoShareLink  @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  arquivo   ArquivoDocumento  @relation(fields: [arquivoId], references: [id], onDelete: Cascade)
+
+  @@id([linkId, arquivoId])
+  @@map("arquivo_share_link_itens")
 }

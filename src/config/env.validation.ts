@@ -101,6 +101,22 @@ export function validateEnv(config: Record<string, unknown>) {
     );
   }
 
+  const r2Keys = [
+    'R2_ACCOUNT_ID',
+    'R2_ACCESS_KEY_ID',
+    'R2_SECRET_ACCESS_KEY',
+    'R2_BUCKET_NAME',
+    'R2_ENDPOINT',
+  ] as const;
+  const r2Present = r2Keys.map((key) => String(config[key] ?? '').trim());
+  const r2Any = r2Present.some(Boolean);
+  const r2All = r2Present.every(Boolean);
+  if (r2Any && !r2All) {
+    errors.push(
+      'R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME e R2_ENDPOINT devem ser definidos juntos.',
+    );
+  }
+
   if (isProd && !config.FRONTEND_URL) {
     errors.push('FRONTEND_URL é obrigatório em produção (define o CORS).');
   }
