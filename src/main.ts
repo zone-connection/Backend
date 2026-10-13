@@ -94,7 +94,7 @@ async function bootstrap() {
       'http://localhost:5173,http://localhost:3000,http://localhost:8080',
     )
     .split(',')
-    .map((origin) => origin.trim())
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
     .filter(Boolean);
 
   // Em produção: lista FRONTEND_URL + previews *.vercel.app do mesmo time.
@@ -117,6 +117,8 @@ async function bootstrap() {
         ) ||
           origin === 'https://frontend-seven-wine-46.vercel.app' ||
           origin === 'https://openhaus-delta.vercel.app' ||
+          origin === 'https://www.openhausimob.com.br' ||
+          origin === 'https://openhausimob.com.br' ||
           /^https:\/\/openhaus(-[a-z0-9]+)?-.*\.vercel\.app$/i.test(origin)));
     callback(null, allowed);
   };
