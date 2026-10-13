@@ -34,10 +34,22 @@ export class WhatsappInboxService {
     private readonly teamScope: TeamScopeService,
   ) {}
 
-  async listChats(requester: AuthenticatedUser, page = 1, limit = 50) {
+  async listChats(
+    requester: AuthenticatedUser,
+    page = 1,
+    limit = 50,
+    filters?: { corretorId?: string; equipeId?: string },
+  ) {
     const { instanceId } = await this.requireInstance(requester);
-    if (!seesAllWhatsappInbox(requester.role)) {
-      return this.listScopedChats(requester, instanceId, page, limit);
+    const leadFilters = this.parseLeadFilters(filters);
+    if (!seesAllWhatsappInbox(requester.role) || leadFilters) {
+      return this.listScopedChats(
+        requester,
+        instanceId,
+        page,
+        limit,
+        leadFilters,
+      );
     }
     try {
       const listed = await this.ozapApi.listChats(instanceId, page, limit);
@@ -239,14 +251,60 @@ export class WhatsappInboxService {
     }
   }
 
+  private parseLeadFilters(filters?: {
+    corretorId?: string;
+    equipeId?: string;
+  }): { corretorId?: string | null; equipeId?: string | null } | null {
+    const corretorId = this.parseFilterId(filters?.corretorId);
+    const equipeId = this.parseFilterId(filters?.equipeId);
+    if (corretorId === undefined && equipeId === undefined) return null;
+    return {
+      ...(corretorId !== undefined ? { corretorId } : {}),
+      ...(equipeId !== undefined ? { equipeId } : {}),
+    };
+  }
+
+  private parseFilterId(raw?: string): string | null | undefined {
+    const value = raw?.trim();
+    if (!value || value === 'todos' || value === '__all__') return undefined;
+    if (value === 'none' || value === '__none__') return null;
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        value,
+      )
+    ) {
+      throw new BadRequestException('Filtro de corretor ou equipe inválido.');
+    }
+    return value;
+  }
+
   private async chatLeadWhere(
     requester: AuthenticatedUser,
+    filters?: { corretorId?: string | null; equipeId?: string | null } | null,
   ): Promise<Prisma.LeadWhereInput> {
     const tenantId = requireTenantId(requester);
-    if (requester.role === Role.gerente) {
-      return this.teamScope.leadScope(requester);
+    let base: Prisma.LeadWhereInput;
+    if (seesAllWhatsappInbox(requester.role)) {
+      base = { tenantId };
+    } else if (requester.role === Role.gerente) {
+      base = await this.teamScope.leadScope(requester);
+    } else {
+      base = { tenantId, corretorId: requester.id };
     }
-    return { tenantId, corretorId: requester.id };
+    if (!filters) return base;
+    return {
+      AND: [
+        base,
+        {
+          ...(filters.corretorId !== undefined
+            ? { corretorId: filters.corretorId }
+            : {}),
+          ...(filters.equipeId !== undefined
+            ? { equipeId: filters.equipeId }
+            : {}),
+        },
+      ],
+    };
   }
 
   private async listScopedChats(
@@ -254,10 +312,11 @@ export class WhatsappInboxService {
     instanceId: number,
     page: number,
     limit: number,
+    filters?: { corretorId?: string | null; equipeId?: string | null } | null,
   ) {
     const safePage = Math.max(1, Math.floor(page) || 1);
     const safeLimit = Math.min(100, Math.max(10, Math.floor(limit) || 50));
-    const leadWhere = await this.chatLeadWhere(requester);
+    const leadWhere = await this.chatLeadWhere(requester, filters);
     const where = { instanceId, lead: leadWhere };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.leadOzapLink.count({ where }),
@@ -321,7 +380,7 @@ export class WhatsappInboxService {
     chatId: string,
   ) {
     if (seesAllWhatsappInbox(requester.role)) return;
-    const leadWhere = await this.chatLeadWhere(requester);
+    const leadWhere = await this.chatLeadWhere(requester, null);
     const digits = chatId.replace(/\D/g, '');
     const ids = [
       chatId.trim(),

@@ -48,11 +48,14 @@ export class WhatsappInboxController {
     @CurrentUser() requester: AuthenticatedUser,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('corretorId') corretorId?: string,
+    @Query('equipeId') equipeId?: string,
   ) {
     return this.inbox.listChats(
       requester,
       Number(page) || 1,
       Number(limit) || 50,
+      { corretorId, equipeId },
     );
   }
 
