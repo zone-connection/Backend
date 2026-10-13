@@ -81,75 +81,17 @@ export class WhatsappInboxService {
         chats: [],
       };
     }
-    if (taggedChatIds && seesAllWhatsappInbox(requester.role) && !leadFilters) {
-      return this.withUserTags(
+    return this.withUserTags(
+      requester,
+      await this.listScopedChats(
         requester,
-        await this.listTaggedClientChats(
-          requester,
-          instanceId,
-          page,
-          limit,
-          taggedChatIds,
-        ),
-      );
-    }
-    if (!seesAllWhatsappInbox(requester.role) || leadFilters || taggedChatIds) {
-      return this.withUserTags(
-        requester,
-        await this.listScopedChats(
-          requester,
-          instanceId,
-          page,
-          limit,
-          leadFilters,
-          taggedChatIds,
-        ),
-      );
-    }
-    try {
-      const listed = await this.listClientChatsFromOzap(instanceId, page, limit);
-      const chats = listed.chats;
-      const chatIds = [
-        ...new Set(
-          chats.flatMap((chat) =>
-            [chat.chatId, chat.phone].filter((id): id is string => Boolean(id)),
-          ),
-        ),
-      ];
-      const links =
-        chatIds.length === 0
-          ? []
-          : await this.prisma.leadOzapLink.findMany({
-              where: { instanceId, chatId: { in: chatIds } },
-              select: {
-                chatId: true,
-                leadId: true,
-                lead: { select: { id: true, nome: true } },
-              },
-            });
-      const byChat = new Map(links.map((link) => [link.chatId, link] as const));
-      return this.withUserTags(requester, {
-        available: true as const,
         instanceId,
-        page: listed.page,
-        limit: listed.limit,
-        total: listed.total,
-        hasMore: listed.hasMore,
-        canSend: canSendWhatsappInbox(requester),
-        chats: chats.map((chat) => {
-          const link =
-            byChat.get(chat.chatId) ??
-            (chat.phone ? byChat.get(chat.phone) : undefined);
-          return {
-            ...chat,
-            leadId: link?.leadId ?? null,
-            leadNome: link?.lead.nome ?? null,
-          };
-        }),
-      });
-    } catch (error) {
-      this.throwOzap(error);
-    }
+        page,
+        limit,
+        leadFilters,
+        taggedChatIds,
+      ),
+    );
   }
 
   async listMessages(chatId: string, requester: AuthenticatedUser) {
@@ -363,84 +305,6 @@ export class WhatsappInboxService {
     return [...out];
   }
 
-  private chatMatchesIds(
-    chat: { chatId: string; phone?: string | null },
-    wanted: Set<string>,
-  ) {
-    return this.expandChatIds([chat.chatId, chat.phone]).some((id) =>
-      wanted.has(id),
-    );
-  }
-
-  private async listTaggedClientChats(
-    requester: AuthenticatedUser,
-    instanceId: number,
-    page: number,
-    limit: number,
-    taggedChatIds: string[],
-  ) {
-    const safePage = Math.max(1, Math.floor(page) || 1);
-    const safeLimit = Math.min(100, Math.max(10, Math.floor(limit) || 50));
-    const wanted = new Set(this.expandChatIds(taggedChatIds));
-    const matched: OzapInboxChat[] = [];
-    let ozapPage = 1;
-    let ozapHasMore = true;
-    for (let extra = 0; extra < 8; extra += 1) {
-      const listed = await this.ozapApi.listChats(instanceId, ozapPage, 50);
-      for (const chat of listed.chats) {
-        if (this.isLeadNotifyChat(chat)) continue;
-        if (!this.chatMatchesIds(chat, wanted)) continue;
-        matched.push(chat);
-      }
-      ozapHasMore = listed.hasMore;
-      if (!ozapHasMore) break;
-      ozapPage += 1;
-    }
-    const start = (safePage - 1) * safeLimit;
-    const chats = matched.slice(start, start + safeLimit);
-    const chatIds = [
-      ...new Set(
-        chats.flatMap((chat) =>
-          [chat.chatId, chat.phone].filter((id): id is string => Boolean(id)),
-        ),
-      ),
-    ];
-    const links =
-      chatIds.length === 0
-        ? []
-        : await this.prisma.leadOzapLink.findMany({
-            where: {
-              instanceId,
-              chatId: { in: this.expandChatIds(chatIds) },
-            },
-            select: {
-              chatId: true,
-              leadId: true,
-              lead: { select: { id: true, nome: true } },
-            },
-          });
-    const byChat = new Map(links.map((link) => [link.chatId, link] as const));
-    return {
-      available: true as const,
-      instanceId,
-      page: safePage,
-      limit: safeLimit,
-      total: matched.length,
-      hasMore: start + safeLimit < matched.length || ozapHasMore,
-      canSend: canSendWhatsappInbox(requester),
-      chats: chats.map((chat) => {
-        const link =
-          byChat.get(chat.chatId) ??
-          (chat.phone ? byChat.get(chat.phone) : undefined);
-        return {
-          ...chat,
-          leadId: link?.leadId ?? null,
-          leadNome: link?.lead.nome ?? null,
-        };
-      }),
-    };
-  }
-
   private isLeadNotifyChat(chat: {
     lastMessage?: string | null;
     name?: string | null;
@@ -449,36 +313,6 @@ export class WhatsappInboxService {
       isCrmWhatsappLeadNotifyText(chat.lastMessage) ||
       isCrmWhatsappLeadNotifyText(chat.name)
     );
-  }
-
-  private async listClientChatsFromOzap(
-    instanceId: number,
-    page: number,
-    limit: number,
-  ) {
-    const safePage = Math.max(1, Math.floor(page) || 1);
-    const safeLimit = Math.min(100, Math.max(10, Math.floor(limit) || 50));
-    const visible: OzapInboxChat[] = [];
-    let ozapPage = safePage;
-    let listed = await this.ozapApi.listChats(instanceId, ozapPage, safeLimit);
-    let hasMore = listed.hasMore;
-    for (let extra = 0; extra < 6; extra += 1) {
-      for (const chat of listed.chats) {
-        if (!this.isLeadNotifyChat(chat)) visible.push(chat);
-      }
-      hasMore = listed.hasMore;
-      if (visible.length >= safeLimit || !listed.hasMore) break;
-      ozapPage += 1;
-      listed = await this.ozapApi.listChats(instanceId, ozapPage, safeLimit);
-    }
-    const overflow = visible.length > safeLimit;
-    return {
-      chats: visible.slice(0, safeLimit),
-      page: safePage,
-      limit: listed.limit,
-      total: listed.total,
-      hasMore: overflow || hasMore,
-    };
   }
 
   private parseLeadFilters(filters?: {
@@ -515,11 +349,13 @@ export class WhatsappInboxService {
     const tenantId = requireTenantId(requester);
     let base: Prisma.LeadWhereInput;
     if (seesAllWhatsappInbox(requester.role)) {
-      base = { tenantId };
+      base = { tenantId, perdidoAt: null };
     } else if (requester.role === Role.gerente) {
-      base = await this.teamScope.leadScope(requester);
+      base = {
+        AND: [await this.teamScope.leadScope(requester), { perdidoAt: null }],
+      };
     } else {
-      base = { tenantId, corretorId: requester.id };
+      base = { tenantId, corretorId: requester.id, perdidoAt: null };
     }
     if (!filters) return base;
     return {
@@ -569,15 +405,7 @@ export class WhatsappInboxService {
         },
       }),
     ]);
-    let ozapByChat = new Map<string, OzapInboxChat>();
-    try {
-      const listed = await this.ozapApi.listChats(instanceId, 1, 50);
-      ozapByChat = new Map(
-        listed.chats.map((chat) => [chat.chatId, chat] as const),
-      );
-    } catch {
-      /* lista do CRM continua mesmo se o OZap falhar no preview */
-    }
+    const ozapByChat = await this.indexOzapChats(instanceId);
     return {
       available: true as const,
       instanceId,
@@ -588,11 +416,11 @@ export class WhatsappInboxService {
       canSend: canSendWhatsappInbox(requester),
       chats: rows
         .map((row) => {
-          const ozap =
-            ozapByChat.get(row.chatId) ??
-            (row.lead.telefone
-              ? ozapByChat.get(row.lead.telefone.replace(/\D/g, ''))
-              : undefined);
+          const ozap = this.ozapChatFor(
+            ozapByChat,
+            row.chatId,
+            row.lead.telefone,
+          );
           return {
             chatId: row.chatId,
             name: row.lead.nome,
@@ -611,6 +439,38 @@ export class WhatsappInboxService {
         })
         .filter((chat) => !this.isLeadNotifyChat(chat)),
     };
+  }
+
+  private async indexOzapChats(instanceId: number) {
+    const map = new Map<string, OzapInboxChat>();
+    try {
+      let page = 1;
+      for (let extra = 0; extra < 8; extra += 1) {
+        const listed = await this.ozapApi.listChats(instanceId, page, 50);
+        for (const chat of listed.chats) {
+          for (const id of this.expandChatIds([chat.chatId, chat.phone])) {
+            if (!map.has(id)) map.set(id, chat);
+          }
+        }
+        if (!listed.hasMore) break;
+        page += 1;
+      }
+    } catch {
+      /* preview do OZap é opcional; a lista segue pelos leads do CRM */
+    }
+    return map;
+  }
+
+  private ozapChatFor(
+    map: Map<string, OzapInboxChat>,
+    chatId: string,
+    phone?: string | null,
+  ) {
+    for (const id of this.expandChatIds([chatId, phone])) {
+      const hit = map.get(id);
+      if (hit) return hit;
+    }
+    return undefined;
   }
 
   private async assertCanViewChat(
