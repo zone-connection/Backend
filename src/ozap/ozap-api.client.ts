@@ -21,6 +21,13 @@ export class OzapApiError extends Error {
 
 export type OzapChatKind = 'client' | 'ai' | 'agent' | 'follow_up';
 
+export type OzapDeliveryStatus =
+  | 'pending'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'failed';
+
 export type OzapChatMessage = {
   id: string;
   direction: 'in' | 'out';
@@ -30,6 +37,10 @@ export type OzapChatMessage = {
   source: string | null;
   mediaType: string | null;
   mediaUrl: string | null;
+  delivery: OzapDeliveryStatus | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  error: string | null;
 };
 
 export type OzapInboxChat = {
@@ -154,6 +165,139 @@ export class OzapApiClient {
       }
     }
     throw lastError ?? new OzapApiError(0, 'OZap recusou a leitura.');
+  }
+
+  async editMessage(params: {
+    instanceId: number;
+    chatId: string;
+    messageId: string;
+    text: string;
+  }): Promise<void> {
+    const apiKey = this.requireApiKey();
+    const messageId = params.messageId.trim();
+    const text = params.text.trim();
+    if (!messageId || !text) {
+      throw new OzapApiError(0, 'Mensagem inválida.');
+    }
+    let lastError: OzapApiError | null = null;
+    for (const chatId of this.orderedChatIds(params.instanceId, params.chatId)) {
+      const encodedChat = encodeURIComponent(chatId);
+      const encodedMsg = encodeURIComponent(messageId);
+      const attempts: Array<{
+        method: 'PATCH' | 'POST' | 'PUT';
+        url: string;
+        body: Record<string, unknown>;
+      }> = [
+        {
+          method: 'PATCH',
+          url: `${this.baseUrl()}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}`,
+          body: { message: text, content: text, text },
+        },
+        {
+          method: 'PUT',
+          url: `${this.baseUrl()}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}`,
+          body: { message: text, content: text, text },
+        },
+        {
+          method: 'POST',
+          url: `${this.baseUrl()}/api/v1/${params.instanceId}/messages/edit`,
+          body: {
+            chat_id: chatId,
+            chatId,
+            message_id: messageId,
+            messageId,
+            message: text,
+            content: text,
+          },
+        },
+      ];
+      for (const attempt of attempts) {
+        try {
+          await this.requestJson(attempt.url, apiKey, attempt.method, attempt.body);
+          this.rememberChatId(params.instanceId, params.chatId, chatId);
+          return;
+        } catch (error) {
+          if (
+            error instanceof OzapApiError &&
+            (error.status === 404 || error.status === 405)
+          ) {
+            lastError = error;
+            continue;
+          }
+          throw error;
+        }
+      }
+    }
+    throw (
+      lastError ??
+      new OzapApiError(0, 'OZap não permite editar esta mensagem.')
+    );
+  }
+
+  async deleteMessage(params: {
+    instanceId: number;
+    chatId: string;
+    messageId: string;
+  }): Promise<void> {
+    const apiKey = this.requireApiKey();
+    const messageId = params.messageId.trim();
+    if (!messageId) {
+      throw new OzapApiError(0, 'Mensagem inválida.');
+    }
+    let lastError: OzapApiError | null = null;
+    for (const chatId of this.orderedChatIds(params.instanceId, params.chatId)) {
+      const encodedChat = encodeURIComponent(chatId);
+      const encodedMsg = encodeURIComponent(messageId);
+      const attempts: Array<{
+        method: 'DELETE' | 'POST';
+        url: string;
+        body?: Record<string, unknown>;
+      }> = [
+        {
+          method: 'DELETE',
+          url: `${this.baseUrl()}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}`,
+        },
+        {
+          method: 'DELETE',
+          url: `${this.baseUrl()}/api/v1/${params.instanceId}/messages/${encodedMsg}`,
+        },
+        {
+          method: 'POST',
+          url: `${this.baseUrl()}/api/v1/${params.instanceId}/messages/delete`,
+          body: {
+            chat_id: chatId,
+            chatId,
+            message_id: messageId,
+            messageId,
+          },
+        },
+      ];
+      for (const attempt of attempts) {
+        try {
+          await this.requestJson(
+            attempt.url,
+            apiKey,
+            attempt.method,
+            attempt.body,
+          );
+          this.rememberChatId(params.instanceId, params.chatId, chatId);
+          return;
+        } catch (error) {
+          if (
+            error instanceof OzapApiError &&
+            (error.status === 404 || error.status === 405)
+          ) {
+            lastError = error;
+            continue;
+          }
+          throw error;
+        }
+      }
+    }
+    throw (
+      lastError ??
+      new OzapApiError(0, 'OZap não permite excluir esta mensagem.')
+    );
   }
 
   async fetchMedia(
@@ -427,6 +571,42 @@ export class OzapApiClient {
     }
   }
 
+  private async requestJson(
+    url: string,
+    apiKey: string,
+    method: 'PATCH' | 'POST' | 'PUT' | 'DELETE',
+    body?: Record<string, unknown>,
+  ): Promise<void> {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers: {
+          ...this.authHeaders(apiKey),
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(OZAP_SEND_TIMEOUT_MS),
+      });
+    } catch (error) {
+      const timedOut =
+        error instanceof Error &&
+        (error.name === 'TimeoutError' || error.name === 'AbortError');
+      throw new OzapApiError(
+        0,
+        timedOut ? 'Timeout ao atualizar a mensagem no OZap.' : 'Falha de rede no OZap.',
+      );
+    }
+    if (!response.ok) {
+      const snippet = (await response.text().catch(() => '')).slice(0, 200);
+      this.logger.warn(`OZap ${method} HTTP ${response.status}: ${snippet}`);
+      throw new OzapApiError(
+        response.status,
+        `OZap recusou a ação (${response.status}).`,
+      );
+    }
+  }
+
   private async patchJson(
     url: string,
     apiKey: string,
@@ -586,6 +766,7 @@ export class OzapApiClient {
       id:
         this.asString(rec.id) ??
         this.asString(rec.message_id) ??
+        this.asString(rec.wamid) ??
         `msg-${index}`,
       direction,
       kind,
@@ -594,7 +775,45 @@ export class OzapApiClient {
       source,
       mediaType,
       mediaUrl,
+      delivery: this.normalizeDelivery(rec, direction),
+      deliveredAt:
+        this.asString(rec.delivered_at) ?? this.asString(rec.deliveredAt),
+      readAt: this.asString(rec.read_at) ?? this.asString(rec.readAt),
+      error:
+        this.asString(rec.error) ??
+        this.asString(rec.error_message) ??
+        this.asString(rec.fail_reason),
     };
+  }
+
+  private normalizeDelivery(
+    rec: Record<string, unknown>,
+    direction: 'in' | 'out',
+  ): OzapDeliveryStatus | null {
+    const raw = (
+      this.asString(rec.status) ??
+      this.asString(rec.ack_name) ??
+      this.asString(rec.delivery_status) ??
+      this.asString(rec.ackStatus) ??
+      ''
+    ).toLowerCase();
+    if (/fail|error|denied/.test(raw)) return 'failed';
+    if (/read|played|seen/.test(raw)) return 'read';
+    if (/deliver|received/.test(raw)) return 'delivered';
+    if (/sent|server|device/.test(raw)) return 'sent';
+    if (/pend|queue|clock/.test(raw)) return 'pending';
+    const ack = Number(rec.ack ?? rec.ack_code ?? rec.message_ack);
+    if (Number.isFinite(ack)) {
+      if (ack < 0) return 'failed';
+      if (ack >= 3) return 'read';
+      if (ack === 2) return 'delivered';
+      if (ack === 1) return 'sent';
+      if (ack === 0 && direction === 'out') return 'pending';
+    }
+    if (rec.read_at || rec.readAt) return 'read';
+    if (rec.delivered_at || rec.deliveredAt) return 'delivered';
+    if (direction === 'out') return 'sent';
+    return null;
   }
 
   private asTimestamp(rec: Record<string, unknown>): string | null {

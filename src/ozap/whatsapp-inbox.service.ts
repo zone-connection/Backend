@@ -81,6 +81,18 @@ export class WhatsappInboxService {
         chats: [],
       };
     }
+    if (taggedChatIds && seesAllWhatsappInbox(requester.role) && !leadFilters) {
+      return this.withUserTags(
+        requester,
+        await this.listTaggedClientChats(
+          requester,
+          instanceId,
+          page,
+          limit,
+          taggedChatIds,
+        ),
+      );
+    }
     if (!seesAllWhatsappInbox(requester.role) || leadFilters || taggedChatIds) {
       return this.withUserTags(
         requester,
@@ -254,6 +266,48 @@ export class WhatsappInboxService {
     }
   }
 
+  async editMessage(
+    chatId: string,
+    messageId: string,
+    content: string,
+    requester: AuthenticatedUser,
+  ) {
+    this.assertCanSend(requester);
+    const { instanceId } = await this.requireInstance(requester);
+    await this.assertCanViewChat(requester, instanceId, chatId);
+    const text = content.trim();
+    if (!text) {
+      throw new BadRequestException('Informe a mensagem.');
+    }
+    try {
+      await this.ozapApi.editMessage({
+        instanceId,
+        chatId,
+        messageId,
+        text,
+      });
+      return { ok: true as const };
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
+  async deleteMessage(
+    chatId: string,
+    messageId: string,
+    requester: AuthenticatedUser,
+  ) {
+    this.assertCanSend(requester);
+    const { instanceId } = await this.requireInstance(requester);
+    await this.assertCanViewChat(requester, instanceId, chatId);
+    try {
+      await this.ozapApi.deleteMessage({ instanceId, chatId, messageId });
+      return { ok: true as const };
+    } catch (error) {
+      this.throwOzap(error);
+    }
+  }
+
   async assumeChat(chatId: string, requester: AuthenticatedUser) {
     this.assertCanSend(requester);
     const { instanceId } = await this.requireInstance(requester);
@@ -292,6 +346,99 @@ export class WhatsappInboxService {
         'Seu perfil não pode enviar mensagens no WhatsApp.',
       );
     }
+  }
+
+  private expandChatIds(ids: Array<string | null | undefined>): string[] {
+    const out = new Set<string>();
+    for (const id of ids) {
+      const raw = id?.trim();
+      if (!raw) continue;
+      out.add(raw);
+      const digits = raw.replace(/\D/g, '');
+      if (!digits) continue;
+      out.add(digits);
+      out.add(`${digits}@s.whatsapp.net`);
+      out.add(`${digits}@c.us`);
+    }
+    return [...out];
+  }
+
+  private chatMatchesIds(
+    chat: { chatId: string; phone?: string | null },
+    wanted: Set<string>,
+  ) {
+    return this.expandChatIds([chat.chatId, chat.phone]).some((id) =>
+      wanted.has(id),
+    );
+  }
+
+  private async listTaggedClientChats(
+    requester: AuthenticatedUser,
+    instanceId: number,
+    page: number,
+    limit: number,
+    taggedChatIds: string[],
+  ) {
+    const safePage = Math.max(1, Math.floor(page) || 1);
+    const safeLimit = Math.min(100, Math.max(10, Math.floor(limit) || 50));
+    const wanted = new Set(this.expandChatIds(taggedChatIds));
+    const matched: OzapInboxChat[] = [];
+    let ozapPage = 1;
+    let ozapHasMore = true;
+    for (let extra = 0; extra < 8; extra += 1) {
+      const listed = await this.ozapApi.listChats(instanceId, ozapPage, 50);
+      for (const chat of listed.chats) {
+        if (this.isLeadNotifyChat(chat)) continue;
+        if (!this.chatMatchesIds(chat, wanted)) continue;
+        matched.push(chat);
+      }
+      ozapHasMore = listed.hasMore;
+      if (!ozapHasMore) break;
+      ozapPage += 1;
+    }
+    const start = (safePage - 1) * safeLimit;
+    const chats = matched.slice(start, start + safeLimit);
+    const chatIds = [
+      ...new Set(
+        chats.flatMap((chat) =>
+          [chat.chatId, chat.phone].filter((id): id is string => Boolean(id)),
+        ),
+      ),
+    ];
+    const links =
+      chatIds.length === 0
+        ? []
+        : await this.prisma.leadOzapLink.findMany({
+            where: {
+              instanceId,
+              chatId: { in: this.expandChatIds(chatIds) },
+            },
+            select: {
+              chatId: true,
+              leadId: true,
+              lead: { select: { id: true, nome: true } },
+            },
+          });
+    const byChat = new Map(links.map((link) => [link.chatId, link] as const));
+    return {
+      available: true as const,
+      instanceId,
+      page: safePage,
+      limit: safeLimit,
+      total: matched.length,
+      hasMore: start + safeLimit < matched.length || ozapHasMore,
+      canSend: canSendWhatsappInbox(requester),
+      chats: chats.map((chat) => {
+        const link =
+          byChat.get(chat.chatId) ??
+          (chat.phone ? byChat.get(chat.phone) : undefined);
+        return {
+          ...chat,
+          leadId: link?.leadId ?? null,
+          leadNome: link?.lead.nome ?? null,
+        };
+      }),
+    };
   }
 
   private isLeadNotifyChat(chat: {
@@ -404,7 +551,9 @@ export class WhatsappInboxService {
     const where: Prisma.LeadOzapLinkWhereInput = {
       instanceId,
       lead: leadWhere,
-      ...(taggedChatIds ? { chatId: { in: taggedChatIds } } : {}),
+      ...(taggedChatIds
+        ? { chatId: { in: this.expandChatIds(taggedChatIds) } }
+        : {}),
     };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.leadOzapLink.count({ where }),
@@ -719,13 +868,9 @@ export class WhatsappInboxService {
   private async withUserTags<
     T extends { chats: Array<{ chatId: string; phone?: string | null }> },
   >(requester: AuthenticatedUser, result: T): Promise<T> {
-    const ids = [
-      ...new Set(
-        result.chats.flatMap((chat) =>
-          [chat.chatId, chat.phone].filter((id): id is string => Boolean(id)),
-        ),
-      ),
-    ];
+    const ids = this.expandChatIds(
+      result.chats.flatMap((chat) => [chat.chatId, chat.phone]),
+    );
     if (ids.length === 0) {
       return {
         ...result,
@@ -739,11 +884,21 @@ export class WhatsappInboxService {
         tag: { select: { id: true, name: true, color: true } },
       },
     });
-    const byChat = new Map<string, Array<{ id: string; name: string; color: string }>>();
+    const byChat = new Map<
+      string,
+      Array<{ id: string; name: string; color: string }>
+    >();
+    const add = (
+      key: string | null | undefined,
+      tag: { id: string; name: string; color: string },
+    ) => {
+      if (!key) return;
+      const list = byChat.get(key) ?? [];
+      if (!list.some((item) => item.id === tag.id)) list.push(tag);
+      byChat.set(key, list);
+    };
     for (const row of rows) {
-      const list = byChat.get(row.chatId) ?? [];
-      list.push(row.tag);
-      byChat.set(row.chatId, list);
+      for (const key of this.expandChatIds([row.chatId])) add(key, row.tag);
     }
     return {
       ...result,

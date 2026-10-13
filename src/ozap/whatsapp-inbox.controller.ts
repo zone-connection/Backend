@@ -118,6 +118,34 @@ export class WhatsappInboxController {
     );
   }
 
+  @Patch('chats/:chatId/messages/:messageId')
+  editMessage(
+    @Param('chatId') chatId: string,
+    @Param('messageId') messageId: string,
+    @Body() dto: SendLeadWhatsappDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.inbox.editMessage(
+      decodeURIComponent(chatId),
+      decodeURIComponent(messageId),
+      dto.content,
+      requester,
+    );
+  }
+
+  @Delete('chats/:chatId/messages/:messageId')
+  deleteMessage(
+    @Param('chatId') chatId: string,
+    @Param('messageId') messageId: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.inbox.deleteMessage(
+      decodeURIComponent(chatId),
+      decodeURIComponent(messageId),
+      requester,
+    );
+  }
+
   @Post('chats/:chatId/assume')
   assume(
     @Param('chatId') chatId: string,
