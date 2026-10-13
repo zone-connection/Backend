@@ -273,11 +273,13 @@ model TenantMetaConnection {
 
 /// Instância OZap vinculada a um tenant (roteamento por instanceId).
 model TenantOzapConnection {
-  id         String  @id @default(uuid())
-  tenantId   String
-  tenant     Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  instanceId Int     @unique
-  ativo      Boolean @default(true)
+  id            String  @id @default(uuid())
+  tenantId      String
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instanceId    Int     @unique
+  /// Chave OpenAI do agente desta instância (cifrada). Usada para transcrever áudios no CRM.
+  openaiApiKey  String?
+  ativo         Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

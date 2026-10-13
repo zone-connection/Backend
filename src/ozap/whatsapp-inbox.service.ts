@@ -15,6 +15,7 @@ import {
   seesAllWhatsappInbox,
 } from '../common/utils/roles';
 import { TeamScopeService } from '../equipes/team-scope.service';
+import { decryptPageAccessToken, metaTokenKey } from '../meta/meta-token.crypto';
 import {
   OzapApiClient,
   OzapApiError,
@@ -124,17 +125,15 @@ export class WhatsappInboxService {
   }
 
   async transcribeAudio(rawUrl: string, requester: AuthenticatedUser) {
-    await this.requireInstance(requester);
     const url = rawUrl.trim();
     if (!url) {
       throw new BadRequestException('Informe o áudio.');
     }
-    const apiKey =
-      this.config.get<string>('OPENAI_API_KEY')?.trim() ||
-      this.config.get<string>('OPENAI_KEY')?.trim();
+    const { openaiApiKey } = await this.requireInstance(requester);
+    const apiKey = this.unlockOpenaiKey(openaiApiKey);
     if (!apiKey) {
       throw new ServiceUnavailableException(
-        'Transcrição indisponível. Configure OPENAI_API_KEY no Backend (Render) e faça o deploy.',
+        'Transcrição indisponível. Cadastre a chave OpenAI na conexão OZap desta imobiliária.',
       );
     }
     try {
@@ -354,7 +353,7 @@ export class WhatsappInboxService {
     }
     const connection = await this.prisma.tenantOzapConnection.findFirst({
       where: { tenantId, ativo: true },
-      select: { instanceId: true },
+      select: { instanceId: true, openaiApiKey: true },
     });
     if (!connection) {
       throw new NotFoundException(
@@ -362,6 +361,16 @@ export class WhatsappInboxService {
       );
     }
     return connection;
+  }
+
+  private unlockOpenaiKey(stored: string | null | undefined): string {
+    const raw = stored?.trim();
+    if (!raw) return '';
+    try {
+      return decryptPageAccessToken(raw, metaTokenKey(this.config)).trim();
+    } catch {
+      return '';
+    }
   }
 
   private throwOzap(error: unknown): never {

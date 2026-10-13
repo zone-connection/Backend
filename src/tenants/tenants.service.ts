@@ -88,6 +88,7 @@ const ozapConnectionSelect = {
   id: true,
   tenantId: true,
   instanceId: true,
+  openaiApiKey: true,
   ativo: true,
   createdAt: true,
   updatedAt: true,
@@ -107,6 +108,18 @@ function maskSecret(value: string): string {
 
 function maskMetaConnection(connection: MetaConnection) {
   return { ...connection, pageAccessToken: maskSecret(connection.pageAccessToken) };
+}
+
+type OzapConnectionRow = Prisma.TenantOzapConnectionGetPayload<{
+  select: typeof ozapConnectionSelect;
+}>;
+
+function publicOzapConnection(connection: OzapConnectionRow) {
+  const { openaiApiKey, ...rest } = connection;
+  return {
+    ...rest,
+    hasOpenaiApiKey: Boolean(openaiApiKey?.trim()),
+  };
 }
 
 @Injectable()
@@ -363,7 +376,7 @@ export class TenantsService {
       admin: users[0] ?? null,
       userCount: _count.users,
       metaConnections: metaConnections.map(maskMetaConnection),
-      ozapConnections,
+      ozapConnections: ozapConnections.map(publicOzapConnection),
       oruloConnections: oruloConnections.map((row) => ({
         ...row,
         clientId:
@@ -903,11 +916,12 @@ export class TenantsService {
   async listOzapConnections(tenantId: string) {
     await this.ensureExists(tenantId);
 
-    return this.prisma.tenantOzapConnection.findMany({
+    const rows = await this.prisma.tenantOzapConnection.findMany({
       where: { tenantId },
       select: ozapConnectionSelect,
       orderBy: { createdAt: 'desc' },
     });
+    return rows.map(publicOzapConnection);
   }
 
   async createOzapConnection(tenantId: string, dto: CreateOzapConnectionDto) {
@@ -920,6 +934,7 @@ export class TenantsService {
           tenantId,
           instanceId: dto.instanceId,
           ativo: dto.ativo ?? true,
+          openaiApiKey: this.encryptOzapOpenaiKey(dto.openaiApiKey) ?? null,
         },
         select: ozapConnectionSelect,
       });
@@ -929,7 +944,7 @@ export class TenantsService {
           data: { iaBotEnabled: true },
         });
       }
-      return connection;
+      return publicOzapConnection(connection);
     } catch (error) {
       throw this.translateUniqueConstraint(
         error,
@@ -945,13 +960,22 @@ export class TenantsService {
   ) {
     await this.ensureOzapConnectionExists(tenantId, connectionId);
 
-    return this.prisma.tenantOzapConnection.update({
+    const encrypted = this.encryptOzapOpenaiKey(dto.openaiApiKey);
+    const row = await this.prisma.tenantOzapConnection.update({
       where: { id: connectionId },
       data: {
         ...(dto.ativo !== undefined ? { ativo: dto.ativo } : {}),
+        ...(encrypted !== undefined ? { openaiApiKey: encrypted } : {}),
       },
       select: ozapConnectionSelect,
     });
+    return publicOzapConnection(row);
+  }
+
+  private encryptOzapOpenaiKey(raw?: string): string | undefined {
+    const value = raw?.trim();
+    if (!value) return undefined;
+    return encryptSecret(value, metaTokenKey(this.config));
   }
 
   async removeOzapConnection(tenantId: string, connectionId: string) {
