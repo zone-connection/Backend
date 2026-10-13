@@ -288,7 +288,7 @@ export class WhatsappInboxService {
       });
       return { ok: true as const };
     } catch (error) {
-      this.throwOzap(error);
+      this.throwMessageMutation(error, 'editar');
     }
   }
 
@@ -304,7 +304,7 @@ export class WhatsappInboxService {
       await this.ozapApi.deleteMessage({ instanceId, chatId, messageId });
       return { ok: true as const };
     } catch (error) {
-      this.throwOzap(error);
+      this.throwMessageMutation(error, 'excluir');
     }
   }
 
@@ -910,6 +910,23 @@ export class WhatsappInboxService {
           [],
       })),
     };
+  }
+
+  private throwMessageMutation(
+    error: unknown,
+    action: 'editar' | 'excluir',
+  ): never {
+    if (error instanceof OzapApiError) {
+      if (error.status === 404 || error.status === 405) {
+        throw new BadRequestException(
+          `O OZap não aceita ${action} essa mensagem neste número. Só funciona se a API da instância liberar a ação.`,
+        );
+      }
+      if (error.status === 400) {
+        throw new BadRequestException(error.message);
+      }
+    }
+    this.throwOzap(error);
   }
 
   private throwOzap(error: unknown): never {

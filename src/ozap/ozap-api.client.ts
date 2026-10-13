@@ -176,61 +176,56 @@ export class OzapApiClient {
     const apiKey = this.requireApiKey();
     const messageId = params.messageId.trim();
     const text = params.text.trim();
-    if (!messageId || !text) {
+    const to = this.phoneDigits(params.chatId);
+    if (!messageId || !text || !to) {
       throw new OzapApiError(0, 'Mensagem inválida.');
     }
-    let lastError: OzapApiError | null = null;
+    const base = this.baseUrl();
+    const payload = {
+      to,
+      id: messageId,
+      message_id: messageId,
+      messageId,
+      message: text,
+      content: text,
+      text,
+      edit: messageId,
+    };
+    const attempts: Array<{
+      method: 'PATCH' | 'POST' | 'PUT';
+      url: string;
+      body: Record<string, unknown>;
+    }> = [
+      {
+        method: 'POST',
+        url: `${base}/api/v1/${params.instanceId}/messages/edit`,
+        body: payload,
+      },
+      {
+        method: 'POST',
+        url: `${base}/api/v1/${params.instanceId}/messages/send`,
+        body: { to, message: text, edit: messageId, message_id: messageId },
+      },
+    ];
     for (const chatId of this.orderedChatIds(params.instanceId, params.chatId)) {
       const encodedChat = encodeURIComponent(chatId);
       const encodedMsg = encodeURIComponent(messageId);
-      const attempts: Array<{
-        method: 'PATCH' | 'POST' | 'PUT';
-        url: string;
-        body: Record<string, unknown>;
-      }> = [
+      attempts.push(
         {
           method: 'PATCH',
-          url: `${this.baseUrl()}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}`,
-          body: { message: text, content: text, text },
-        },
-        {
-          method: 'PUT',
-          url: `${this.baseUrl()}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}`,
-          body: { message: text, content: text, text },
+          url: `${base}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}`,
+          body: payload,
         },
         {
           method: 'POST',
-          url: `${this.baseUrl()}/api/v1/${params.instanceId}/messages/edit`,
-          body: {
-            chat_id: chatId,
-            chatId,
-            message_id: messageId,
-            messageId,
-            message: text,
-            content: text,
-          },
+          url: `${base}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}/edit`,
+          body: payload,
         },
-      ];
-      for (const attempt of attempts) {
-        try {
-          await this.requestJson(attempt.url, apiKey, attempt.method, attempt.body);
-          this.rememberChatId(params.instanceId, params.chatId, chatId);
-          return;
-        } catch (error) {
-          if (
-            error instanceof OzapApiError &&
-            (error.status === 404 || error.status === 405)
-          ) {
-            lastError = error;
-            continue;
-          }
-          throw error;
-        }
-      }
+      );
     }
-    throw (
-      lastError ??
-      new OzapApiError(0, 'OZap não permite editar esta mensagem.')
+    await this.tryMessageMutations(
+      attempts,
+      'OZap não permite editar esta mensagem.',
     );
   }
 
@@ -241,63 +236,87 @@ export class OzapApiClient {
   }): Promise<void> {
     const apiKey = this.requireApiKey();
     const messageId = params.messageId.trim();
-    if (!messageId) {
+    const to = this.phoneDigits(params.chatId);
+    if (!messageId || !to) {
       throw new OzapApiError(0, 'Mensagem inválida.');
     }
-    let lastError: OzapApiError | null = null;
+    const base = this.baseUrl();
+    const payload = {
+      to,
+      id: messageId,
+      message_id: messageId,
+      messageId,
+      fromMe: true,
+      from_me: true,
+    };
+    const attempts: Array<{
+      method: 'DELETE' | 'POST';
+      url: string;
+      body?: Record<string, unknown>;
+    }> = [
+      {
+        method: 'POST',
+        url: `${base}/api/v1/${params.instanceId}/messages/delete`,
+        body: payload,
+      },
+      {
+        method: 'POST',
+        url: `${base}/api/v1/${params.instanceId}/messages/revoke`,
+        body: payload,
+      },
+      {
+        method: 'DELETE',
+        url: `${base}/api/v1/${params.instanceId}/messages/${encodeURIComponent(messageId)}`,
+        body: payload,
+      },
+    ];
     for (const chatId of this.orderedChatIds(params.instanceId, params.chatId)) {
       const encodedChat = encodeURIComponent(chatId);
       const encodedMsg = encodeURIComponent(messageId);
-      const attempts: Array<{
-        method: 'DELETE' | 'POST';
-        url: string;
-        body?: Record<string, unknown>;
-      }> = [
-        {
-          method: 'DELETE',
-          url: `${this.baseUrl()}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}`,
-        },
-        {
-          method: 'DELETE',
-          url: `${this.baseUrl()}/api/v1/${params.instanceId}/messages/${encodedMsg}`,
-        },
+      attempts.push(
         {
           method: 'POST',
-          url: `${this.baseUrl()}/api/v1/${params.instanceId}/messages/delete`,
-          body: {
-            chat_id: chatId,
-            chatId,
-            message_id: messageId,
-            messageId,
-          },
+          url: `${base}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}/delete`,
+          body: payload,
         },
-      ];
-      for (const attempt of attempts) {
-        try {
-          await this.requestJson(
-            attempt.url,
-            apiKey,
-            attempt.method,
-            attempt.body,
-          );
-          this.rememberChatId(params.instanceId, params.chatId, chatId);
-          return;
-        } catch (error) {
-          if (
-            error instanceof OzapApiError &&
-            (error.status === 404 || error.status === 405)
-          ) {
-            lastError = error;
-            continue;
-          }
-          throw error;
+        {
+          method: 'DELETE',
+          url: `${base}/api/v1/${params.instanceId}/chats/${encodedChat}/messages/${encodedMsg}`,
+        },
+      );
+    }
+    await this.tryMessageMutations(
+      attempts,
+      'OZap não permite excluir esta mensagem.',
+    );
+  }
+
+  private async tryMessageMutations(
+    attempts: Array<{
+      method: 'PATCH' | 'POST' | 'PUT' | 'DELETE';
+      url: string;
+      body?: Record<string, unknown>;
+    }>,
+    fallback: string,
+  ): Promise<void> {
+    const apiKey = this.requireApiKey();
+    let lastError: OzapApiError | null = null;
+    for (const attempt of attempts) {
+      try {
+        await this.requestJson(attempt.url, apiKey, attempt.method, attempt.body);
+        return;
+      } catch (error) {
+        if (
+          error instanceof OzapApiError &&
+          (error.status === 404 || error.status === 405)
+        ) {
+          lastError = error;
+          continue;
         }
+        throw error;
       }
     }
-    throw (
-      lastError ??
-      new OzapApiError(0, 'OZap não permite excluir esta mensagem.')
-    );
+    throw new OzapApiError(404, fallback);
   }
 
   async fetchMedia(
@@ -790,16 +809,25 @@ export class OzapApiClient {
     rec: Record<string, unknown>,
     direction: 'in' | 'out',
   ): OzapDeliveryStatus | null {
+    if (
+      rec.read === true ||
+      rec.seen === true ||
+      rec.is_read === true ||
+      rec.viewed === true
+    ) {
+      return 'read';
+    }
     const raw = (
       this.asString(rec.status) ??
       this.asString(rec.ack_name) ??
       this.asString(rec.delivery_status) ??
       this.asString(rec.ackStatus) ??
+      this.asString(rec.ack) ??
       ''
     ).toLowerCase();
     if (/fail|error|denied/.test(raw)) return 'failed';
-    if (/read|played|seen/.test(raw)) return 'read';
-    if (/deliver|received/.test(raw)) return 'delivered';
+    if (/read|played|seen|viewed/.test(raw)) return 'read';
+    if (/deliver/.test(raw)) return 'delivered';
     if (/sent|server|device/.test(raw)) return 'sent';
     if (/pend|queue|clock/.test(raw)) return 'pending';
     const ack = Number(rec.ack ?? rec.ack_code ?? rec.message_ack);
