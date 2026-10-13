@@ -203,8 +203,13 @@ export class OzapApiClient {
       },
       {
         method: 'POST',
-        url: `${base}/api/v1/${params.instanceId}/messages/send`,
-        body: { to, message: text, edit: messageId, message_id: messageId },
+        url: `${base}/api/v1/${params.instanceId}/messages/update`,
+        body: payload,
+      },
+      {
+        method: 'PUT',
+        url: `${base}/api/v1/${params.instanceId}/messages/${encodeURIComponent(messageId)}`,
+        body: payload,
       },
     ];
     for (const chatId of this.orderedChatIds(params.instanceId, params.chatId)) {
