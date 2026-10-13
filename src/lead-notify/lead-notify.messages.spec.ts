@@ -5,6 +5,7 @@ import {
   formatLeadWhatsApp,
   leadAtribuidoCopy,
   leadCrmPath,
+  isCrmWhatsappLeadNotifyText,
   leadLoteCopy,
   pickPublicFrontendUrl,
 } from './lead-notify.messages';
@@ -71,5 +72,24 @@ describe('lead-notify messages', () => {
   it('agrupa distribuição', () => {
     assert.equal(leadLoteCopy(1).titulo, 'Você recebeu 1 lead novo');
     assert.equal(leadLoteCopy(5).titulo, 'Você recebeu 5 leads novos');
+  });
+
+  it('reconhece aviso de lead no preview da conversa', () => {
+    assert.equal(
+      isCrmWhatsappLeadNotifyText(
+        'Você recebeu 3 leads novos Abra o CRM para atender',
+      ),
+      true,
+    );
+    assert.equal(
+      isCrmWhatsappLeadNotifyText(
+        'Novo lead no pool (sem corretor) Nome: Luis',
+      ),
+      true,
+    );
+    assert.equal(
+      isCrmWhatsappLeadNotifyText('Para que eu possa ajudar, poderia me informar'),
+      false,
+    );
   });
 });

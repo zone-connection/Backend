@@ -15,6 +15,7 @@ import {
   seesAllWhatsappInbox,
 } from '../common/utils/roles';
 import { TeamScopeService } from '../equipes/team-scope.service';
+import { isCrmWhatsappLeadNotifyText } from '../lead-notify/lead-notify.messages';
 import { decryptPageAccessToken, metaTokenKey } from '../meta/meta-token.crypto';
 import {
   OzapApiClient,
@@ -94,7 +95,7 @@ export class WhatsappInboxService {
       );
     }
     try {
-      const listed = await this.ozapApi.listChats(instanceId, page, limit);
+      const listed = await this.listClientChatsFromOzap(instanceId, page, limit);
       const chats = listed.chats;
       const chatIds = [
         ...new Set(
@@ -293,6 +294,46 @@ export class WhatsappInboxService {
     }
   }
 
+  private isLeadNotifyChat(chat: {
+    lastMessage?: string | null;
+    name?: string | null;
+  }) {
+    return (
+      isCrmWhatsappLeadNotifyText(chat.lastMessage) ||
+      isCrmWhatsappLeadNotifyText(chat.name)
+    );
+  }
+
+  private async listClientChatsFromOzap(
+    instanceId: number,
+    page: number,
+    limit: number,
+  ) {
+    const safePage = Math.max(1, Math.floor(page) || 1);
+    const safeLimit = Math.min(100, Math.max(10, Math.floor(limit) || 50));
+    const visible: OzapInboxChat[] = [];
+    let ozapPage = safePage;
+    let listed = await this.ozapApi.listChats(instanceId, ozapPage, safeLimit);
+    let hasMore = listed.hasMore;
+    for (let extra = 0; extra < 6; extra += 1) {
+      for (const chat of listed.chats) {
+        if (!this.isLeadNotifyChat(chat)) visible.push(chat);
+      }
+      hasMore = listed.hasMore;
+      if (visible.length >= safeLimit || !listed.hasMore) break;
+      ozapPage += 1;
+      listed = await this.ozapApi.listChats(instanceId, ozapPage, safeLimit);
+    }
+    const overflow = visible.length > safeLimit;
+    return {
+      chats: visible.slice(0, safeLimit),
+      page: safePage,
+      limit: listed.limit,
+      total: listed.total,
+      hasMore: overflow || hasMore,
+    };
+  }
+
   private parseLeadFilters(filters?: {
     corretorId?: string;
     equipeId?: string;
@@ -396,28 +437,30 @@ export class WhatsappInboxService {
       total,
       hasMore: safePage * safeLimit < total,
       canSend: canSendWhatsappInbox(requester),
-      chats: rows.map((row) => {
-        const ozap =
-          ozapByChat.get(row.chatId) ??
-          (row.lead.telefone
-            ? ozapByChat.get(row.lead.telefone.replace(/\D/g, ''))
-            : undefined);
-        return {
-          chatId: row.chatId,
-          name: row.lead.nome,
-          phone: row.lead.telefone || ozap?.phone || null,
-          lastMessage: ozap?.lastMessage ?? null,
-          lastMessageAt:
-            ozap?.lastMessageAt ?? row.lastMessageAt?.toISOString() ?? null,
-          unread: ozap?.unread ?? 0,
-          isGroup: ozap?.isGroup ?? false,
-          aiPaused: ozap?.aiPaused ?? false,
-          pausedUntil: ozap?.pausedUntil ?? null,
-          leadStatus: ozap?.leadStatus ?? null,
-          leadId: row.lead.id,
-          leadNome: row.lead.nome,
-        };
-      }),
+      chats: rows
+        .map((row) => {
+          const ozap =
+            ozapByChat.get(row.chatId) ??
+            (row.lead.telefone
+              ? ozapByChat.get(row.lead.telefone.replace(/\D/g, ''))
+              : undefined);
+          return {
+            chatId: row.chatId,
+            name: row.lead.nome,
+            phone: row.lead.telefone || ozap?.phone || null,
+            lastMessage: ozap?.lastMessage ?? null,
+            lastMessageAt:
+              ozap?.lastMessageAt ?? row.lastMessageAt?.toISOString() ?? null,
+            unread: ozap?.unread ?? 0,
+            isGroup: ozap?.isGroup ?? false,
+            aiPaused: ozap?.aiPaused ?? false,
+            pausedUntil: ozap?.pausedUntil ?? null,
+            leadStatus: ozap?.leadStatus ?? null,
+            leadId: row.lead.id,
+            leadNome: row.lead.nome,
+          };
+        })
+        .filter((chat) => !this.isLeadNotifyChat(chat)),
     };
   }
 

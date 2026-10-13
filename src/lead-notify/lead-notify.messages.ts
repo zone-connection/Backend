@@ -81,6 +81,25 @@ export function formatLeadWhatsApp(params: {
   return lines.join('\n').trim();
 }
 
+/** Avisos de lead enviados ao WhatsApp do corretor, não conversa de cliente. */
+export function isCrmWhatsappLeadNotifyText(
+  text: string | null | undefined,
+): boolean {
+  if (!text?.trim()) return false;
+  const t = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  return (
+    /abra (o|no) crm/.test(t) ||
+    /voce recebeu\s+\d+\s+leads? novos?/.test(t) ||
+    /novo lead no pool/.test(t) ||
+    /novo lead atribuido/.test(t) ||
+    /\d+\s+leads? no pool da equipe/.test(t) ||
+    /funil\?lead=/.test(t)
+  );
+}
+
 function escapeHtml(value: string) {
   return value
     .replace(/&/g, '&amp;')
