@@ -399,11 +399,7 @@ export class MetaGraphApiService {
     const url = new URL(`https://graph.facebook.com/${version}/me`);
     url.searchParams.set(
       'fields',
-      [
-        'accounts.limit(100){id,name,access_token}',
-        'adaccounts.limit(100){id,name}',
-        'businesses.limit(50){id,name,owned_pages.limit(100){id,name,access_token},client_pages.limit(100){id,name,access_token},owned_ad_accounts.limit(100){id,name},client_ad_accounts.limit(100){id,name}}',
-      ].join(','),
+      'accounts.limit(100){id,name,access_token}',
     );
     url.searchParams.set('access_token', userAccessToken);
     const pages: GraphNamed[] = [];
