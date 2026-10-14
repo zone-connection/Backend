@@ -76,6 +76,14 @@ export class ArquivosController {
     return this.arquivos.updateTag(user, id, dto);
   }
 
+  @Get('historico')
+  historico(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: QueryArquivosDto,
+  ) {
+    return this.arquivos.listHistorico(user, query.entityType, query.entityId);
+  }
+
   @Get()
   list(@CurrentUser() user: AuthenticatedUser, @Query() query: QueryArquivosDto) {
     return this.arquivos.list(

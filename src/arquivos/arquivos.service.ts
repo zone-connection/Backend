@@ -355,6 +355,58 @@ export class ArquivosService {
     return rows.map((row) => this.serialize(row));
   }
 
+  async listHistorico(
+    user: AuthenticatedUser,
+    entityType: ArquivoVinculoTipo,
+    entityId: string,
+  ) {
+    const { tenantId } = await this.assertEntityAccess(user, entityType, entityId);
+    const tipos = [
+      ArquivoEventoTipo.upload,
+      ArquivoEventoTipo.download,
+      ArquivoEventoTipo.visualizar,
+      ArquivoEventoTipo.excluir,
+      ArquivoEventoTipo.download_zip,
+      ArquivoEventoTipo.compartilhar_email,
+    ];
+    const rows = await this.prisma.arquivoEvento.findMany({
+      where: {
+        tenantId,
+        tipo: { in: tipos },
+        OR: [
+          { arquivo: { vinculos: { some: { entityType, entityId } } } },
+          { detalhe: { path: ['entityId'], equals: entityId } },
+        ],
+      },
+      include: {
+        user: { select: { id: true, name: true } },
+        arquivo: { select: { nomeExibicao: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 80,
+    });
+    return rows.map((row) => {
+      const detalhe =
+        row.detalhe && typeof row.detalhe === 'object' && !Array.isArray(row.detalhe)
+          ? (row.detalhe as Record<string, unknown>)
+          : null;
+      const nomes = Array.isArray(detalhe?.nomes)
+        ? detalhe.nomes.filter((n): n is string => typeof n === 'string')
+        : [];
+      return {
+        id: row.id,
+        tipo: row.tipo,
+        createdAt: row.createdAt.toISOString(),
+        autor: row.user,
+        arquivo: row.arquivo?.nomeExibicao ?? (typeof detalhe?.nome === 'string' ? detalhe.nome : null),
+        email: typeof detalhe?.email === 'string' ? detalhe.email : null,
+        count: typeof detalhe?.count === 'number' ? detalhe.count : nomes.length || null,
+        nomes,
+        resultado: typeof detalhe?.resultado === 'string' ? detalhe.resultado : null,
+      };
+    });
+  }
+
   async upload(params: {
     user: AuthenticatedUser;
     file: Express.Multer.File;
@@ -622,6 +674,7 @@ export class ArquivosService {
       userId: user.id,
       arquivoId: id,
       tipo: ArquivoEventoTipo.download,
+      detalhe: { nome: row.nomeExibicao },
     });
     const ext = extFromMime(row.mime, row.nomeOriginal);
     return {
@@ -642,6 +695,7 @@ export class ArquivosService {
       userId: user.id,
       arquivoId: id,
       tipo: ArquivoEventoTipo.visualizar,
+      detalhe: { nome: row.nomeExibicao },
     });
     return { url };
   }
@@ -709,7 +763,12 @@ export class ArquivosService {
       tenantId,
       userId: user.id,
       tipo: ArquivoEventoTipo.download_zip,
-      detalhe: { entityType, entityId, count: rows.length },
+      detalhe: {
+        entityType,
+        entityId,
+        count: rows.length,
+        nomes: rows.map((r) => r.nomeExibicao),
+      },
     });
     const zipName = `Documentos_${label.replace(/\s+/g, '_')}.zip`;
     return { stream: pass, filename: sanitizeFilename(zipName).replace(/\.pdf$/i, '.zip') };
@@ -810,7 +869,13 @@ export class ArquivosService {
           tenantId,
           userId: user.id,
           tipo: ArquivoEventoTipo.share_link_criar,
-          detalhe: { email: dto.email, count: rows.length },
+          detalhe: {
+            email: dto.email,
+            count: rows.length,
+            entityType: dto.entityType,
+            entityId: dto.entityId,
+            nomes: rows.map((r) => r.nomeExibicao),
+          },
         });
       }
       await this.log({
@@ -822,6 +887,9 @@ export class ArquivosService {
           method,
           count: rows.length,
           tags: rows.flatMap((r) => r.tags.map((t) => t.tag.nome)),
+          entityType: dto.entityType,
+          entityId: dto.entityId,
+          nomes: rows.map((r) => r.nomeExibicao),
         },
       });
       return { ok: true, method };
@@ -830,7 +898,12 @@ export class ArquivosService {
         tenantId,
         userId: user.id,
         tipo: ArquivoEventoTipo.compartilhar_email,
-        detalhe: { email: dto.email, resultado: 'falha' },
+        detalhe: {
+          email: dto.email,
+          resultado: 'falha',
+          entityType: dto.entityType,
+          entityId: dto.entityId,
+        },
       });
       throw error;
     }
