@@ -4,6 +4,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { idsFromGranularScopes } from './meta-granular-scopes';
 import { resolveMetaAppId } from './meta-oauth.util';
 
 export type MetaLeadField = {
@@ -181,8 +182,11 @@ export class MetaGraphApiService {
       if (!token) {
         token = await this.fetchPageAccessToken(row.id, userAccessToken);
       }
-      if (!token) continue;
-      pages.push({ id: row.id, name: row.name, access_token: token });
+      pages.push({
+        id: row.id,
+        name: row.name,
+        access_token: token ?? '',
+      });
     }
     this.logger.log(
       `Páginas Meta catalog=${catalog.pages.size} utilizáveis=${pages.length} ads=${catalog.ads.size}`,
@@ -219,6 +223,10 @@ export class MetaGraphApiService {
       if (!row?.id) return;
       ads.set(row.id, { id: row.id, name: row.name ?? row.id });
     };
+
+    const granted = await this.fetchAssetsFromDebugToken(userAccessToken);
+    for (const row of granted.pages) addPage(row);
+    for (const row of granted.ads) addAd(row);
 
     const nested = await this.fetchMeBusinessCatalog(userAccessToken);
     for (const row of nested.pages) addPage(row);
@@ -285,6 +293,102 @@ export class MetaGraphApiService {
     );
 
     return { pages, ads };
+  }
+
+  private async fetchAssetsFromDebugToken(userAccessToken: string): Promise<{
+    pages: GraphNamed[];
+    ads: GraphAd[];
+  }> {
+    const version = this.graphVersion();
+    const url = new URL(`https://graph.facebook.com/${version}/debug_token`);
+    url.searchParams.set('input_token', userAccessToken);
+    url.searchParams.set(
+      'access_token',
+      `${this.appId()}|${this.appSecret()}`,
+    );
+    const pages: GraphNamed[] = [];
+    const ads: GraphAd[] = [];
+    try {
+      const body = await this.graphGet<{
+        data?: {
+          is_valid?: boolean;
+          scopes?: string[];
+          granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
+        };
+        error?: { message?: string; code?: number };
+      }>(url);
+      const { pageIds, adAccountIds } = idsFromGranularScopes(
+        body.data?.granular_scopes,
+      );
+      this.logger.log(
+        `debug_token válido=${body.data?.is_valid ?? false} pages=${pageIds.length} ads=${adAccountIds.length} scopes=${(body.data?.scopes ?? []).join(',')}`,
+      );
+      const fetchedPages = await Promise.all(
+        pageIds.map((id) => this.fetchPageDetails(id, userAccessToken)),
+      );
+      for (const row of fetchedPages) {
+        if (row) pages.push(row);
+      }
+      const fetchedAds = await Promise.all(
+        adAccountIds.map((id) => this.fetchAdAccountDetails(id, userAccessToken)),
+      );
+      for (const row of fetchedAds) {
+        if (row) ads.push(row);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `debug_token falhou: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+    return { pages, ads };
+  }
+
+  private async fetchPageDetails(
+    pageId: string,
+    userAccessToken: string,
+  ): Promise<GraphNamed | undefined> {
+    const version = this.graphVersion();
+    const url = new URL(
+      `https://graph.facebook.com/${version}/${encodeURIComponent(pageId)}`,
+    );
+    url.searchParams.set('fields', 'id,name,access_token');
+    url.searchParams.set('access_token', userAccessToken);
+    try {
+      const body = await this.graphGet<GraphNamed & {
+        error?: { message?: string; code?: number };
+      }>(url);
+      if (!body.id) return { id: pageId, name: pageId };
+      return body;
+    } catch (err) {
+      this.logger.warn(
+        `Página concedida sem detalhe page_id=${pageId}: ${err instanceof Error ? err.message : err}`,
+      );
+      return { id: pageId, name: pageId };
+    }
+  }
+
+  private async fetchAdAccountDetails(
+    adAccountId: string,
+    userAccessToken: string,
+  ): Promise<GraphAd | undefined> {
+    const version = this.graphVersion();
+    const url = new URL(
+      `https://graph.facebook.com/${version}/${encodeURIComponent(adAccountId)}`,
+    );
+    url.searchParams.set('fields', 'id,name');
+    url.searchParams.set('access_token', userAccessToken);
+    try {
+      const body = await this.graphGet<GraphAd & {
+        error?: { message?: string; code?: number };
+      }>(url);
+      if (!body.id) return { id: adAccountId, name: adAccountId };
+      return body;
+    } catch (err) {
+      this.logger.warn(
+        `Conta concedida sem detalhe ad=${adAccountId}: ${err instanceof Error ? err.message : err}`,
+      );
+      return { id: adAccountId, name: adAccountId };
+    }
   }
 
   private async fetchMeBusinessCatalog(userAccessToken: string): Promise<{

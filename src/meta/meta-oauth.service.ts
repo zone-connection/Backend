@@ -237,6 +237,11 @@ export class MetaOAuthService {
         'Esta Página não está entre as que você autorizou no Facebook.',
       );
     }
+    if (!page.access_token) {
+      throw new BadRequestException(
+        'A Meta autorizou a Página, mas não devolveu o token. Conecte de novo e marque a Página na lista.',
+      );
+    }
 
     const taken = await this.prisma.tenantMetaConnection.findUnique({
       where: { pageId },
