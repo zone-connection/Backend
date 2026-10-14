@@ -143,6 +143,28 @@ export class ProcessosService {
     });
   }
 
+  async remove(id: string, user: AuthenticatedUser) {
+    const row = await this.findOne(id, user);
+    const owner =
+      this.isGestor(user) ||
+      row.autorId === user.id ||
+      row.corretorId === user.id;
+    if (!owner) {
+      throw new ForbiddenException('Sem permissão para excluir.');
+    }
+    if (
+      !this.isGestor(user) &&
+      row.status !== ProcessoStatus.rascunho &&
+      row.status !== ProcessoStatus.reprovado
+    ) {
+      throw new BadRequestException(
+        'Só é possível excluir rascunho ou processo reprovado.',
+      );
+    }
+    await this.prisma.processo.delete({ where: { id } });
+    return { ok: true };
+  }
+
   async enviar(id: string, user: AuthenticatedUser) {
     const row = await this.findOne(id, user);
     if (!this.isGestor(user) && row.autorId !== user.id && row.corretorId !== user.id) {
