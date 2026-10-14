@@ -26,8 +26,19 @@ export type MetaLeadgenForm = {
 };
 
 const GRAPH_TIMEOUT_MS = 15_000;
-const MAX_PAGES = 10;
-const PAGE_SIZE = 50;
+const MAX_PAGES = 25;
+const PAGE_SIZE = 100;
+
+type GraphPaging = { cursors?: { after?: string }; next?: string };
+type GraphConn<T> = { data?: T[]; paging?: GraphPaging };
+type GraphNamed = { id?: string; name?: string; access_token?: string };
+type GraphAd = { id?: string; name?: string; account_id?: string };
+type GraphBusiness = GraphNamed & {
+  owned_pages?: GraphConn<GraphNamed>;
+  client_pages?: GraphConn<GraphNamed>;
+  owned_ad_accounts?: GraphConn<GraphAd>;
+  client_ad_accounts?: GraphConn<GraphAd>;
+};
 
 @Injectable()
 export class MetaGraphApiService {
@@ -163,28 +174,9 @@ export class MetaGraphApiService {
   async listUserPages(userAccessToken: string): Promise<
     Array<{ id: string; name: string; access_token: string }>
   > {
-    const accounts = await this.collectPagesSafe<{
-      id?: string;
-      name?: string;
-      access_token?: string;
-    }>('me/accounts', 'id,name,access_token', userAccessToken);
-    const fromBusinesses = await this.listPagesFromBusinesses(userAccessToken);
-    const merged = new Map<
-      string,
-      { id: string; name: string; access_token?: string }
-    >();
-    for (const row of [...accounts, ...fromBusinesses]) {
-      if (!row.id) continue;
-      const prev = merged.get(row.id);
-      merged.set(row.id, {
-        id: row.id,
-        name: row.name ?? prev?.name ?? row.id,
-        access_token: row.access_token || prev?.access_token,
-      });
-    }
-
+    const catalog = await this.loadAssetCatalog(userAccessToken);
     const pages: Array<{ id: string; name: string; access_token: string }> = [];
-    for (const row of merged.values()) {
+    for (const row of catalog.pages.values()) {
       let token = row.access_token;
       if (!token) {
         token = await this.fetchPageAccessToken(row.id, userAccessToken);
@@ -192,39 +184,168 @@ export class MetaGraphApiService {
       if (!token) continue;
       pages.push({ id: row.id, name: row.name, access_token: token });
     }
-
     this.logger.log(
-      `Páginas Meta me/accounts=${accounts.length} business=${fromBusinesses.length} utilizáveis=${pages.length}`,
+      `Páginas Meta catalog=${catalog.pages.size} utilizáveis=${pages.length} ads=${catalog.ads.size}`,
     );
     return pages;
   }
 
-  private async listPagesFromBusinesses(userAccessToken: string): Promise<
-    Array<{ id?: string; name?: string; access_token?: string }>
+  async listAdAccounts(userAccessToken: string): Promise<
+    Array<{ id: string; name: string }>
   > {
-    const businesses = await this.collectPagesSafe<{ id?: string }>(
-      'me/businesses',
-      'id,name',
-      userAccessToken,
+    const catalog = await this.loadAssetCatalog(userAccessToken);
+    return [...catalog.ads.values()];
+  }
+
+  private async loadAssetCatalog(userAccessToken: string): Promise<{
+    pages: Map<string, { id: string; name: string; access_token?: string }>;
+    ads: Map<string, { id: string; name: string }>;
+  }> {
+    const pages = new Map<
+      string,
+      { id: string; name: string; access_token?: string }
+    >();
+    const ads = new Map<string, { id: string; name: string }>();
+    const addPage = (row?: GraphNamed) => {
+      if (!row?.id) return;
+      const prev = pages.get(row.id);
+      pages.set(row.id, {
+        id: row.id,
+        name: row.name ?? prev?.name ?? row.id,
+        access_token: row.access_token || prev?.access_token,
+      });
+    };
+    const addAd = (row?: GraphAd) => {
+      if (!row?.id) return;
+      ads.set(row.id, { id: row.id, name: row.name ?? row.id });
+    };
+
+    const nested = await this.fetchMeBusinessCatalog(userAccessToken);
+    for (const row of nested.pages) addPage(row);
+    for (const row of nested.ads) addAd(row);
+
+    const [
+      accounts,
+      assigned,
+      adAccounts,
+      businesses,
+    ] = await Promise.all([
+      this.collectPagesSafe<GraphNamed>(
+        'me/accounts',
+        'id,name,access_token',
+        userAccessToken,
+      ),
+      this.collectPagesSafe<GraphNamed>(
+        'me/assigned_pages',
+        'id,name',
+        userAccessToken,
+      ),
+      this.collectPagesSafe<GraphAd>(
+        'me/adaccounts',
+        'id,name,account_id',
+        userAccessToken,
+      ),
+      this.collectPagesSafe<GraphNamed>(
+        'me/businesses',
+        'id,name',
+        userAccessToken,
+      ),
+    ]);
+    for (const row of accounts) addPage(row);
+    for (const row of assigned) addPage(row);
+    for (const row of adAccounts) addAd(row);
+
+    await Promise.all(
+      businesses.flatMap((business) => {
+        if (!business.id) return [];
+        const id = encodeURIComponent(business.id);
+        return [
+          this.collectPagesSafe<GraphNamed>(
+            `${id}/owned_pages`,
+            'id,name,access_token',
+            userAccessToken,
+          ).then((rows) => rows.forEach(addPage)),
+          this.collectPagesSafe<GraphNamed>(
+            `${id}/client_pages`,
+            'id,name,access_token',
+            userAccessToken,
+          ).then((rows) => rows.forEach(addPage)),
+          this.collectPagesSafe<GraphAd>(
+            `${id}/owned_ad_accounts`,
+            'id,name',
+            userAccessToken,
+          ).then((rows) => rows.forEach(addAd)),
+          this.collectPagesSafe<GraphAd>(
+            `${id}/client_ad_accounts`,
+            'id,name',
+            userAccessToken,
+          ).then((rows) => rows.forEach(addAd)),
+        ];
+      }),
     );
-    const pages: Array<{ id?: string; name?: string; access_token?: string }> =
-      [];
-    for (const business of businesses) {
-      if (!business.id) continue;
-      for (const edge of ['owned_pages', 'client_pages'] as const) {
-        const rows = await this.collectPagesSafe<{
-          id?: string;
-          name?: string;
-          access_token?: string;
-        }>(
-          `${encodeURIComponent(business.id)}/${edge}`,
-          'id,name,access_token',
-          userAccessToken,
+
+    return { pages, ads };
+  }
+
+  private async fetchMeBusinessCatalog(userAccessToken: string): Promise<{
+    pages: GraphNamed[];
+    ads: GraphAd[];
+  }> {
+    const version = this.graphVersion();
+    const url = new URL(`https://graph.facebook.com/${version}/me`);
+    url.searchParams.set(
+      'fields',
+      [
+        'accounts.limit(100){id,name,access_token}',
+        'adaccounts.limit(100){id,name}',
+        'businesses.limit(50){id,name,owned_pages.limit(100){id,name,access_token},client_pages.limit(100){id,name,access_token},owned_ad_accounts.limit(100){id,name},client_ad_accounts.limit(100){id,name}}',
+      ].join(','),
+    );
+    url.searchParams.set('access_token', userAccessToken);
+    const pages: GraphNamed[] = [];
+    const ads: GraphAd[] = [];
+    try {
+      const body = await this.graphGet<{
+        accounts?: GraphConn<GraphNamed>;
+        adaccounts?: GraphConn<GraphAd>;
+        businesses?: GraphConn<GraphBusiness>;
+        error?: { message?: string; code?: number };
+      }>(url);
+      pages.push(...(await this.flattenConn(body.accounts)));
+      ads.push(...(await this.flattenConn(body.adaccounts)));
+      const businesses = await this.flattenConn(body.businesses);
+      for (const business of businesses) {
+        pages.push(...(await this.flattenConn(business.owned_pages)));
+        pages.push(...(await this.flattenConn(business.client_pages)));
+        ads.push(...(await this.flattenConn(business.owned_ad_accounts)));
+        ads.push(...(await this.flattenConn(business.client_ad_accounts)));
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Catalog /me aninhado falhou: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+    return { pages, ads };
+  }
+
+  private async flattenConn<T>(conn?: GraphConn<T>): Promise<T[]> {
+    const rows = [...(conn?.data ?? [])];
+    let next = conn?.paging?.next;
+    for (let i = 0; i < MAX_PAGES && next; i += 1) {
+      try {
+        const body = await this.graphGet<GraphConn<T> & {
+          error?: { message?: string; code?: number };
+        }>(new URL(next));
+        rows.push(...(body.data ?? []));
+        next = body.paging?.next;
+      } catch (err) {
+        this.logger.warn(
+          `Paginação Graph falhou: ${err instanceof Error ? err.message : err}`,
         );
-        pages.push(...rows);
+        break;
       }
     }
-    return pages;
+    return rows;
   }
 
   private async fetchPageAccessToken(
@@ -249,22 +370,6 @@ export class MetaGraphApiService {
       );
       return undefined;
     }
-  }
-
-  async listAdAccounts(userAccessToken: string): Promise<
-    Array<{ id: string; name: string }>
-  > {
-    const rows = await this.collectPages<{
-      id?: string;
-      name?: string;
-      account_id?: string;
-    }>('me/adaccounts', 'id,name,account_id', userAccessToken);
-    return rows
-      .filter((row): row is { id: string; name?: string } => Boolean(row.id))
-      .map((row) => ({
-        id: row.id,
-        name: row.name ?? row.id,
-      }));
   }
 
   async subscribePageLeadgen(pageId: string, pageAccessToken: string) {
@@ -363,6 +468,26 @@ export class MetaGraphApiService {
 
       const batch = body.data ?? [];
       collected.push(...batch);
+      const nextUrl = body.paging?.next;
+      if (nextUrl) {
+        const nextBody = await this.graphGet<{
+          data?: T[];
+          paging?: GraphPaging;
+          error?: { message?: string; code?: number };
+        }>(new URL(nextUrl));
+        collected.push(...(nextBody.data ?? []));
+        let next = nextBody.paging?.next;
+        for (let extra = 0; extra < MAX_PAGES && next; extra += 1) {
+          const more = await this.graphGet<{
+            data?: T[];
+            paging?: GraphPaging;
+            error?: { message?: string; code?: number };
+          }>(new URL(next));
+          collected.push(...(more.data ?? []));
+          next = more.paging?.next;
+        }
+        break;
+      }
       const nextAfter = body.paging?.cursors?.after;
       if (!batch.length || !nextAfter || nextAfter === after) break;
       after = nextAfter;

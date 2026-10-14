@@ -34,6 +34,7 @@ const SCOPES = [
   'pages_manage_ads',
   'leads_retrieval',
   'ads_read',
+  'business_management',
 ].join(',');
 
 const STATE_TYP = 'meta-oauth';
@@ -126,14 +127,13 @@ export class MetaOAuthService {
       client_id: this.appId(),
       redirect_uri: redirectUri,
       response_type: 'code',
+      scope: SCOPES,
       state,
       auth_type: 'rerequest',
     });
     const configId = this.config.get<string>('META_LOGIN_CONFIG_ID')?.trim();
     if (configId) {
       params.set('config_id', configId);
-    } else {
-      params.set('scope', SCOPES);
     }
     return `https://www.facebook.com/${version}/dialog/oauth?${params.toString()}`;
   }
@@ -212,6 +212,9 @@ export class MetaOAuthService {
         return [];
       }),
     ]);
+    this.logger.log(
+      `Assets Meta tenant=${tenantId} pages=${pages.length} adAccounts=${adAccounts.length}`,
+    );
     return {
       pages: pages.map((page) => ({ id: page.id, name: page.name })),
       adAccounts,
