@@ -28,7 +28,8 @@ import {
   ARQUIVO_MAX_POR_REGISTRO,
   TAGS_PADRAO,
   ZIP_EMAIL_MAX_BYTES,
-  isPdfBuffer,
+  detectDocumentoKind,
+  extFromMime,
   sanitizeFilename,
   slugifyTag,
 } from './arquivos.constants';
@@ -308,6 +309,7 @@ export class ArquivosService {
     nomeExibicao: string;
     nomeOriginal: string;
     categoria: ArquivoCategoria;
+    mime?: string;
     bytes: number;
     createdAt: Date;
     deletedAt: Date | null;
@@ -320,6 +322,7 @@ export class ArquivosService {
       nome: row.nomeExibicao,
       nomeOriginal: row.nomeOriginal,
       categoria: row.categoria,
+      mime: row.mime || 'application/pdf',
       bytes: row.bytes,
       createdAt: row.createdAt.toISOString(),
       uploadedBy: row.uploadedBy,
@@ -369,21 +372,31 @@ export class ArquivosService {
       params.entityId,
     );
     if (!file?.buffer) {
-      throw new BadRequestException('Envie um arquivo PDF.');
+      throw new BadRequestException('Envie um PDF ou imagem.');
     }
     if (file.buffer.length > ARQUIVO_MAX_BYTES) {
-      throw new BadRequestException('O PDF deve ter no máximo 5 MB.');
+      throw new BadRequestException('O arquivo deve ter no máximo 5 MB.');
     }
-    if (!isPdfBuffer(file.buffer)) {
-      throw new BadRequestException('O arquivo não é um PDF válido.');
+    const kind = detectDocumentoKind(
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    );
+    if (!kind) {
+      throw new BadRequestException(
+        'Envie um PDF ou imagem (JPG, PNG, WEBP ou GIF).',
+      );
     }
     const tagIds = [...new Set(params.tagIds.filter(Boolean))];
-    if (tagIds.length === 0) {
+    if (tagIds.length === 0 && params.entityType !== ArquivoVinculoTipo.processo) {
       throw new BadRequestException('Selecione pelo menos uma tag.');
     }
-    const tags = await this.prisma.documentoTag.findMany({
-      where: { tenantId, id: { in: tagIds }, active: true },
-    });
+    const tags =
+      tagIds.length === 0
+        ? []
+        : await this.prisma.documentoTag.findMany({
+            where: { tenantId, id: { in: tagIds }, active: true },
+          });
     if (tags.length !== tagIds.length) {
       throw new BadRequestException('Uma ou mais tags são inválidas.');
     }
@@ -401,10 +414,10 @@ export class ArquivosService {
       );
     }
     const id = randomBytes(16).toString('hex');
-    const storageKey = `${tenantId}/${params.entityType}/${id}.pdf`;
+    const storageKey = `${tenantId}/${params.entityType}/${id}.${kind.ext}`;
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
     try {
-      await this.r2.putObject(storageKey, file.buffer, 'application/pdf');
+      await this.r2.putObject(storageKey, file.buffer, kind.mime);
     } catch (error) {
       this.logger.error(
         `Falha no R2 ao enviar PDF: ${error instanceof Error ? error.message : error}`,
@@ -444,7 +457,7 @@ export class ArquivosService {
           tenantId,
           storageKey,
           sha256,
-          mime: 'application/pdf',
+          mime: kind.mime,
           bytes: file.buffer.length,
           nomeExibicao: params.nomeExibicao.trim() || file.originalname,
           nomeOriginal: file.originalname,
@@ -610,9 +623,11 @@ export class ArquivosService {
       arquivoId: id,
       tipo: ArquivoEventoTipo.download,
     });
+    const ext = extFromMime(row.mime, row.nomeOriginal);
     return {
       buffer,
-      filename: sanitizeFilename(row.nomeExibicao),
+      mime: row.mime || 'application/pdf',
+      filename: sanitizeFilename(row.nomeExibicao, ext),
     };
   }
 

@@ -540,4 +540,45 @@ export class NotificacoesService {
       select: notifSelect,
     });
   }
+
+  async createProcessoPendencia(params: {
+    userId: string;
+    leadId: string;
+    processoNome: string;
+    tituloPendencia: string;
+    autorNome: string;
+  }) {
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: NotificacaoTipo.processo_pendencia,
+        titulo: `Pendência documental — ${params.processoNome}`,
+        corpo: `${params.autorNome} solicitou correção: ${params.tituloPendencia}. O processo voltou para retrabalho.`,
+        leadId: params.leadId,
+      },
+      select: notifSelect,
+    });
+  }
+
+  async createProcessoReenvio(params: {
+    userId: string;
+    leadId: string;
+    processoNome: string;
+    autorNome: string;
+  }) {
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: NotificacaoTipo.processo_reenvio,
+        titulo: `Correção reenviada — ${params.processoNome}`,
+        corpo: `${params.autorNome} reenviou o processo após o retrabalho. Aguardando nova avaliação.`,
+        leadId: params.leadId,
+      },
+      select: notifSelect,
+    });
+  }
 }

@@ -413,6 +413,9 @@ model User {
   processosCorretor Processo[] @relation("ProcessoCorretor")
   processosGerente  Processo[] @relation("ProcessoGerente")
   processoRetornos  ProcessoRetorno[] @relation("ProcessoRetornoAutor")
+  processoPendencias ProcessoPendencia[] @relation("ProcessoPendenciaAutor")
+  processoCorrecoes  ProcessoPendenciaCorrecao[] @relation("ProcessoPendenciaCorrecaoAutor")
+  processoMovimentos ProcessoMovimento[] @relation("ProcessoMovimentoAutor")
 
   cadastroVendasAutor    CadastroVenda[] @relation("CadastroVendaAutor")
   cadastroVendasCorretor CadastroVenda[] @relation("CadastroVendaCorretor")
@@ -1223,6 +1226,26 @@ enum ProcessoStatus {
   reprovado
 }
 
+enum ProcessoEtapa {
+  nova_avaliacao
+  retrabalho
+  analise
+  bacen
+  spc_serasa
+  pendencia_documentacional
+  aguardando_qv
+  reprovado
+  condicionado
+  aprovado
+  em_reserva
+}
+
+enum ProcessoPendenciaStatus {
+  aberta
+  reenviada
+  encerrada
+}
+
 enum ProcessoRetornoResultado {
   aprovado
   reprovado
@@ -1252,13 +1275,17 @@ model Processo {
   gerenteId String?
   gerente   User? @relation("ProcessoGerente", fields: [gerenteId], references: [id], onDelete: SetNull)
   status    ProcessoStatus @default(rascunho)
+  etapa     ProcessoEtapa  @default(nova_avaliacao)
   enviadoAt DateTime?
-  retornos  ProcessoRetorno[]
+  retornos    ProcessoRetorno[]
+  pendencias  ProcessoPendencia[]
+  movimentos  ProcessoMovimento[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([tenantId, status])
+  @@index([tenantId, etapa])
   @@index([leadId])
   @@index([autorId])
   @@index([corretorId])
@@ -1278,6 +1305,53 @@ model ProcessoRetorno {
 
   @@index([processoId])
   @@map("processo_retornos")
+}
+
+model ProcessoPendencia {
+  id         String                   @id @default(uuid())
+  processoId String
+  processo   Processo                 @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  autorId    String
+  autor      User                     @relation("ProcessoPendenciaAutor", fields: [autorId], references: [id], onDelete: Cascade)
+  titulo     String
+  descricao  String                   @default("")
+  textoComplementar String            @default("")
+  arquivoIds String[]
+  status     ProcessoPendenciaStatus  @default(aberta)
+  correcoes  ProcessoPendenciaCorrecao[]
+  createdAt  DateTime                 @default(now())
+
+  @@index([processoId])
+  @@map("processo_pendencias")
+}
+
+model ProcessoPendenciaCorrecao {
+  id          String            @id @default(uuid())
+  pendenciaId String
+  pendencia   ProcessoPendencia @relation(fields: [pendenciaId], references: [id], onDelete: Cascade)
+  autorId     String
+  autor       User              @relation("ProcessoPendenciaCorrecaoAutor", fields: [autorId], references: [id], onDelete: Cascade)
+  comentario  String            @default("")
+  arquivoIds  String[]
+  createdAt   DateTime          @default(now())
+
+  @@index([pendenciaId])
+  @@map("processo_pendencia_correcoes")
+}
+
+model ProcessoMovimento {
+  id         String        @id @default(uuid())
+  processoId String
+  processo   Processo      @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  autorId    String
+  autor      User          @relation("ProcessoMovimentoAutor", fields: [autorId], references: [id], onDelete: Cascade)
+  deEtapa    ProcessoEtapa?
+  paraEtapa  ProcessoEtapa
+  observacao String        @default("")
+  createdAt  DateTime      @default(now())
+
+  @@index([processoId])
+  @@map("processo_movimentos")
 }
 
 /// Venda avulsa do plano Bronze (sem ficha de documentação).
@@ -1827,6 +1901,8 @@ enum NotificacaoTipo {
   chave_retirada
   chave_devolucao
   chave_confirmacao
+  processo_pendencia
+  processo_reenvio
 }
 
 /// Aviso in-app para o usuário (ex.: resultado da análise para o corretor).

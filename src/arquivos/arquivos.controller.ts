@@ -148,9 +148,9 @@ export class ArquivosController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    const { buffer, filename } = await this.arquivos.download(user, id);
+    const { buffer, filename, mime } = await this.arquivos.download(user, id);
     return new StreamableFile(buffer, {
-      type: 'application/pdf',
+      type: mime || 'application/pdf',
       disposition: `attachment; filename="${filename}"`,
     });
   }

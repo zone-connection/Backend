@@ -1,5 +1,9 @@
+import { ProcessoEtapa } from '@prisma/client';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
+  IsEnum,
   IsOptional,
   IsString,
   IsUUID,
@@ -124,4 +128,49 @@ export class RetornoProcessoDto {
   @IsOptional()
   @IsUUID()
   arquivoId?: string | null;
+}
+
+export class MoverEtapaProcessoDto {
+  @IsEnum(ProcessoEtapa)
+  etapa: ProcessoEtapa;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  observacao?: string;
+}
+
+export class CreatePendenciaProcessoDto {
+  @IsString()
+  @MaxLength(160)
+  titulo: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8000)
+  descricao?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  textoComplementar?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsUUID('4', { each: true })
+  arquivoIds?: string[];
+}
+
+export class CreateCorrecaoPendenciaDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  comentario?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsUUID('4', { each: true })
+  arquivoIds?: string[];
 }
