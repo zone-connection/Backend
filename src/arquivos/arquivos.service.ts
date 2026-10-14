@@ -409,6 +409,12 @@ export class ArquivosService {
       this.logger.error(
         `Falha no R2 ao enviar PDF: ${error instanceof Error ? error.message : error}`,
       );
+      const detail = error instanceof Error ? error.message : String(error);
+      if (/access key has length/i.test(detail) || /R2_ACCESS_KEY_ID/i.test(detail)) {
+        throw new ServiceUnavailableException(
+          'O armazenamento de PDFs está com a chave R2 inválida. No Dokploy, confira R2_ACCESS_KEY_ID (deve ter 32 caracteres).',
+        );
+      }
       throw new ServiceUnavailableException(
         'Não foi possível gravar o PDF no armazenamento. Tente novamente.',
       );

@@ -13,26 +13,51 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable } from 'node:stream';
 
+function sanitizeR2Secret(value: string | undefined): string {
+  return (value ?? '')
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .replace(/^["']+|["']+$/g, '')
+    .trim();
+}
+
 @Injectable()
 export class R2Service {
   private readonly logger = new Logger(R2Service.name);
   private readonly client: S3Client | null;
   private readonly bucket: string;
   private readonly ttlSeconds: number;
+  private readonly credentialError: string | null;
 
   constructor(private readonly config: ConfigService) {
-    const endpoint = this.config.get<string>('R2_ENDPOINT')?.trim();
-    const accessKeyId = this.config.get<string>('R2_ACCESS_KEY_ID')?.trim();
-    const secretAccessKey = this.config
-      .get<string>('R2_SECRET_ACCESS_KEY')
-      ?.trim();
-    this.bucket = this.config.get<string>('R2_BUCKET_NAME')?.trim() ?? '';
-    const region = this.config.get<string>('R2_REGION')?.trim() || 'auto';
+    const endpoint = sanitizeR2Secret(this.config.get<string>('R2_ENDPOINT'));
+    const accessKeyId = sanitizeR2Secret(
+      this.config.get<string>('R2_ACCESS_KEY_ID'),
+    );
+    const secretAccessKey = sanitizeR2Secret(
+      this.config.get<string>('R2_SECRET_ACCESS_KEY'),
+    );
+    this.bucket = sanitizeR2Secret(this.config.get<string>('R2_BUCKET_NAME'));
+    const region =
+      sanitizeR2Secret(this.config.get<string>('R2_REGION')) || 'auto';
     this.ttlSeconds = Number(
       this.config.get<string>('R2_SIGNED_URL_TTL_SECONDS') ?? 300,
     );
 
-    if (endpoint && accessKeyId && secretAccessKey && this.bucket) {
+    this.credentialError = null;
+    if (accessKeyId && accessKeyId.length !== 32) {
+      this.credentialError = `R2_ACCESS_KEY_ID tem ${accessKeyId.length} caracteres; o Cloudflare R2 exige 32. Recrie o token em R2 → Manage R2 API Tokens e cole de novo no Dokploy, sem espaço nem aspas.`;
+      this.logger.error(this.credentialError);
+    }
+
+    if (
+      endpoint &&
+      accessKeyId &&
+      secretAccessKey &&
+      this.bucket &&
+      !this.credentialError
+    ) {
       this.client = new S3Client({
         region,
         endpoint,
@@ -41,7 +66,9 @@ export class R2Service {
       });
     } else {
       this.client = null;
-      this.logger.warn('R2 não configurado — upload de PDFs indisponível.');
+      if (!this.credentialError) {
+        this.logger.warn('R2 não configurado — upload de PDFs indisponível.');
+      }
     }
   }
 
@@ -50,6 +77,11 @@ export class R2Service {
   }
 
   private requireClient(): S3Client {
+    if (this.credentialError) {
+      throw new ServiceUnavailableException(
+        'O armazenamento de PDFs está com a chave R2 inválida. No Dokploy, confira R2_ACCESS_KEY_ID (deve ter 32 caracteres).',
+      );
+    }
     if (!this.client) {
       throw new ServiceUnavailableException(
         'Armazenamento de arquivos não está configurado.',
