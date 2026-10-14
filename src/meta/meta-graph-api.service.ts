@@ -462,7 +462,7 @@ export class MetaGraphApiService {
 
       const body = await this.graphGet<{
         data?: T[];
-        paging?: { cursors?: { after?: string } };
+        paging?: GraphPaging;
         error?: { message?: string; code?: number };
       }>(url);
 
