@@ -171,17 +171,8 @@ export class MetaOAuthService {
         query.code,
         payload.redirectUri,
       );
-      const longLived = await this.graphApi
-        .exchangeLongLivedUserToken(shortLived.accessToken)
-        .catch((err) => {
-          this.logger.warn(
-            `Token longo Meta falhou, usando token curto: ${err instanceof Error ? err.message : err}`,
-          );
-          return shortLived;
-        });
-
       this.pending.set(this.pendingKey(payload.tenantId, payload.sub), {
-        userAccessToken: longLived.accessToken,
+        userAccessToken: shortLived.accessToken,
         tenantId: payload.tenantId,
         userId: payload.sub,
         expiresAt: Date.now() + PENDING_TTL_MS,

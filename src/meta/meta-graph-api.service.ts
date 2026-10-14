@@ -259,6 +259,9 @@ export class MetaGraphApiService {
         userAccessToken,
       ),
     ]);
+    this.logger.log(
+      `me/accounts=${accounts.length} assigned=${assigned.length} adaccounts=${adAccounts.length} businesses=${businesses.length}`,
+    );
     for (const row of accounts) addPage(row);
     for (const row of assigned) addPage(row);
     for (const row of adAccounts) addAd(row);
@@ -317,11 +320,19 @@ export class MetaGraphApiService {
         };
         error?: { message?: string; code?: number };
       }>(url);
-      const { pageIds, adAccountIds } = idsFromGranularScopes(
-        body.data?.granular_scopes,
-      );
+      const nestedData = body.data as
+        | {
+            granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
+            data?: {
+              granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
+            };
+          }
+        | undefined;
+      const granular =
+        nestedData?.granular_scopes ?? nestedData?.data?.granular_scopes;
+      const { pageIds, adAccountIds } = idsFromGranularScopes(granular);
       this.logger.log(
-        `debug_token válido=${body.data?.is_valid ?? false} pages=${pageIds.length} ads=${adAccountIds.length} scopes=${(body.data?.scopes ?? []).join(',')}`,
+        `debug_token válido=${body.data?.is_valid ?? false} pages=${pageIds.length} ads=${adAccountIds.length} scopes=${(body.data?.scopes ?? []).join(',')} granular=${JSON.stringify(granular ?? [])}`,
       );
       const fetchedPages = await Promise.all(
         pageIds.map((id) => this.fetchPageDetails(id, userAccessToken)),

@@ -22,7 +22,7 @@ export function idsFromGranularScopes(
     const scope = entry.scope?.trim();
     if (!scope) continue;
     for (const raw of entry.target_ids ?? []) {
-      const id = raw.trim();
+      const id = String(raw).trim();
       if (!id) continue;
       if (AD_SCOPES.has(scope) || id.startsWith('act_')) {
         adAccountIds.add(id.startsWith('act_') ? id : `act_${id}`);
