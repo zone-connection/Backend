@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 
@@ -32,7 +33,7 @@ export function pdfUploadInterceptor() {
         cb(null, true);
         return;
       }
-      cb(null, false);
+      cb(new BadRequestException('Envie um arquivo PDF.') as unknown as Error, false);
     },
   });
 }

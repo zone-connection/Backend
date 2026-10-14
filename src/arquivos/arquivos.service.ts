@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -51,6 +52,8 @@ const arquivoInclude = {
 
 @Injectable()
 export class ArquivosService {
+  private readonly logger = new Logger(ArquivosService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2: R2Service,
@@ -400,7 +403,16 @@ export class ArquivosService {
     const id = randomBytes(16).toString('hex');
     const storageKey = `${tenantId}/${params.entityType}/${id}.pdf`;
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
-    await this.r2.putObject(storageKey, file.buffer, 'application/pdf');
+    try {
+      await this.r2.putObject(storageKey, file.buffer, 'application/pdf');
+    } catch (error) {
+      this.logger.error(
+        `Falha no R2 ao enviar PDF: ${error instanceof Error ? error.message : error}`,
+      );
+      throw new ServiceUnavailableException(
+        'Não foi possível gravar o PDF no armazenamento. Tente novamente.',
+      );
+    }
     const extra = params.extraVinculos ?? [];
     for (const extraV of extra) {
       await this.assertEntityAccess(user, extraV.entityType, extraV.entityId);
@@ -419,22 +431,38 @@ export class ArquivosService {
         origem: 'relacionado',
       })),
     ];
-    const created = await this.prisma.arquivoDocumento.create({
-      data: {
-        tenantId,
-        storageKey,
-        sha256,
-        mime: 'application/pdf',
-        bytes: file.buffer.length,
-        nomeExibicao: params.nomeExibicao.trim() || file.originalname,
-        nomeOriginal: file.originalname,
-        categoria: params.categoria,
-        uploadedById: user.id,
-        tags: { create: tagIds.map((tagId) => ({ tagId })) },
-        vinculos: { create: vinculos },
-      },
-      include: arquivoInclude,
-    });
+    let created;
+    try {
+      created = await this.prisma.arquivoDocumento.create({
+        data: {
+          tenantId,
+          storageKey,
+          sha256,
+          mime: 'application/pdf',
+          bytes: file.buffer.length,
+          nomeExibicao: params.nomeExibicao.trim() || file.originalname,
+          nomeOriginal: file.originalname,
+          categoria: params.categoria,
+          uploadedById: user.id,
+          tags: { create: tagIds.map((tagId) => ({ tagId })) },
+          vinculos: { create: vinculos },
+        },
+        include: arquivoInclude,
+      });
+    } catch (error) {
+      await this.r2.deleteObject(storageKey);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Falha ao salvar PDF no banco: ${message}`);
+      if (
+        /invalid input value for enum/i.test(message) ||
+        /ArquivoVinculoTipo/i.test(message)
+      ) {
+        throw new BadRequestException(
+          'O banco ainda não aceita documento vinculado a processo. Aplique a migration mais recente.',
+        );
+      }
+      throw new BadRequestException('Não foi possível salvar o documento.');
+    }
     await this.log({
       tenantId,
       userId: user.id,
