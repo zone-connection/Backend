@@ -34,16 +34,7 @@ import {
   slugifyTag,
 } from './arquivos.constants';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const createArchive = require('archiver') as (
-  format: string,
-  opts?: { zlib?: { level: number } },
-) => {
-  on(event: 'error' | 'data' | 'end', cb: (arg?: Buffer | Error) => void): void;
-  pipe(stream: PassThrough): void;
-  append(data: Buffer, opts: { name: string }): void;
-  finalize(): void;
-};
+import { ZipArchive } from 'archiver';
 
 const arquivoInclude = {
   tags: { include: { tag: true } },
@@ -745,7 +736,7 @@ export class ArquivosService {
       throw new BadRequestException('Nenhum documento para baixar.');
     }
     const pass = new PassThrough();
-    const archive = createArchive('zip', { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
     archive.on('error', (err: Error) => pass.destroy(err));
     archive.pipe(pass);
     const used = new Set<string>();
@@ -914,7 +905,7 @@ export class ArquivosService {
   ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
-      const archive = createArchive('zip', { zlib: { level: 9 } });
+      const archive = new ZipArchive({ zlib: { level: 9 } });
       archive.on('data', (c: Buffer) => chunks.push(c));
       archive.on('end', () => resolve(Buffer.concat(chunks)));
       archive.on('error', reject);
