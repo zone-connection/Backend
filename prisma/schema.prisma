@@ -3887,6 +3887,16 @@ enum TarefaPrioridade {
   baixa
 }
 
+enum TarefaEtiqueta {
+  cliente
+  ligacao
+  documentos
+  captacao
+  interna
+  followup
+  contrato
+}
+
 enum TarefaStatus {
   aberta
   concluida
@@ -3933,6 +3943,7 @@ model Tarefa {
   status      TarefaStatus      @default(aberta)
   /// Mesmos tipos da agenda. A agenda em si continua existindo.
   tipo        AgendamentoTipo   @default(tarefa)
+  etiqueta    TarefaEtiqueta    @default(documentos)
   responsavelId String
   responsavel User              @relation("TarefaResponsavel", fields: [responsavelId], references: [id], onDelete: Restrict)
   criadoPorId String

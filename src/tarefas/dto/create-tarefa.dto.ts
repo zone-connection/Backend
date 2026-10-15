@@ -13,6 +13,16 @@ import {
 } from 'class-validator';
 
 export const TAREFA_PRIORIDADES = ['alta', 'media', 'baixa'] as const;
+export const TAREFA_ETIQUETAS = [
+  'cliente',
+  'ligacao',
+  'documentos',
+  'captacao',
+  'interna',
+  'followup',
+  'contrato',
+] as const;
+
 export const TAREFA_TIPOS = [
   'visita',
   'ligacao',
@@ -64,6 +74,10 @@ export class CreateTarefaDto {
   @IsOptional()
   @IsIn(TAREFA_TIPOS)
   tipo?: (typeof TAREFA_TIPOS)[number];
+
+  @IsOptional()
+  @IsIn(TAREFA_ETIQUETAS)
+  etiqueta?: (typeof TAREFA_ETIQUETAS)[number];
 
   @IsOptional()
   @IsString()

@@ -15,6 +15,7 @@ import {
   TAREFA_LEMBRETES,
   TAREFA_PRIORIDADES,
   TAREFA_RECORRENCIAS,
+  TAREFA_ETIQUETAS,
   TAREFA_TIPOS,
 } from './create-tarefa.dto';
 
@@ -40,6 +41,10 @@ export class UpdateTarefaDto {
   @IsOptional()
   @IsIn(TAREFA_TIPOS)
   tipo?: (typeof TAREFA_TIPOS)[number];
+
+  @IsOptional()
+  @IsIn(TAREFA_ETIQUETAS)
+  etiqueta?: (typeof TAREFA_ETIQUETAS)[number];
 
   @IsOptional()
   @IsIn(TAREFA_PRIORIDADES)

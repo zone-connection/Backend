@@ -56,6 +56,16 @@ const tarefaInclude = {
   },
 } satisfies Prisma.TarefaInclude;
 
+function etiquetaPadrao(tipo: string) {
+  if (tipo === 'ligacao') return 'ligacao';
+  if (tipo === 'visita') return 'captacao';
+  if (tipo === 'reuniao') return 'cliente';
+  if (tipo === 'outro') return 'contrato';
+  if (tipo === 'bloqueio') return 'interna';
+  if (tipo === 'retirada_chave') return 'followup';
+  return 'documentos';
+}
+
 const VER_TODOS = new Set<Role>([Role.admin, Role.super_admin]);
 
 @Injectable()
@@ -173,6 +183,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
       horario: dto.horario === undefined ? current.horario ?? undefined : dto.horario,
       prioridade: dto.prioridade ?? current.prioridade,
       tipo: dto.tipo ?? current.tipo,
+      etiqueta: dto.etiqueta ?? current.etiqueta,
       descricao: dto.descricao ?? current.descricao,
       lembrete: dto.lembrete ?? current.lembrete,
       lembreteMinutos: dto.lembreteMinutos ?? current.lembreteMinutos ?? undefined,
@@ -256,6 +267,8 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
           horario: current.horario,
           venceEm,
           prioridade: current.prioridade,
+          tipo: current.tipo,
+          etiqueta: current.etiqueta,
           responsavelId: current.responsavelId,
           criadoPorId: requester.id,
           leadId: current.leadId,
@@ -317,6 +330,7 @@ export class TarefasService implements OnModuleInit, OnModuleDestroy {
       venceEm,
       prioridade: dto.prioridade ?? 'media',
       tipo: dto.tipo ?? 'tarefa',
+      etiqueta: dto.etiqueta ?? etiquetaPadrao(dto.tipo ?? 'tarefa'),
       responsavelId: dto.responsavelId,
       leadId: dto.leadId ?? null,
       agendamentoId: dto.agendamentoId ?? null,
