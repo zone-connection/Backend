@@ -2409,7 +2409,13 @@ export class AgendaService {
     corretorId?: string;
   }): Promise<AgendamentoListItem[]> {
     const { requester, from, to } = opts;
-    if (requester.role !== Role.admin) return [];
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.super_admin &&
+      requester.role !== Role.gerente
+    ) {
+      return [];
+    }
     if (!from || !to) return [];
     if (opts.tipo && opts.tipo !== AgendamentoTipo.outro) return [];
     if (opts.status && opts.status !== AgendamentoStatus.agendado) return [];
@@ -2438,6 +2444,17 @@ export class AgendaService {
         }
       : {};
 
+    const gerenteIds =
+      requester.role === Role.gerente
+        ? [
+            ...((await this.teamScope.getVisibleCorretorIds(requester)) ?? []),
+            requester.id,
+          ]
+        : null;
+    if (gerenteIds && opts.corretorId && !gerenteIds.includes(opts.corretorId)) {
+      return [];
+    }
+
     const usuarios = await this.prisma.user.findMany({
       where: {
         tenantId: opts.tenantId,
@@ -2446,7 +2463,11 @@ export class AgendaService {
         },
         status: UserStatus.ativo,
         dataNascimento: { not: null },
-        ...(opts.corretorId ? { id: opts.corretorId } : {}),
+        ...(opts.corretorId
+          ? { id: opts.corretorId }
+          : gerenteIds
+            ? { id: { in: gerenteIds } }
+            : {}),
         ...equipeOr,
       },
       select: {
