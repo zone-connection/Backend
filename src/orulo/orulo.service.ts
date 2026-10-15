@@ -14,7 +14,7 @@ import {
   encryptOruloSecret,
 } from './orulo-token.crypto';
 import { ORULO_API_BASE } from './orulo.constants';
-import { oruloPublicOrigin } from './orulo-frontend-origin';
+import { resolveOruloRedirectUri } from './orulo-frontend-origin';
 import {
   safeOruloReturnTo,
   signOruloOAuthState,
@@ -364,15 +364,16 @@ export class OruloService {
   }
 
   private redirectUri() {
-    const explicit = this.config.get<string>('ORULO_REDIRECT_URI')?.trim();
-    if (explicit && !explicit.includes(',')) return explicit;
-    const origin = oruloPublicOrigin(this.config.get<string>('FRONTEND_URL'));
-    if (!origin) {
+    const redirect = resolveOruloRedirectUri({
+      explicit: this.config.get<string>('ORULO_REDIRECT_URI'),
+      frontendUrl: this.config.get<string>('FRONTEND_URL'),
+    });
+    if (!redirect) {
       throw new BadRequestException(
         'Defina FRONTEND_URL ou ORULO_REDIRECT_URI para o OAuth da Órulo.',
       );
     }
-    return `${origin}/orulo-oauth-callback`;
+    return redirect;
   }
 
   private mask(value: string) {
