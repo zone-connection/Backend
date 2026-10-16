@@ -127,13 +127,17 @@ export class MetaOAuthService {
       client_id: this.appId(),
       redirect_uri: redirectUri,
       response_type: 'code',
-      scope: SCOPES,
       state,
-      auth_type: 'rerequest',
     });
     const configId = this.config.get<string>('META_LOGIN_CONFIG_ID')?.trim();
+    // Facebook Login for Business: config_id define permissões e o seletor de
+    // Páginas. Mandar `scope` no mesmo dialog volta para o login de perfil
+    // (sem target_ids) — exatamente o que o Emerson vê na Meta.
     if (configId) {
       params.set('config_id', configId);
+    } else {
+      params.set('scope', SCOPES);
+      params.set('auth_type', 'rerequest');
     }
     return `https://www.facebook.com/${version}/dialog/oauth?${params.toString()}`;
   }
