@@ -54,6 +54,7 @@ import {
 } from './dto/distribuir-leads.dto';
 import { sanitizeProspeccao } from './lead-prospeccao';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
+import { LeadFilaService } from './lead-fila.service';
 import {
   dadosAposRedistribuir,
   isOrigemRetrabalho,
@@ -153,6 +154,7 @@ export class LeadsService {
     private readonly leadNotify: LeadNotifyService,
     private readonly presence: PresenceService,
     private readonly ozapApi: OzapApiClient,
+    private readonly fila: LeadFilaService,
   ) {}
 
   async create(
@@ -228,12 +230,27 @@ export class LeadsService {
       dto.imovelIds,
       assignment.corretorId,
     );
+    let saved = created;
+    if (!assignment.corretorId && created.tipo === ContatoTipo.lead) {
+      const fila = await this.fila.atribuirNovoLead({
+        tenantId,
+        leadId: created.id,
+        origem: created.origem,
+      });
+      if (fila.assigned) {
+        const fresh = await this.prisma.lead.findUnique({
+          where: { id: created.id },
+          select: leadSelect,
+        });
+        if (fresh) saved = fresh;
+      }
+    }
     void this.leadNotify.notifyNewLead({
       tenantId,
-      lead: this.notifySnapshot(created),
+      lead: this.notifySnapshot(saved),
       actorUserId: requester.id,
     });
-    return this.decorateOne(created, requester);
+    return this.decorateOne(saved, requester);
   }
 
   async importMany(dto: ImportLeadsDto, requester: AuthenticatedUser) {

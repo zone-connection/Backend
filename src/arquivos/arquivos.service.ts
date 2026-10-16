@@ -112,6 +112,8 @@ export class ArquivosService {
     const nome =
       (row.nome as string) ||
       (row.titulo as string) ||
+      (row.descricao as string) ||
+      (row.cliente as string) ||
       (row.codigo as string) ||
       (row.logradouro as string) ||
       (row.cidade as string) ||
@@ -169,6 +171,16 @@ export class ArquivosService {
         return this.prisma.processo.findFirst({
           where: { id: entityId, tenantId },
           select: { id: true, nome: true },
+        });
+      case ArquivoVinculoTipo.financeiro_titulo:
+        return this.prisma.financeiroTitulo.findFirst({
+          where: { id: entityId, tenantId },
+          select: { id: true, descricao: true },
+        });
+      case ArquivoVinculoTipo.financeiro_comissao:
+        return this.prisma.financeiroComissao.findFirst({
+          where: { id: entityId, tenantId },
+          select: { id: true, cliente: true },
         });
       default:
         return null;
@@ -431,7 +443,12 @@ export class ArquivosService {
       );
     }
     const tagIds = [...new Set(params.tagIds.filter(Boolean))];
-    if (tagIds.length === 0 && params.entityType !== ArquivoVinculoTipo.processo) {
+    if (
+      tagIds.length === 0 &&
+      params.entityType !== ArquivoVinculoTipo.processo &&
+      params.entityType !== ArquivoVinculoTipo.financeiro_titulo &&
+      params.entityType !== ArquivoVinculoTipo.financeiro_comissao
+    ) {
       throw new BadRequestException('Selecione pelo menos uma tag.');
     }
     const tags =

@@ -31,14 +31,18 @@ export class CreateComissaoVendaAvulsaDto extends PremiacaoComissaoDto {
 
   @Transform(toRequiredInt)
   @IsInt({ message: 'Valor da venda inválido.' })
-  @Min(1, { message: 'Informe o valor da venda.' })
+  @Min(0, { message: 'Informe o valor da venda.' })
   vgv!: number;
 
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsDateString({}, { message: 'Data da venda inválida.' })
-  dataVenda!: string;
+  dataVenda?: string;
 
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID('4', { message: 'Corretor inválido.' })
-  corretorId!: string;
+  corretorId?: string;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
@@ -50,8 +54,10 @@ export class CreateComissaoVendaAvulsaDto extends PremiacaoComissaoDto {
   @IsUUID('4', { message: 'Empreendimento inválido.' })
   empreendimentoId?: string | null;
 
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsDateString({}, { message: 'Data prevista de recebimento inválida.' })
-  dataPrevistaRecebimento!: string;
+  dataPrevistaRecebimento?: string;
 
   @Type(() => Number)
   @IsNumber()

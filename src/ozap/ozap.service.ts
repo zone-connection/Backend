@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OzapWebhookDto } from './dto/ozap-webhook.dto';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
 import { FunisService } from '../funis/funis.service';
+import { LeadFilaService } from '../leads/lead-fila.service';
 import { nationalPhoneDigits, phonesMatch } from '../common/utils/phone';
 
 type OzapTransaction = Prisma.TransactionClient;
@@ -75,6 +76,7 @@ export class OzapService {
     private readonly prisma: PrismaService,
     private readonly leadNotify: LeadNotifyService,
     private readonly funis: FunisService,
+    private readonly fila: LeadFilaService,
   ) {}
 
   async handleWebhook(payload: OzapWebhookDto): Promise<OzapWebhookResult> {
@@ -166,6 +168,11 @@ export class OzapService {
       });
 
       if ('created' in result && result.created && result.lead) {
+        await this.fila.atribuirNovoLead({
+          tenantId: connection.tenantId,
+          leadId: result.lead.id,
+          origem: 'WhatsApp',
+        });
         void this.leadNotify.notifyNewLead({
           tenantId: connection.tenantId,
           lead: result.lead,

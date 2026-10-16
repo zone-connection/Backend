@@ -95,6 +95,12 @@ export class LeadDistribuicaoAutoService
   }
 
   private async processTenant(tenantId: string, now: Date): Promise<number> {
+    const fila = await this.prisma.leadFilaConfig.findUnique({
+      where: { tenantId },
+      select: { ativa: true },
+    });
+    if (fila?.ativa) return 0;
+
     const corretores = await this.prisma.user.findMany({
       where: {
         tenantId,

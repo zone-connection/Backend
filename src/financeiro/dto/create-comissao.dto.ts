@@ -17,8 +17,9 @@ export class CreateComissaoDto extends PremiacaoComissaoDto {
   @IsUUID()
   documentacaoId!: string;
 
+  @IsOptional()
   @IsDateString({}, { message: 'Data prevista de recebimento inválida.' })
-  dataPrevistaRecebimento!: string;
+  dataPrevistaRecebimento?: string;
 
   @Type(() => Number)
   @IsNumber()

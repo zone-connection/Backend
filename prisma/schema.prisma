@@ -180,6 +180,7 @@ model Tenant {
   localidades       Localidade[]
   catalogItems      CatalogItem[]
   funis             Funil[]
+  leadFilaConfig    LeadFilaConfig?
   leadPrazoAdiamentos LeadPrazoAdiamento[]
   documentacoes     Documentacao[]
   propostas         Proposta[]
@@ -389,6 +390,7 @@ model User {
 
   // Carteira de leads/clientes atribuídos a este corretor.
   leads Lead[] @relation("LeadCorretor")
+  leadFilaMembros LeadFilaMembro[]
 
   interessesEmpreendimento LeadEmpreendimentoInteresse[] @relation("LeadInteresseCorretor")
 
@@ -630,6 +632,8 @@ model Lead {
   // preservando o histórico do lead.
   corretor   User?   @relation("LeadCorretor", fields: [corretorId], references: [id], onDelete: SetNull)
   corretorId String?
+  /// Preenchido quando a fila rotativa já processou este lead.
+  filaDistribuidoAt DateTime?
 
   /// Pool da equipe (admin distribuiu à equipe; gerente ainda não atribuiu corretor).
   equipeId String?
@@ -1989,6 +1993,7 @@ model Funil {
   atrasoLiberacaoValor    Int                     @default(24)
   atrasoLiberacaoUnidade  PrazoUnidade            @default(horas)
   /// Pool "Chegaram": envia automaticamente para corretores online.
+  /// Quando a fila rotativa está ligada, ela assume a distribuição na criação do lead.
   distribuicaoAutoAtiva   Boolean                 @default(false)
 
   etapas FunilEtapa[]
@@ -2004,6 +2009,72 @@ model Funil {
   @@index([tenantId, ativo])
   @@index([tenantId, tipo])
   @@map("funis")
+}
+
+enum LeadFilaEventoTipo {
+  atribuicao
+  sem_participante
+  ativar
+  pausar
+  membro_add
+  membro_remove
+  membro_ativar
+  membro_desativar
+  reordenar
+}
+
+/// Fila Round Robin de distribuição de leads, uma por imobiliária.
+model LeadFilaConfig {
+  id       String   @id @default(uuid())
+  tenantId String   @unique
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ativa    Boolean  @default(false)
+  membros  LeadFilaMembro[]
+  eventos  LeadFilaEvento[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("lead_fila_configs")
+}
+
+model LeadFilaMembro {
+  id                  String         @id @default(uuid())
+  tenantId            String
+  configId            String
+  config              LeadFilaConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  userId              String
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ordem               Int
+  ativo               Boolean        @default(true)
+  ultimaAtribuicaoAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([configId, userId])
+  @@index([configId, ordem])
+  @@index([tenantId])
+  @@map("lead_fila_membros")
+}
+
+model LeadFilaEvento {
+  id        String             @id @default(uuid())
+  tenantId  String
+  configId  String
+  config    LeadFilaConfig     @relation(fields: [configId], references: [id], onDelete: Cascade)
+  tipo      LeadFilaEventoTipo
+  leadId    String?
+  userId    String?
+  actorId   String?
+  origem    String?
+  detalhe   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([configId, createdAt])
+  @@map("lead_fila_eventos")
 }
 
 /// Etapa pertencente a um funil. Lead.stage guarda o `slug`.
@@ -4018,6 +4089,8 @@ enum ArquivoVinculoTipo {
   tarefa
   proposta
   processo
+  financeiro_titulo
+  financeiro_comissao
 }
 
 enum ArquivoEventoTipo {

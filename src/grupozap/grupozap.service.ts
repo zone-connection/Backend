@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { CatalogService } from '../catalog/catalog.service';
 import { FunisService } from '../funis/funis.service';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
+import { LeadFilaService } from '../leads/lead-fila.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
@@ -100,6 +101,7 @@ export class GrupoZapService {
     private readonly funis: FunisService,
     private readonly catalog: CatalogService,
     private readonly leadNotify: LeadNotifyService,
+    private readonly fila: LeadFilaService,
   ) {}
 
   private publicBase(): string {
@@ -439,7 +441,7 @@ export class GrupoZapService {
         ? lead.mcmv.propertyValue
         : null;
 
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       await tx.grupoZapWebhookDelivery.create({
         data: {
           originLeadId: lead.originLeadId,
@@ -489,6 +491,12 @@ export class GrupoZapService {
 
       return created;
     });
+    await this.fila.atribuirNovoLead({
+      tenantId,
+      leadId: created.id,
+      origem: origemLabel,
+    });
+    return created;
   }
 
   private async linkInteressado(

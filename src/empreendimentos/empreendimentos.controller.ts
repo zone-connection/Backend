@@ -18,7 +18,10 @@ import { Roles } from "../common/decorators/roles.decorator";
 import { CurrentUser } from "../common/decorators/current-user.decorator";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { AuthenticatedUser } from "../common/types/authenticated-user";
-import { imageUploadInterceptor } from "../media/media.constants";
+import {
+  documentUploadInterceptor,
+  imageUploadInterceptor,
+} from "../media/media.constants";
 import { CreateEmpreendimentoDto } from "./dto/create-empreendimento.dto";
 import { UpdateEmpreendimentoDto } from "./dto/update-empreendimento.dto";
 import { QueryEmpreendimentosDto } from "./dto/query-empreendimentos.dto";
@@ -86,6 +89,17 @@ export class EmpreendimentosController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.empreendimentosService.uploadImagem(id, file, requester);
+  }
+
+  @Post(":id/book")
+  @Roles(...IMAGE_ROLES)
+  @UseInterceptors(documentUploadInterceptor())
+  uploadBook(
+    @Param("id", ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.empreendimentosService.uploadBook(id, file, requester);
   }
 
   @Post(":id/planta")

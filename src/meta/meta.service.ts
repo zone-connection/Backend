@@ -14,6 +14,7 @@ import {
 import { decryptPageAccessToken, metaTokenKey } from './meta-token.crypto';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
 import { FunisService } from '../funis/funis.service';
+import { LeadFilaService } from '../leads/lead-fila.service';
 
 type TenantMetaConn = {
   tenantId: string;
@@ -33,6 +34,7 @@ export class MetaService {
     private readonly graphApi: MetaGraphApiService,
     private readonly leadNotify: LeadNotifyService,
     private readonly funis: FunisService,
+    private readonly fila: LeadFilaService,
   ) {}
 
   verifyChallenge(mode?: string, token?: string, challenge?: string) {
@@ -441,6 +443,11 @@ export class MetaService {
         prioridade: 'Média',
         tags,
       },
+    });
+    await this.fila.atribuirNovoLead({
+      tenantId,
+      leadId: lead.id,
+      origem: 'Facebook Ads',
     });
     return { lead, created: true };
   }

@@ -964,6 +964,7 @@ export class DashboardService {
   ): Promise<ComissaoResumo> {
     const where: Prisma.FinanceiroComissaoWhereInput = {
       tenantId,
+      status: { not: FinanceiroComissaoStatus.rascunho },
       dataVenda: { gte: periodo.inicio, lt: periodo.fim },
     };
 

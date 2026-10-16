@@ -223,6 +223,11 @@ export class FunisService {
         );
       }
       data.distribuicaoAutoAtiva = dto.distribuicaoAutoAtiva;
+      await this.prisma.leadFilaConfig.upsert({
+        where: { tenantId },
+        create: { tenantId, ativa: dto.distribuicaoAutoAtiva },
+        update: { ativa: dto.distribuicaoAutoAtiva },
+      });
     }
 
     const novoTipo =

@@ -1717,7 +1717,10 @@ export class FinanceiroService {
     const gerenteId = doc.gerente?.id ?? corretor.equipe?.gerenteId ?? null;
     const gerenteNome =
       doc.gerente?.name ?? corretor.equipe?.gerente.name ?? "";
-    const values = this.calculateComissao(doc.vgv, dto);
+    const isDraft = dto.status === FinanceiroComissaoStatus.rascunho;
+    const values = this.calculateComissao(doc.vgv, dto, {
+      allowIncomplete: isDraft,
+    });
     const premiacao = this.calculatePremiacao(dto);
     const row = await this.prisma.financeiroComissao.create({
       data: {
@@ -1732,7 +1735,9 @@ export class FinanceiroService {
         empreendimento: doc.empreendimento?.nome ?? "",
         cliente: doc.nome,
         dataVenda: doc.dataVenda ?? doc.createdAt,
-        dataPrevistaRecebimento: parseDayStart(dto.dataPrevistaRecebimento),
+        dataPrevistaRecebimento: parseDayStart(
+          dto.dataPrevistaRecebimento || todayIsoBrasil(),
+        ),
         status: dto.status ?? FinanceiroComissaoStatus.pendente,
         observacao: (dto.observacao ?? '').trim(),
         ...values,
@@ -1760,10 +1765,24 @@ export class FinanceiroService {
   ) {
     this.assertComissaoWrite(requester);
     const tenantId = resolveFinanceiroTenantId(requester);
+    const isDraft = dto.status === FinanceiroComissaoStatus.rascunho;
     const clienteNome = dto.clienteNome.trim();
+    if (!isDraft && (!dto.vgv || dto.vgv <= 0)) {
+      throw new BadRequestException("Informe o valor da venda.");
+    }
+    if (!isDraft && !dto.dataVenda) {
+      throw new BadRequestException("Informe a data da venda.");
+    }
+    if (!isDraft && !dto.corretorId) {
+      throw new BadRequestException("Selecione o corretor.");
+    }
+    if (!isDraft && !dto.dataPrevistaRecebimento) {
+      throw new BadRequestException("Informe a data prevista de recebimento.");
+    }
+    const corretorId = dto.corretorId || requester.id;
     const corretor = await this.prisma.user.findFirst({
       where: {
-        id: dto.corretorId,
+        id: corretorId,
         tenantId,
         status: UserStatus.ativo,
         role: {
@@ -1808,8 +1827,11 @@ export class FinanceiroService {
       }
     }
 
-    const values = this.calculateComissao(dto.vgv, dto);
+    const values = this.calculateComissao(dto.vgv ?? 0, dto, {
+      allowIncomplete: isDraft,
+    });
     const premiacao = this.calculatePremiacao(dto);
+    const hoje = todayIsoBrasil();
     const row = await this.prisma.financeiroComissao.create({
       data: {
         tenantId,
@@ -1821,8 +1843,10 @@ export class FinanceiroService {
         equipe: corretor.equipe?.name ?? "",
         empreendimento,
         cliente: clienteNome,
-        dataVenda: parseDayStart(dto.dataVenda),
-        dataPrevistaRecebimento: parseDayStart(dto.dataPrevistaRecebimento),
+        dataVenda: parseDayStart(dto.dataVenda || hoje),
+        dataPrevistaRecebimento: parseDayStart(
+          dto.dataPrevistaRecebimento || hoje,
+        ),
         status: dto.status ?? FinanceiroComissaoStatus.pendente,
         observacao: (dto.observacao ?? "").trim(),
         ...values,
@@ -1851,6 +1875,65 @@ export class FinanceiroService {
   ) {
     this.assertComissaoWrite(requester);
     const existing = await this.findComissaoOrFail(id, requester);
+    const nextStatus = dto.status ?? existing.status;
+    const isDraft = nextStatus === FinanceiroComissaoStatus.rascunho;
+    const tenantId = existing.tenantId;
+    let corretorPatch: {
+      corretorId: string;
+      gerenteId: string | null;
+      equipeId: string | null;
+      corretor: string;
+      gerente: string;
+      equipe: string;
+    } | null = null;
+    if (dto.corretorId && !existing.documentacaoId) {
+      const corretor = await this.prisma.user.findFirst({
+        where: {
+          id: dto.corretorId,
+          tenantId,
+          status: UserStatus.ativo,
+          role: {
+            in: [Role.corretor, Role.treinee, Role.admin, Role.gerente],
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          equipeId: true,
+          equipe: {
+            select: {
+              name: true,
+              gerenteId: true,
+              gerente: { select: { name: true } },
+            },
+          },
+        },
+      });
+      if (!corretor) {
+        throw new BadRequestException("Corretor inválido ou inativo.");
+      }
+      corretorPatch = {
+        corretorId: corretor.id,
+        gerenteId: corretor.equipe?.gerenteId ?? null,
+        equipeId: corretor.equipeId,
+        corretor: corretor.name,
+        gerente: corretor.equipe?.gerente.name ?? "",
+        equipe: corretor.equipe?.name ?? "",
+      };
+    }
+    let empreendimentoNome: string | undefined;
+    if (dto.empreendimentoId && !existing.documentacaoId) {
+      const emp = await this.prisma.empreendimento.findFirst({
+        where: { id: dto.empreendimentoId, tenantId },
+        select: { nome: true },
+      });
+      if (!emp) throw new BadRequestException("Empreendimento inválido.");
+      empreendimentoNome = emp.nome;
+    }
+    const vgv = dto.vgv ?? Number(existing.vgv);
+    if (!isDraft && vgv <= 0) {
+      throw new BadRequestException("Informe o valor da venda.");
+    }
     const percentages = {
       percentualImobiliaria:
         dto.percentualImobiliaria ?? Number(existing.percentualImobiliaria),
@@ -1864,7 +1947,9 @@ export class FinanceiroService {
       percentualSocios:
         dto.percentualSocios ?? Number(existing.percentualSocios),
     };
-    const values = this.calculateComissao(Number(existing.vgv), percentages);
+    const values = this.calculateComissao(vgv, percentages, {
+      allowIncomplete: isDraft,
+    });
     const premiacao = this.calculatePremiacao({
       valorPremiacao: dto.valorPremiacao ?? Number(existing.valorPremiacao),
       percentualPremiacaoCorretor:
@@ -1885,6 +1970,16 @@ export class FinanceiroService {
       data: {
         ...values,
         ...premiacao,
+        ...(corretorPatch ?? {}),
+        ...(empreendimentoNome !== undefined
+          ? { empreendimento: empreendimentoNome }
+          : {}),
+        ...(dto.clienteNome && !existing.documentacaoId
+          ? { cliente: dto.clienteNome.trim() }
+          : {}),
+        ...(dto.dataVenda && !existing.documentacaoId
+          ? { dataVenda: parseDayStart(dto.dataVenda) }
+          : {}),
         ...(dto.dataPrevistaRecebimento
           ? {
               dataPrevistaRecebimento: parseDayStart(
@@ -4107,13 +4202,14 @@ export class FinanceiroService {
       percentualCaixa: number;
       percentualSocios: number;
     },
+    options?: { allowIncomplete?: boolean },
   ) {
     const splitTotal =
       input.percentualCorretor +
       input.percentualGerente +
       input.percentualCaixa +
       input.percentualSocios;
-    if (Math.abs(splitTotal - 100) > 0.0001) {
+    if (!options?.allowIncomplete && Math.abs(splitTotal - 100) > 0.0001) {
       throw new BadRequestException(
         "Os percentuais da comissão líquida devem somar 100%.",
       );
@@ -4337,6 +4433,7 @@ export class FinanceiroService {
     const rows = await this.prisma.financeiroComissao.findMany({
       where: {
         tenantId,
+        status: { not: FinanceiroComissaoStatus.rascunho },
         OR: [
           { status: FinanceiroComissaoStatus.paga },
           { titulos: { none: {} } },
@@ -4403,6 +4500,10 @@ export class FinanceiroService {
     valorPremiacaoGerente?: Prisma.Decimal | number;
     status: FinanceiroComissaoStatus;
   }) {
+    if (row.status === FinanceiroComissaoStatus.rascunho) {
+      await this.removeTitulosDaComissao(row.id, row.tenantId);
+      return;
+    }
     const pecas = this.pecasFinanceirasDaComissao(row);
     const keep = new Set(pecas.map((p) => p.papel));
     const existing = await this.prisma.financeiroTitulo.findMany({

@@ -8,6 +8,7 @@ import { FunisModule } from '../funis/funis.module';
 import { LeadMonitoramentoModule } from './lead-monitoramento.module';
 import { LeadAtrasoLiberacaoService } from './lead-atraso-liberacao.service';
 import { LeadDistribuicaoAutoService } from './lead-distribuicao-auto.service';
+import { LeadFilaModule } from './lead-fila.module';
 import { LeadNotifyModule } from '../lead-notify/lead-notify.module';
 import { PresenceModule } from '../presence/presence.module';
 import { OzapApiModule } from '../ozap/ozap-api.module';
@@ -22,6 +23,7 @@ import { OzapApiModule } from '../ozap/ozap-api.module';
     LeadNotifyModule,
     PresenceModule,
     OzapApiModule,
+    LeadFilaModule,
   ],
   controllers: [LeadsController],
   providers: [

@@ -659,6 +659,30 @@ export class EmpreendimentosService {
     return { url: uploaded.url };
   }
 
+  async uploadBook(
+    id: string,
+    rawFile: Express.Multer.File | undefined,
+    requester: AuthenticatedUser,
+  ) {
+    this.assertCanManage(requester);
+    const row = await this.findRow(id, requester);
+    if (!rawFile?.buffer?.length) {
+      throw new BadRequestException("Envie o PDF do book.");
+    }
+    const name = (rawFile.originalname || "").toLowerCase();
+    const mime = (rawFile.mimetype || "").toLowerCase();
+    if (mime !== "application/pdf" && !name.endsWith(".pdf")) {
+      throw new BadRequestException("O book precisa ser um arquivo PDF.");
+    }
+    const uploaded = await this.media.uploadRaw({
+      buffer: rawFile.buffer,
+      mimetype: "application/pdf",
+      filename: rawFile.originalname || "book.pdf",
+      folder: this.media.folder(row.tenantId, "empreendimentos", row.id),
+    });
+    return { url: uploaded.url };
+  }
+
   async removeImagem(
     id: string,
     index: number,
