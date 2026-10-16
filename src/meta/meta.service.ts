@@ -121,6 +121,19 @@ export class MetaService {
 
   private async syncConnection(connection: TenantMetaConn & { pageId: string }) {
     const result = { created: 0, skipped: 0, failed: 0 };
+    try {
+      await this.graphApi.subscribePageLeadgen(
+        connection.pageId,
+        connection.pageAccessToken,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Inscrição leadgen não renovada page_id=${connection.pageId}: ${
+          error instanceof Error ? error.message : 'erro'
+        }`,
+      );
+    }
+
     let forms: { id: string }[];
     try {
       forms = await this.graphApi.listLeadgenForms(
@@ -135,6 +148,12 @@ export class MetaService {
         }`,
       );
       return result;
+    }
+
+    if (!forms.length) {
+      this.logger.warn(
+        `Nenhum Instant Form na Página page_id=${connection.pageId} tenantId=${connection.tenantId}: campanhas Lead Ads desta Página não têm formulário listável (o poll não consegue puxar leads até existir form ACTIVE/ARCHIVED).`,
+      );
     }
 
     for (const form of forms) {

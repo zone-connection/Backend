@@ -115,13 +115,36 @@ export class MetaGraphApiService {
     pageId: string,
     pageAccessToken: string,
   ): Promise<MetaLeadgenForm[]> {
-    const rows = await this.collectPages<MetaLeadgenForm>(
-      `${encodeURIComponent(pageId)}/leadgen_forms`,
+    const path = `${encodeURIComponent(pageId)}/leadgen_forms`;
+    const filtering = JSON.stringify([
+      {
+        field: 'status',
+        operator: 'IN',
+        value: ['ACTIVE', 'ARCHIVED', 'DRAFT'],
+      },
+    ]);
+    const withStatus = await this.collectPagesSafe<MetaLeadgenForm>(
+      path,
       'id,name,status',
       pageAccessToken,
+      { filtering },
     );
+    const unfiltered = withStatus.length
+      ? []
+      : await this.collectPages<MetaLeadgenForm>(
+          path,
+          'id,name,status',
+          pageAccessToken,
+        );
+    const byId = new Map<string, MetaLeadgenForm>();
+    for (const row of [...withStatus, ...unfiltered]) {
+      if (row.id) byId.set(row.id, row);
+    }
+    const rows = [...byId.values()];
     this.logger.log(
-      `Formulários Lead Ads na Página page_id=${pageId} count=${rows.length}`,
+      `Formulários Lead Ads na Página page_id=${pageId} count=${rows.length} status=${rows
+        .map((row) => row.status ?? 'n/a')
+        .join(',')}`,
     );
     return rows;
   }
@@ -543,9 +566,10 @@ export class MetaGraphApiService {
     path: string,
     fields: string,
     accessToken: string,
+    extraParams?: Record<string, string>,
   ): Promise<T[]> {
     try {
-      return await this.collectPages(path, fields, accessToken);
+      return await this.collectPages(path, fields, accessToken, extraParams);
     } catch (err) {
       this.logger.warn(
         `Graph ${path} falhou: ${err instanceof Error ? err.message : err}`,
@@ -558,6 +582,7 @@ export class MetaGraphApiService {
     path: string,
     fields: string,
     pageAccessToken: string,
+    extraParams?: Record<string, string>,
   ): Promise<T[]> {
     const version =
       this.config.get<string>('META_GRAPH_API_VERSION') ?? 'v22.0';
@@ -569,6 +594,11 @@ export class MetaGraphApiService {
       url.searchParams.set('fields', fields);
       url.searchParams.set('limit', String(PAGE_SIZE));
       url.searchParams.set('access_token', pageAccessToken);
+      if (extraParams) {
+        for (const [key, value] of Object.entries(extraParams)) {
+          url.searchParams.set(key, value);
+        }
+      }
       if (after) url.searchParams.set('after', after);
 
       const body = await this.graphGet<{

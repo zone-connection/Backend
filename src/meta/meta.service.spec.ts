@@ -127,6 +127,7 @@ function createService(opts: {
     },
     listLeadgenForms: async () => opts.graphForms ?? [{ id: 'form-1' }],
     listFormLeads: async () => opts.graphFormLeads ?? [],
+    subscribePageLeadgen: async () => undefined,
   };
 
   const service = new MetaService(
@@ -137,6 +138,7 @@ function createService(opts: {
     {
       comercialPlacement: async () => ({ funilId: 'funil-1', stage: 'novo' }),
     } as never,
+    { atribuirNovoLead: async () => undefined } as never,
   );
 
   return { service, createdLeads, deletedKeys, upserts };
