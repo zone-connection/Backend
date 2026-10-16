@@ -164,7 +164,7 @@ function labelImovel(
 
 function comQuem(row: ChaveRow) {
   if (row.status === MuralChaveStatus.em_uso && row.retiradoPor) {
-    return `Corretor ${row.retiradoPor.name}`;
+    return row.retiradoPor.name;
   }
   if (row.local === MuralChaveLocal.proprietario) return 'Proprietário';
   if (row.local === MuralChaveLocal.imobiliaria) {

@@ -239,7 +239,7 @@ describe('MuralChavesService', () => {
     );
     assert.equal(status, MuralChaveStatus.em_uso);
     assert.equal(result.statusLabel, 'Em uso');
-    assert.equal(result.comQuem, 'Corretor João');
+    assert.equal(result.comQuem, 'João');
   });
 
   it('retirada confirma a reserva da agenda sem criar outro compromisso', async () => {
@@ -434,7 +434,7 @@ describe('MuralChavesService', () => {
       { corretorId: 'c1', retiradaEm: '2026-09-24T17:30:00.000Z' },
       user(),
     );
-    assert.equal(result.comQuem, 'Corretor João');
+    assert.equal(result.comQuem, 'João');
     assert.equal(movimentos[0].tipo, MuralChaveMovimentoTipo.retirada_manual);
     assert.equal(movimentos[0].manual, true);
     assert.equal(movimentos[0].quemRetirouId, 'c1');
