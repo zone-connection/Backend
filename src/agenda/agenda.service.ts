@@ -21,6 +21,7 @@ import {
   Role,
   TriagemOrigem,
   UserStatus,
+  VendaUsadoVisitaStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
@@ -148,7 +149,9 @@ export class AgendaService {
   ): Promise<AgendamentoListItem[]> {
     const tenantId = requireTenantId(requester);
     const visitasDoRecurso = await this.listarVisitasDoRecurso(tenantId, query);
-    if (visitasDoRecurso) return visitasDoRecurso;
+    if (visitasDoRecurso) {
+      return this.aplicarAgendaComercial(visitasDoRecurso, query, requester);
+    }
 
     if (requester.role === Role.super_admin) {
       const where: Prisma.AgendamentoWhereInput = {
@@ -271,12 +274,343 @@ export class AgendaService {
       corretorId: query.corretorId,
     });
 
-    if (aniversarios.length === 0) return rows;
+    const merged =
+      aniversarios.length === 0 ? rows : [...rows, ...aniversarios];
+    return this.aplicarAgendaComercial(merged, query, requester);
+  }
 
-    return [...rows, ...aniversarios].sort(
+  private isAgendaComercial(query: QueryAgendamentoDto) {
+    return query.comercial === 'true' || query.comercial === '1';
+  }
+
+  private async aplicarAgendaComercial(
+    rows: AgendamentoListItem[],
+    query: QueryAgendamentoDto,
+    requester: AuthenticatedUser,
+  ) {
+    if (!this.isAgendaComercial(query)) {
+      return rows.sort(
+        (a, b) =>
+          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      );
+    }
+    const comerciais = new Set<AgendamentoTipo>([
+      AgendamentoTipo.visita,
+      AgendamentoTipo.ligacao,
+      AgendamentoTipo.reuniao,
+      AgendamentoTipo.retirada_chave,
+      AgendamentoTipo.outro,
+    ]);
+    const base = rows.filter((item) => {
+      if (isAniversarioId(item.id)) return false;
+      const daOperacao = Boolean(
+        item.leadId ||
+          item.imovelId ||
+          item.empreendimentoId ||
+          item.muralChaveId,
+      );
+      if (item.tipo === AgendamentoTipo.tarefa || item.origemTarefa) {
+        return daOperacao;
+      }
+      return comerciais.has(item.tipo);
+    });
+    const extras = await this.buildEventosComerciais(query, requester);
+    return [...base, ...extras].sort(
       (a, b) =>
         new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );
+  }
+
+  /** Visitas de usados, prazos de captação e chaves do mural, somente leitura. */
+  private async buildEventosComerciais(
+    query: QueryAgendamentoDto,
+    requester: AuthenticatedUser,
+  ): Promise<AgendamentoListItem[]> {
+    const tenantId = requireTenantId(requester);
+    if (!query.from || !query.to) return [];
+    const from = new Date(query.from);
+    const to = new Date(query.to);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return [];
+
+    const visible = await this.teamScope.getVisibleCorretorIds(requester);
+    const pessoaId = query.corretorId?.trim() || null;
+    if (pessoaId && visible && !visible.includes(pessoaId)) return [];
+    const responsavelIds = pessoaId ? [pessoaId] : visible;
+    const responsavelWhere = responsavelIds
+      ? { in: responsavelIds }
+      : undefined;
+
+    const querVisita = !query.tipo || query.tipo === AgendamentoTipo.visita;
+    const querCaptacao = !query.tipo || query.tipo === AgendamentoTipo.outro;
+    const querChave =
+      !query.tipo || query.tipo === AgendamentoTipo.retirada_chave;
+    const imovelId = query.imovelId?.trim() || null;
+    const now = new Date();
+    const items: AgendamentoListItem[] = [];
+
+    if (querVisita && !query.empreendimentoId) {
+      const visitas = await this.prisma.vendaUsadoVisita.findMany({
+        where: {
+          tenantId,
+          status: { not: VendaUsadoVisitaStatus.cancelada },
+          dataHora: { gte: from, lte: to },
+          ...(responsavelWhere ? { responsavelId: responsavelWhere } : {}),
+          ...(imovelId ? { vendaUsado: { imovelId } } : {}),
+        },
+        include: {
+          interessado: { select: { nome: true } },
+          responsavel: { select: { id: true, name: true, role: true } },
+          vendaUsado: {
+            select: {
+              imovel: {
+                select: {
+                  id: true,
+                  logradouro: true,
+                  numero: true,
+                  bairro: true,
+                  cidade: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      for (const visita of visitas) {
+        const imovel = visita.vendaUsado.imovel;
+        const endereco = [imovel.logradouro, imovel.numero]
+          .filter(Boolean)
+          .join(', ');
+        items.push(
+          this.eventoComercial({
+            id: `usado-visita:${visita.id}`,
+            tenantId,
+            autor: visita.responsavel,
+            titulo: `Visita de usado — ${visita.interessado.nome}`,
+            tipo: AgendamentoTipo.visita,
+            status:
+              visita.status === VendaUsadoVisitaStatus.realizada
+                ? AgendamentoStatus.concluido
+                : AgendamentoStatus.agendado,
+            startsAt: visita.dataHora,
+            endsAt: new Date(visita.dataHora.getTime() + 60 * 60 * 1000),
+            local: endereco || imovel.bairro || null,
+            observacoes: 'Visita do módulo de usados (somente leitura).',
+            imovel,
+            now,
+          }),
+        );
+      }
+    }
+
+    if (querCaptacao && !query.empreendimentoId) {
+      const captacoes = await this.prisma.captacao.findMany({
+        where: {
+          tenantId,
+          prazoDueAt: { gte: from, lte: to },
+          ...(responsavelWhere ? { responsavelId: responsavelWhere } : {}),
+          ...(imovelId ? { imovelId } : {}),
+        },
+        include: {
+          responsavel: { select: { id: true, name: true, role: true } },
+          proprietario: { select: { nome: true } },
+          imovel: {
+            select: {
+              id: true,
+              logradouro: true,
+              numero: true,
+              bairro: true,
+              cidade: true,
+            },
+          },
+        },
+      });
+      for (const captacao of captacoes) {
+        if (!captacao.prazoDueAt) continue;
+        const endereco = [captacao.imovel.logradouro, captacao.imovel.numero]
+          .filter(Boolean)
+          .join(', ');
+        items.push(
+          this.eventoComercial({
+            id: `captacao-prazo:${captacao.id}`,
+            tenantId,
+            autor: captacao.responsavel,
+            titulo: `Captação — ${captacao.proprietario.nome}`,
+            tipo: AgendamentoTipo.outro,
+            status: AgendamentoStatus.agendado,
+            startsAt: captacao.prazoDueAt,
+            endsAt: null,
+            local: endereco || null,
+            observacoes: 'Prazo da captação (somente leitura).',
+            imovel: captacao.imovel,
+            now,
+          }),
+        );
+      }
+    }
+
+    if (querChave) {
+      const chaves = await this.prisma.muralChave.findMany({
+        where: {
+          tenantId,
+          ...(imovelId ? { imovelId } : {}),
+          AND: [
+            {
+              OR: [
+                { retiradaEm: { gte: from, lte: to } },
+                { previsaoDevolucao: { gte: from, lte: to } },
+              ],
+            },
+            ...(responsavelWhere
+              ? [
+                  {
+                    OR: [
+                      { retiradoPorId: responsavelWhere },
+                      { responsavelAtualId: responsavelWhere },
+                    ],
+                  },
+                ]
+              : []),
+          ],
+        },
+        include: {
+          retiradoPor: { select: { id: true, name: true, role: true } },
+          responsavelAtual: { select: { id: true, name: true, role: true } },
+          imovel: {
+            select: {
+              id: true,
+              logradouro: true,
+              numero: true,
+              bairro: true,
+              cidade: true,
+            },
+          },
+        },
+      });
+      for (const chave of chaves) {
+        const autor = chave.retiradoPor ?? chave.responsavelAtual;
+        if (!autor) continue;
+        if (chave.retiradaEm && chave.retiradaEm >= from && chave.retiradaEm <= to) {
+          items.push(
+            this.eventoComercial({
+              id: `mural-retirada:${chave.id}`,
+              tenantId,
+              autor,
+              titulo: `Retirada de chave — ${chave.identificador}`,
+              tipo: AgendamentoTipo.retirada_chave,
+              status: AgendamentoStatus.agendado,
+              startsAt: chave.retiradaEm,
+              endsAt: chave.previsaoDevolucao,
+              local: chave.unidade || null,
+              observacoes: 'Movimento do mural de chaves (somente leitura).',
+              imovel: chave.imovel,
+              muralChave: {
+                id: chave.id,
+                identificador: chave.identificador,
+                status: chave.status,
+              },
+              now,
+            }),
+          );
+        }
+        if (
+          chave.previsaoDevolucao &&
+          chave.previsaoDevolucao >= from &&
+          chave.previsaoDevolucao <= to
+        ) {
+          items.push(
+            this.eventoComercial({
+              id: `mural-devolucao:${chave.id}`,
+              tenantId,
+              autor,
+              titulo: `Devolver chave — ${chave.identificador}`,
+              tipo: AgendamentoTipo.retirada_chave,
+              status: AgendamentoStatus.agendado,
+              startsAt: chave.previsaoDevolucao,
+              endsAt: null,
+              local: chave.unidade || null,
+              observacoes: 'Previsão de devolução no mural de chaves (somente leitura).',
+              imovel: chave.imovel,
+              muralChave: {
+                id: chave.id,
+                identificador: chave.identificador,
+                status: chave.status,
+              },
+              now,
+            }),
+          );
+        }
+      }
+    }
+
+    return items;
+  }
+
+  private eventoComercial(opts: {
+    id: string;
+    tenantId: string;
+    autor: { id: string; name: string; role: Role };
+    titulo: string;
+    tipo: AgendamentoTipo;
+    status: AgendamentoStatus;
+    startsAt: Date;
+    endsAt: Date | null;
+    local: string | null;
+    observacoes: string;
+    imovel: {
+      id: string;
+      logradouro: string;
+      numero: string;
+      bairro: string;
+      cidade: string;
+    } | null;
+    muralChave?: { id: string; identificador: string; status: MuralChaveStatus } | null;
+    now: Date;
+  }): AgendamentoListItem {
+    return {
+      id: opts.id,
+      tenantId: opts.tenantId,
+      leadId: null,
+      autorId: opts.autor.id,
+      atribuidoParaId: null,
+      titulo: opts.titulo,
+      tipo: opts.tipo,
+      status: opts.status,
+      escopo: AgendamentoEscopo.pessoal,
+      solicitacaoStatus: AgendamentoSolicitacaoStatus.nenhuma,
+      alvoTipo: AgendamentoAlvo.nenhum,
+      alvoEquipeId: null,
+      alvoGerenteId: null,
+      seriesId: null,
+      recurrenceFreq: AgendamentoRecurrenceFreq.unica,
+      recurrenceDays: [],
+      recurrenceUntil: null,
+      startsAt: opts.startsAt,
+      endsAt: opts.endsAt,
+      local: opts.local,
+      observacoes: opts.observacoes,
+      funilStage: null,
+      contaAtraso: false,
+      empreendimentoId: null,
+      imovelId: opts.imovel?.id ?? null,
+      toleranciaAtiva: false,
+      bloqueadoAte: null,
+      muralChaveId: opts.muralChave?.id ?? null,
+      chaveRetiradaEm: null,
+      motivoRecusa: null,
+      origemTarefa: false,
+      aprovadoAt: null,
+      createdAt: opts.now,
+      updatedAt: opts.now,
+      autor: opts.autor,
+      atribuidoPara: null,
+      aprovadoPor: null,
+      alvoEquipe: null,
+      alvoGerente: null,
+      lead: null,
+      empreendimento: null,
+      imovel: opts.imovel,
+      muralChave: opts.muralChave ?? null,
+    };
   }
 
   /** Visitas de um imóvel ou empreendimento, na mesma agenda do calendário. */

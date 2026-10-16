@@ -42,4 +42,9 @@ export class QueryAgendamentoDto {
   @IsOptional()
   @IsUUID('4', { message: 'Imóvel inválido.' })
   imovelId?: string;
+
+  /** Agenda comercial: visitas, reuniões, captação e chaves. */
+  @IsOptional()
+  @IsIn(['true', '1'], { message: 'Filtro comercial inválido.' })
+  comercial?: string;
 }
