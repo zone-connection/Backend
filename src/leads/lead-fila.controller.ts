@@ -36,7 +36,7 @@ class ReordenarDto {
   ids!: string[];
 }
 
-@Controller('leads/fila')
+@Controller('leads/distribuir/fila')
 export class LeadFilaController {
   constructor(private readonly fila: LeadFilaService) {}
 
