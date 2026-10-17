@@ -6,12 +6,15 @@ import { ProprietariosController } from './proprietarios.controller';
 import { PortalProprietarioModule } from '../portal-proprietario/portal-proprietario.module';
 import { FunisModule } from '../funis/funis.module';
 import { MediaModule } from '../media/media.module';
+import { TarefasModule } from '../tarefas/tarefas.module';
+import { OportunidadesCaptacaoController } from './oportunidades-captacao.controller';
 
 @Module({
-  imports: [PortalProprietarioModule, FunisModule, MediaModule],
+  imports: [PortalProprietarioModule, FunisModule, MediaModule, TarefasModule],
   controllers: [
     ProprietariosController,
     CaptacaoImoveisController,
+    OportunidadesCaptacaoController,
     CaptacoesController,
   ],
   providers: [CaptacaoService],

@@ -70,7 +70,11 @@ export function alertaProximoAt(
 export function isEtapaTerminal(
   papel: FunilEtapaPapel | null | undefined,
 ): boolean {
-  return papel === FunilEtapaPapel.venda || papel === FunilEtapaPapel.perdido;
+  return (
+    papel === FunilEtapaPapel.venda ||
+    papel === FunilEtapaPapel.captado ||
+    papel === FunilEtapaPapel.perdido
+  );
 }
 
 export function fingerprintPrazo(enteredAt: Date, dueAt: Date): string {

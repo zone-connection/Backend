@@ -212,6 +212,7 @@ model Tenant {
   imovelFotos             ImovelFoto[]
   captacoes               Captacao[]
   captacaoHistoricos      CaptacaoHistorico[]
+  oportunidadesCaptacao   OportunidadeCaptacao[]
   vendasUsado             VendaUsado[]
   interessadosUsado       InteressadoUsado[]
   vendaUsadoVinculos      VendaUsadoVinculo[]
@@ -485,6 +486,7 @@ model User {
   oruloToken     UserOruloToken?
 
   captacoesResponsavel Captacao[] @relation("CaptacaoResponsavel")
+  oportunidadesCaptacao OportunidadeCaptacao[] @relation("OportunidadeCaptacaoResponsavel")
   captacaoHistoricos   CaptacaoHistorico[] @relation("CaptacaoHistoricoAutor")
   vendasUsadoResponsavel VendaUsado[] @relation("VendaUsadoResponsavel")
   vendaUsadoHistoricos   VendaUsadoHistorico[] @relation("VendaUsadoHistoricoAutor")
@@ -1964,6 +1966,7 @@ enum FunilEtapaPapel {
   inicial
   analise
   venda
+  captado
   perdido
 }
 
@@ -2146,6 +2149,40 @@ enum CaptacaoImovelTipo {
   fazenda
   chacara
   outro
+}
+
+enum OportunidadeCaptacaoStatus {
+  aberta
+  convertida
+  perdida
+}
+
+/// Imóvel ainda não captado: endereço aproximado, dono e próxima ação.
+model OportunidadeCaptacao {
+  id               String                      @id @default(uuid())
+  tenantId         String
+  tenant           Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  localizacao      String
+  proprietarioNome String
+  telefone         String                      @default("")
+  tipo             CaptacaoImovelTipo          @default(outro)
+  valorPretendido  Decimal?                    @db.Decimal(14, 2)
+  origem           String                      @default("")
+  responsavelId    String
+  responsavel      User                        @relation("OportunidadeCaptacaoResponsavel", fields: [responsavelId], references: [id], onDelete: Restrict)
+  proximaAcao      String                      @default("")
+  proximaAcaoEm    DateTime?
+  status           OportunidadeCaptacaoStatus  @default(aberta)
+  motivoPerda      String                      @default("")
+  captacaoId       String?                     @unique
+  captacao         Captacao?                   @relation(fields: [captacaoId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, responsavelId])
+  @@map("oportunidades_captacao")
 }
 
 enum CaptacaoHistoricoTipo {
@@ -2466,6 +2503,7 @@ model Captacao {
   prazoAdiado       Boolean  @default(false)
 
   historicos CaptacaoHistorico[]
+  oportunidade OportunidadeCaptacao?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -24,7 +24,7 @@ describe('etapas padrão por tipo de funil', () => {
     assert.equal(stages.length, 8);
     assert.equal(stages[0]?.label, 'Novo proprietário');
     assert.equal(stages[0]?.papel, 'inicial');
-    assert.ok(stages.some((s) => s.label === 'Imóvel captado' && s.papel === 'venda'));
+    assert.ok(stages.some((s) => s.label === 'Imóvel captado' && s.papel === 'captado'));
     assert.ok(stages.some((s) => s.label === 'Captação perdida' && s.papel === 'perdido'));
     assert.equal(
       stages.filter((s) => s.papel === 'analise').length,

@@ -5,7 +5,7 @@
  */
 export const DEFAULT_INITIAL_STAGE_SLUG = 'novo';
 
-export type DefaultFunnelPapel = 'inicial' | 'analise' | 'venda' | 'perdido';
+export type DefaultFunnelPapel = 'inicial' | 'analise' | 'venda' | 'captado' | 'perdido';
 
 export interface DefaultFunnelStage {
   label: string;
@@ -140,7 +140,7 @@ export const DEFAULT_CAPTATION_FUNNEL_STAGES: readonly DefaultFunnelStage[] = [
     slug: 'imovel-captado',
     color: 'bg-green-200 text-green-800',
     sortOrder: 6,
-    papel: 'venda',
+    papel: 'captado',
   },
   {
     label: 'Captação perdida',

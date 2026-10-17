@@ -43,6 +43,15 @@ export class ProprietariosController {
     return this.captacao.listProprietarios(query, user);
   }
 
+  @Get(':id/linha-do-tempo')
+  @Roles(...CAPTACAO_ROLES)
+  linha(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.captacao.linhaDoTempoProprietario(id, user);
+  }
+
   @Get(':id')
   @Roles(...CAPTACAO_ROLES)
   get(

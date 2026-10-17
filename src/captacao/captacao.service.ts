@@ -8,18 +8,23 @@ import {
 } from '@nestjs/common';
 import {
   CaptacaoHistoricoTipo,
+  CaptacaoImovelTipo,
   FunilTipo,
+  OportunidadeCaptacaoStatus,
   PessoaTipo,
   Prisma,
   UserStatus,
+  VendaUsadoHistoricoTipo,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { FunilResolverService } from '../funis/funil-resolver.service';
 import { MediaService } from '../media/media.service';
+import { TarefasService } from '../tarefas/tarefas.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import {
   CAPTACAO_IMOVEL_TIPO_LABEL,
+  CAPTACAO_MOTIVOS_PERDA,
   IMOVEL_MAX_FOTOS,
   imovelTitulo,
 } from './captacao.constants';
@@ -57,6 +62,11 @@ import {
   QueryCaptacoesDto,
   UpdateCaptacaoDto,
 } from './dto/captacao.dto';
+import {
+  CreateOportunidadeCaptacaoDto,
+  PerderOportunidadeDto,
+  UpdateOportunidadeCaptacaoDto,
+} from './dto/oportunidade-captacao.dto';
 import {
   computeOperacaoMonitoramento,
   followUpTiming,
@@ -136,6 +146,7 @@ export class CaptacaoService {
     private readonly prisma: PrismaService,
     @Optional() private readonly funilResolver?: FunilResolverService,
     @Optional() private readonly media?: MediaService,
+    @Optional() private readonly tarefas?: TarefasService,
   ) {}
 
   listProprietarios(query: QueryProprietariosDto, user: AuthenticatedUser) {
@@ -929,7 +940,14 @@ export class CaptacaoService {
         });
       }
     });
-    return this.getCaptacao(id, user);
+    const saved = await this.getCaptacao(id, user);
+    if (etapaChanged && nextEtapaFull.papel === 'perdido') {
+      await this.agendarRecuperacao(id, dto, user);
+    }
+    if (etapaChanged && isEtapaCaptada(nextEtapaFull.papel)) {
+      await this.disponibilizarCaptacao(id, user);
+    }
+    return saved;
   }
 
   async deleteCaptacao(id: string, user: AuthenticatedUser) {
@@ -998,7 +1016,7 @@ export class CaptacaoService {
     for (const row of porEtapa) {
       const etapa = etapaMap.get(row.funilEtapaId);
       const count = row._count._all;
-      if (etapa?.papel === 'venda') captados += count;
+      if (isEtapaCaptada(etapa?.papel)) captados += count;
       else if (etapa?.papel !== 'perdido') ativas += count;
     }
     const porEtapaOut = etapasAtivas.length
@@ -1207,7 +1225,7 @@ export class CaptacaoService {
       | undefined;
     const etapa = item.funilEtapa as
       | {
-          papel: 'inicial' | 'analise' | 'venda' | 'perdido' | null;
+          papel: 'inicial' | 'analise' | 'venda' | 'captado' | 'perdido' | null;
           prazoValor: number | null;
           prazoUnidade: 'minutos' | 'horas' | 'dias';
           alertaAntecedenciaPercent?: number | null;
@@ -1246,4 +1264,568 @@ export class CaptacaoService {
       }),
     };
   }
+
+  async listOportunidades(user: AuthenticatedUser) {
+    const tenantId = requireTenantId(user);
+    const rows = await this.prisma.oportunidadeCaptacao.findMany({
+      where: { tenantId },
+      include: { responsavel: { select: { id: true, name: true } } },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return rows.map((row) => ({
+      ...row,
+      valorPretendido: toMoneyNumber(row.valorPretendido),
+    }));
+  }
+
+  async createOportunidade(
+    dto: CreateOportunidadeCaptacaoDto,
+    user: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(user);
+    await this.requireResponsavel(dto.responsavelId, tenantId);
+    const row = await this.prisma.oportunidadeCaptacao.create({
+      data: {
+        tenantId,
+        localizacao: dto.localizacao.trim(),
+        proprietarioNome: dto.proprietarioNome.trim(),
+        telefone: dto.telefone?.trim() ?? '',
+        tipo: dto.tipo ?? CaptacaoImovelTipo.outro,
+        valorPretendido: dto.valorPretendido,
+        origem: dto.origem?.trim() ?? '',
+        responsavelId: dto.responsavelId,
+        proximaAcao: dto.proximaAcao?.trim() ?? '',
+        proximaAcaoEm: dto.proximaAcaoEm ? new Date(dto.proximaAcaoEm) : null,
+      },
+      include: { responsavel: { select: { id: true, name: true } } },
+    });
+    if (row.proximaAcao) {
+      await this.criarTarefaCaptacao(user, {
+        titulo: row.proximaAcao,
+        responsavelId: row.responsavelId,
+        data: dateOnly(row.proximaAcaoEm),
+        descricao: `${row.proprietarioNome} · ${row.localizacao}`,
+      });
+    }
+    return { ...row, valorPretendido: toMoneyNumber(row.valorPretendido) };
+  }
+
+  async updateOportunidade(
+    id: string,
+    dto: UpdateOportunidadeCaptacaoDto,
+    user: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(user);
+    const current = await this.prisma.oportunidadeCaptacao.findFirst({
+      where: { id, tenantId },
+    });
+    if (!current) throw new NotFoundException('Oportunidade não encontrada.');
+    if (current.status !== OportunidadeCaptacaoStatus.aberta) {
+      throw new BadRequestException('Esta oportunidade já foi encerrada.');
+    }
+    if (dto.responsavelId) {
+      await this.requireResponsavel(dto.responsavelId, tenantId);
+    }
+    const row = await this.prisma.oportunidadeCaptacao.update({
+      where: { id },
+      data: {
+        ...(dto.localizacao != null
+          ? { localizacao: dto.localizacao.trim() }
+          : {}),
+        ...(dto.proprietarioNome != null
+          ? { proprietarioNome: dto.proprietarioNome.trim() }
+          : {}),
+        ...(dto.telefone != null ? { telefone: dto.telefone.trim() } : {}),
+        ...(dto.tipo ? { tipo: dto.tipo } : {}),
+        ...(dto.valorPretendido !== undefined
+          ? { valorPretendido: dto.valorPretendido }
+          : {}),
+        ...(dto.origem != null ? { origem: dto.origem.trim() } : {}),
+        ...(dto.responsavelId ? { responsavelId: dto.responsavelId } : {}),
+        ...(dto.proximaAcao != null
+          ? { proximaAcao: dto.proximaAcao.trim() }
+          : {}),
+        ...(dto.proximaAcaoEm !== undefined
+          ? {
+              proximaAcaoEm: dto.proximaAcaoEm
+                ? new Date(dto.proximaAcaoEm)
+                : null,
+            }
+          : {}),
+      },
+      include: { responsavel: { select: { id: true, name: true } } },
+    });
+    return { ...row, valorPretendido: toMoneyNumber(row.valorPretendido) };
+  }
+
+  async perderOportunidade(
+    id: string,
+    dto: PerderOportunidadeDto,
+    user: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(user);
+    const current = await this.prisma.oportunidadeCaptacao.findFirst({
+      where: { id, tenantId },
+    });
+    if (!current) throw new NotFoundException('Oportunidade não encontrada.');
+    if (current.status !== OportunidadeCaptacaoStatus.aberta) {
+      throw new BadRequestException('Esta oportunidade já foi encerrada.');
+    }
+    const motivo = assertMotivoPerda(dto.motivoPerda);
+    const row = await this.prisma.oportunidadeCaptacao.update({
+      where: { id },
+      data: { status: OportunidadeCaptacaoStatus.perdida, motivoPerda: motivo },
+      include: { responsavel: { select: { id: true, name: true } } },
+    });
+    await this.criarTarefaCaptacao(user, {
+      titulo: `Recuperar oportunidade: ${current.proprietarioNome}`,
+      responsavelId: current.responsavelId,
+      data: dateOnly(dto.retornoEm ? new Date(dto.retornoEm) : null),
+      descricao: `${motivo}. ${current.localizacao}`,
+    });
+    return { ...row, valorPretendido: toMoneyNumber(row.valorPretendido) };
+  }
+
+  async promoverOportunidade(id: string, user: AuthenticatedUser) {
+    const tenantId = requireTenantId(user);
+    const item = await this.prisma.oportunidadeCaptacao.findFirst({
+      where: { id, tenantId },
+    });
+    if (!item) throw new NotFoundException('Oportunidade não encontrada.');
+    if (item.status !== OportunidadeCaptacaoStatus.aberta) {
+      throw new BadRequestException('Esta oportunidade já foi encerrada.');
+    }
+    const digits = item.telefone.replace(/\D/g, '');
+    let proprietario = digits
+      ? await this.prisma.proprietario.findFirst({
+          where: { tenantId, telefone: { contains: digits.slice(-8) } },
+        })
+      : null;
+    if (!proprietario) {
+      proprietario = await this.prisma.proprietario.create({
+        data: {
+          tenantId,
+          nome: item.proprietarioNome,
+          telefone: item.telefone,
+        },
+      });
+    }
+    const local = item.localizacao.trim();
+    let imovel = await this.prisma.imovel.findFirst({
+      where: {
+        tenantId,
+        proprietarioId: proprietario.id,
+        OR: [
+          { logradouro: { equals: local, mode: 'insensitive' } },
+          { bairro: { equals: local, mode: 'insensitive' } },
+        ],
+      },
+    });
+    if (!imovel) {
+      imovel = await this.prisma.imovel.create({
+        data: {
+          tenantId,
+          proprietarioId: proprietario.id,
+          tipo: item.tipo,
+          logradouro: local,
+        },
+      });
+    }
+    await this.createCaptacao(
+      {
+        proprietarioId: proprietario.id,
+        imovelId: imovel.id,
+        responsavelId: item.responsavelId,
+        origem: item.origem,
+        valorPretendido: toMoneyNumber(item.valorPretendido) ?? undefined,
+      },
+      user,
+    );
+    const captacao = await this.prisma.captacao.findFirst({
+      where: { tenantId, imovelId: imovel.id, proprietarioId: proprietario.id },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!captacao) {
+      throw new BadRequestException('A captação não foi aberta.');
+    }
+    await this.prisma.oportunidadeCaptacao.update({
+      where: { id },
+      data: {
+        status: OportunidadeCaptacaoStatus.convertida,
+        captacaoId: captacao.id,
+      },
+    });
+    return this.getCaptacao(captacao.id, user);
+  }
+
+  async linhaDoTempoProprietario(id: string, user: AuthenticatedUser) {
+    const tenantId = requireTenantId(user);
+    const proprietario = await this.prisma.proprietario.findFirst({
+      where: { id, tenantId },
+      select: { id: true },
+    });
+    if (!proprietario) throw new NotFoundException('Proprietário não encontrado.');
+    const captacoes = await this.prisma.captacao.findMany({
+      where: { tenantId, proprietarioId: id },
+      select: { id: true, imovelId: true },
+    });
+    const captacaoIds = captacoes.map((c) => c.id);
+    const imovelIds = captacoes.map((c) => c.imovelId);
+    const [historicos, tarefas, visitas, propostas] = await Promise.all([
+      this.prisma.captacaoHistorico.findMany({
+        where: { tenantId, captacaoId: { in: captacaoIds } },
+        orderBy: { createdAt: 'desc' },
+        take: 40,
+        include: { autor: { select: { name: true } } },
+      }),
+      this.prisma.tarefa.findMany({
+        where: { tenantId, imovelId: { in: imovelIds } },
+        orderBy: { createdAt: 'desc' },
+        take: 40,
+        select: {
+          id: true,
+          titulo: true,
+          status: true,
+          data: true,
+          createdAt: true,
+          responsavel: { select: { name: true } },
+        },
+      }),
+      this.prisma.agendamento.findMany({
+        where: { tenantId, imovelId: { in: imovelIds }, tipo: 'visita' },
+        orderBy: { startsAt: 'desc' },
+        take: 20,
+        select: { id: true, titulo: true, startsAt: true },
+      }),
+      this.prisma.vendaUsadoProposta.findMany({
+        where: { tenantId, vendaUsado: { imovelId: { in: imovelIds } } },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: { id: true, status: true, valor: true, createdAt: true },
+      }),
+    ]);
+    const eventos = [
+      ...historicos.map((h) => ({
+        id: h.id,
+        tipo: 'registro',
+        texto: h.texto,
+        quando: h.createdAt,
+        autor: h.autor?.name ?? null,
+      })),
+      ...tarefas.map((t) => ({
+        id: t.id,
+        tipo: 'tarefa',
+        texto: `${t.titulo} · ${t.status}`,
+        quando: t.createdAt,
+        autor: t.responsavel.name,
+      })),
+      ...visitas.map((v) => ({
+        id: v.id,
+        tipo: 'visita',
+        texto: v.titulo || 'Visita',
+        quando: v.startsAt,
+        autor: null as string | null,
+      })),
+      ...propostas.map((p) => ({
+        id: p.id,
+        tipo: 'proposta',
+        texto: `Proposta ${p.status}`,
+        quando: p.createdAt,
+        autor: null as string | null,
+      })),
+    ].sort((a, b) => b.quando.getTime() - a.quando.getTime());
+    return eventos;
+  }
+
+  async documentacao(user: AuthenticatedUser) {
+    const tenantId = requireTenantId(user);
+    const rows = await this.prisma.captacao.findMany({
+      where: { tenantId, funilEtapa: { papel: { not: 'perdido' } } },
+      include: {
+        proprietario: { select: { nome: true, telefone: true, cpfCnpj: true } },
+        imovel: {
+          select: {
+            descricao: true,
+            cidade: true,
+            logradouro: true,
+            fotos: { select: { id: true } },
+          },
+        },
+        funilEtapa: { select: { label: true, papel: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      proprietario: row.proprietario.nome,
+      etapa: row.funilEtapa.label,
+      itens: checklistDaCaptacao(row),
+    }));
+  }
+
+  async relatorio(user: AuthenticatedUser) {
+    const tenantId = requireTenantId(user);
+    const captacoes = await this.prisma.captacao.findMany({
+      where: { tenantId },
+      select: {
+        responsavelId: true,
+        motivoPerda: true,
+        createdAt: true,
+        lastStageChangeAt: true,
+        imovelId: true,
+        responsavel: { select: { name: true } },
+        funilEtapa: { select: { papel: true } },
+      },
+    });
+    const imovelIds = captacoes.map((c) => c.imovelId);
+    const visitas = imovelIds.length
+      ? await this.prisma.agendamento.groupBy({
+          by: ['autorId'],
+          where: { tenantId, tipo: 'visita', imovelId: { in: imovelIds } },
+          _count: { _all: true },
+        })
+      : [];
+    const visitasPor = new Map(visitas.map((v) => [v.autorId, v._count._all]));
+    const porCorretor = new Map<
+      string,
+      {
+        responsavelId: string;
+        nome: string;
+        abertas: number;
+        concluidas: number;
+        visitas: number;
+        dias: number[];
+      }
+    >();
+    const motivos = new Map<string, number>();
+    for (const item of captacoes) {
+      const bucket = porCorretor.get(item.responsavelId) ?? {
+        responsavelId: item.responsavelId,
+        nome: item.responsavel.name,
+        abertas: 0,
+        concluidas: 0,
+        visitas: visitasPor.get(item.responsavelId) ?? 0,
+        dias: [],
+      };
+      if (item.funilEtapa.papel === 'perdido') {
+        const motivo = item.motivoPerda.trim() || 'Sem motivo';
+        motivos.set(motivo, (motivos.get(motivo) ?? 0) + 1);
+      } else if (isEtapaCaptada(item.funilEtapa.papel)) {
+        bucket.concluidas += 1;
+        const dias = Math.max(
+          0,
+          Math.round(
+            (item.lastStageChangeAt.getTime() - item.createdAt.getTime()) /
+              86_400_000,
+          ),
+        );
+        bucket.dias.push(dias);
+      } else {
+        bucket.abertas += 1;
+      }
+      porCorretor.set(item.responsavelId, bucket);
+    }
+    return {
+      corretores: [...porCorretor.values()].map((row) => ({
+        responsavelId: row.responsavelId,
+        nome: row.nome,
+        abertas: row.abertas,
+        concluidas: row.concluidas,
+        visitas: row.visitas,
+        tempoMedioDias: row.dias.length
+          ? Math.round(row.dias.reduce((a, b) => a + b, 0) / row.dias.length)
+          : null,
+      })),
+      motivos: [...motivos.entries()]
+        .map(([motivo, total]) => ({ motivo, total }))
+        .sort((a, b) => b.total - a.total),
+    };
+  }
+
+  private async agendarRecuperacao(
+    captacaoId: string,
+    dto: UpdateCaptacaoDto,
+    user: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(user);
+    const item = await this.prisma.captacao.findFirst({
+      where: { id: captacaoId, tenantId },
+      include: {
+        proprietario: { select: { nome: true } },
+        imovel: { select: { id: true } },
+      },
+    });
+    if (!item) return;
+    await this.criarTarefaCaptacao(user, {
+      titulo: `Recuperar captação: ${item.proprietario.nome}`,
+      responsavelId: item.responsavelId,
+      data: dateOnly(dto.retornoEm ? new Date(dto.retornoEm) : null),
+      descricao: item.motivoPerda || dto.motivoPerda || '',
+      imovelId: item.imovel.id,
+    });
+  }
+
+  private async disponibilizarCaptacao(captacaoId: string, user: AuthenticatedUser) {
+    const tenantId = requireTenantId(user);
+    const item = await this.prisma.captacao.findFirst({
+      where: { id: captacaoId, tenantId },
+      include: { imovel: { include: { vendaUsado: true } } },
+    });
+    if (!item) return;
+    const preco =
+      toMoneyNumber(item.valorAvaliacao) ?? toMoneyNumber(item.valorPretendido);
+    if (item.imovel.vendaUsado) {
+      if (preco != null && item.imovel.vendaUsado.precoVenda == null) {
+        await this.prisma.vendaUsado.update({
+          where: { id: item.imovel.vendaUsado.id },
+          data: { precoVenda: preco },
+        });
+      }
+      return;
+    }
+    const funil = await this.prisma.funil.findFirst({
+      where: { tenantId, tipo: FunilTipo.venda_usados, ativo: true },
+      include: { etapas: { orderBy: { sortOrder: 'asc' } } },
+    });
+    const etapa = funil ? pickFirstActiveEtapa(funil.etapas) : null;
+    if (!funil || !etapa) {
+      await this.prisma.captacaoHistorico.create({
+        data: {
+          tenantId,
+          captacaoId,
+          tipo: CaptacaoHistoricoTipo.edicao,
+          texto:
+            'Captação concluída. O estoque de usados ainda não tem funil ativo, então o imóvel não entrou no estoque.',
+          autorId: user.id,
+        },
+      });
+      return;
+    }
+    await this.prisma.$transaction(async (tx) => {
+      const venda = await tx.vendaUsado.create({
+        data: {
+          tenantId,
+          imovelId: item.imovelId,
+          responsavelId: item.responsavelId,
+          funilId: funil.id,
+          funilEtapaId: etapa.id,
+          precoVenda: preco,
+          ...stageChangeTiming(new Date(), etapa),
+          observacoes: 'Disponibilizado ao concluir a captação.',
+        },
+      });
+      await tx.vendaUsadoHistorico.create({
+        data: {
+          tenantId,
+          vendaUsadoId: venda.id,
+          tipo: VendaUsadoHistoricoTipo.disponibilizacao,
+          texto: `${user.name} concluiu a captação e disponibilizou o imóvel.`,
+          autorId: user.id,
+        },
+      });
+    });
+  }
+
+  private async criarTarefaCaptacao(
+    user: AuthenticatedUser,
+    input: {
+      titulo: string;
+      responsavelId: string;
+      data: string;
+      descricao: string;
+      imovelId?: string;
+    },
+  ) {
+    if (!this.tarefas) return;
+    const titulo = input.titulo.trim();
+    if (titulo.length < 2) return;
+    try {
+    await this.tarefas.create(
+      {
+        titulo: titulo.slice(0, 180),
+        data: input.data,
+        responsavelId: input.responsavelId,
+        tipo: 'ligacao',
+        etiqueta: 'captacao',
+        descricao: input.descricao,
+        imovelId: input.imovelId,
+      },
+      user,
+    );
+    } catch {
+      /* tarefa é apoio; a perda ou a oportunidade seguem mesmo sem o módulo */
+    }
+  }
+}
+
+function isEtapaCaptada(papel: string | null | undefined) {
+  return papel === 'captado' || papel === 'venda';
+}
+
+function assertMotivoPerda(value: string) {
+  const motivo = value.trim();
+  if (
+    !CAPTACAO_MOTIVOS_PERDA.includes(
+      motivo as (typeof CAPTACAO_MOTIVOS_PERDA)[number],
+    )
+  ) {
+    throw new BadRequestException('Selecione um motivo de perda da lista.');
+  }
+  return motivo;
+}
+
+function dateOnly(value: Date | null | undefined) {
+  const base = value && !Number.isNaN(value.getTime()) ? value : addDays(new Date(), 30);
+  return base.toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function checklistDaCaptacao(row: {
+  exclusividade: boolean;
+  valorPretendido: Prisma.Decimal | null;
+  proprietario: { telefone: string; cpfCnpj: string };
+  imovel: {
+    descricao: string;
+    cidade: string;
+    logradouro: string;
+    fotos: Array<{ id: string }>;
+  };
+}) {
+  return [
+    { chave: 'fotos', label: 'Fotos e vídeos', pronto: row.imovel.fotos.length > 0 },
+    {
+      chave: 'documentacao',
+      label: 'Documentação do proprietário',
+      pronto: row.proprietario.cpfCnpj.trim().length > 0,
+    },
+    {
+      chave: 'proprietario',
+      label: 'Telefone do proprietário',
+      pronto: row.proprietario.telefone.trim().length > 0,
+    },
+    {
+      chave: 'valor',
+      label: 'Valor e condições',
+      pronto: row.valorPretendido != null,
+    },
+    {
+      chave: 'autorizacao',
+      label: 'Autorização para anunciar',
+      pronto: row.exclusividade,
+    },
+    {
+      chave: 'portais',
+      label: 'Dados para os portais',
+      pronto:
+        row.imovel.descricao.trim().length > 0 &&
+        (row.imovel.cidade.trim().length > 0 ||
+          row.imovel.logradouro.trim().length > 0),
+    },
+  ];
 }

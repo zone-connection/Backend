@@ -6,6 +6,7 @@ export const LEGACY_PAPEL_BY_SLUG: Record<string, FunilEtapaPapel> = {
   'em-analise': FunilEtapaPapel.analise,
   'ganho-venda': FunilEtapaPapel.venda,
   venda: FunilEtapaPapel.venda,
+  'imovel-captado': FunilEtapaPapel.captado,
   perdido: FunilEtapaPapel.perdido,
 };
 

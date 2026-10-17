@@ -9,5 +9,6 @@ import { TarefasService } from './tarefas.service';
   imports: [MailerModule, AgendaModule, EquipesModule],
   controllers: [TarefasController],
   providers: [TarefasService],
+  exports: [TarefasService],
 })
 export class TarefasModule {}

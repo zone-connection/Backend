@@ -88,6 +88,11 @@ export class UpdateCaptacaoDto {
   @IsString()
   @MaxLength(120)
   motivoPerda?: string;
+
+  /// Quando a captação vai para Perdido, data da tarefa de recuperação.
+  @IsOptional()
+  @IsDateString()
+  retornoEm?: string;
 }
 
 export class QueryCaptacoesDto {

@@ -28,6 +28,18 @@ import {
 export class CaptacoesController {
   constructor(private readonly captacao: CaptacaoService) {}
 
+  @Get('relatorio')
+  @Roles(...CAPTACAO_ROLES)
+  relatorio(@CurrentUser() user: AuthenticatedUser) {
+    return this.captacao.relatorio(user);
+  }
+
+  @Get('documentacao')
+  @Roles(...CAPTACAO_ROLES)
+  documentacao(@CurrentUser() user: AuthenticatedUser) {
+    return this.captacao.documentacao(user);
+  }
+
   @Get('resumo')
   @Roles(...CAPTACAO_ROLES)
   resumo(@CurrentUser() user: AuthenticatedUser) {
