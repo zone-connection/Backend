@@ -1268,8 +1268,17 @@ export class CaptacaoService {
   async listOportunidades(user: AuthenticatedUser) {
     const tenantId = requireTenantId(user);
     const rows = await this.prisma.oportunidadeCaptacao.findMany({
-      where: { tenantId },
-      include: { responsavel: { select: { id: true, name: true } } },
+      where: { tenantId, status: { not: OportunidadeCaptacaoStatus.convertida } },
+      include: {
+        responsavel: { select: { id: true, name: true } },
+        imovel: {
+          select: {
+            id: true,
+            fotoUrl: true,
+            fotos: { orderBy: { sortOrder: 'asc' }, take: 1, select: { url: true } },
+          },
+        },
+      },
       orderBy: { updatedAt: 'desc' },
     });
     return rows.map((row) => ({
@@ -1284,6 +1293,21 @@ export class CaptacaoService {
   ) {
     const tenantId = requireTenantId(user);
     await this.requireResponsavel(dto.responsavelId, tenantId);
+    const proprietario = await this.prisma.proprietario.create({
+      data: {
+        tenantId,
+        nome: dto.proprietarioNome.trim(),
+        telefone: dto.telefone?.trim() ?? '',
+      },
+    });
+    const imovel = await this.prisma.imovel.create({
+      data: {
+        tenantId,
+        proprietarioId: proprietario.id,
+        tipo: dto.tipo ?? CaptacaoImovelTipo.outro,
+        logradouro: dto.localizacao.trim(),
+      },
+    });
     const row = await this.prisma.oportunidadeCaptacao.create({
       data: {
         tenantId,
@@ -1296,8 +1320,18 @@ export class CaptacaoService {
         responsavelId: dto.responsavelId,
         proximaAcao: dto.proximaAcao?.trim() ?? '',
         proximaAcaoEm: dto.proximaAcaoEm ? new Date(dto.proximaAcaoEm) : null,
+        imovelId: imovel.id,
       },
-      include: { responsavel: { select: { id: true, name: true } } },
+      include: {
+        responsavel: { select: { id: true, name: true } },
+        imovel: {
+          select: {
+            id: true,
+            fotoUrl: true,
+            fotos: { orderBy: { sortOrder: 'asc' }, take: 1, select: { url: true } },
+          },
+        },
+      },
     });
     if (row.proximaAcao) {
       await this.criarTarefaCaptacao(user, {
@@ -1411,7 +1445,11 @@ export class CaptacaoService {
       });
     }
     const local = item.localizacao.trim();
-    let imovel = await this.prisma.imovel.findFirst({
+    let imovel = item.imovelId
+      ? await this.prisma.imovel.findFirst({
+          where: { id: item.imovelId, tenantId },
+        })
+      : await this.prisma.imovel.findFirst({
       where: {
         tenantId,
         proprietarioId: proprietario.id,
@@ -1421,6 +1459,11 @@ export class CaptacaoService {
         ],
       },
     });
+    if (imovel && imovel.proprietarioId !== proprietario.id) {
+      proprietario = await this.prisma.proprietario.findFirstOrThrow({
+        where: { id: imovel.proprietarioId, tenantId },
+      });
+    }
     if (!imovel) {
       imovel = await this.prisma.imovel.create({
         data: {

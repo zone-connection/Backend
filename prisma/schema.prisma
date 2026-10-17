@@ -2176,6 +2176,8 @@ model OportunidadeCaptacao {
   motivoPerda      String                      @default("")
   captacaoId       String?                     @unique
   captacao         Captacao?                   @relation(fields: [captacaoId], references: [id], onDelete: SetNull)
+  imovelId         String?                     @unique
+  imovel           Imovel?                     @relation(fields: [imovelId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2427,6 +2429,7 @@ model Imovel {
   interessesParceria   ParceriaInteresse[]
 
   captacoes Captacao[]
+  oportunidadeCaptacao OportunidadeCaptacao?
   vendaUsado VendaUsado?
   propostaVinculos PropostaVinculo[]
   propostaPublicaLinks PropostaPublicaLink[]
