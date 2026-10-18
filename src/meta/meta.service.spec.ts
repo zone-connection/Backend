@@ -109,6 +109,12 @@ function createService(opts: {
       },
       update: async () => ({}),
     },
+    empreendimento: {
+      findFirst: async () => null,
+    },
+    leadEmpreendimentoInteresse: {
+      create: async () => ({}),
+    },
   };
 
   const graphApi = {
@@ -179,6 +185,69 @@ describe('MetaService.handleWebhook', () => {
     assert.equal(created.funilId, 'funil-1');
     assert.equal(created.stage, 'novo');
     assert.equal(upserts.length, 1);
+  });
+
+  it('mapeia WhatsApp e e-mail com rótulo customizado do Instant Form', async () => {
+    const { service, createdLeads } = createService({
+      connection: { tenantId: TENANT_ID, pageAccessToken: 'page-token' },
+      graphLead: {
+        id: LEADGEN_ID,
+        field_data: [
+          { name: 'full_name', values: ['Denis Santos'] },
+          { name: 'Qual seu WhatsApp?', values: ['14996516819'] },
+          { name: 'E-mail para contato', values: ['denis@casa.com'] },
+        ],
+      },
+    });
+    await service.handleWebhook(payload());
+    const created = createdLeads[0] as {
+      nome: string;
+      telefone: string;
+      email: string;
+    };
+    assert.equal(created.nome, 'Denis Santos');
+    assert.equal(created.telefone, '(14) 99651-6819');
+    assert.equal(created.email, 'denis@casa.com');
+  });
+
+  it('preenche dados do form e ignora corretor/equipe', async () => {
+    const { service, createdLeads } = createService({
+      connection: { tenantId: TENANT_ID, pageAccessToken: 'page-token' },
+      graphLead: {
+        id: LEADGEN_ID,
+        field_data: [
+          { name: 'full_name', values: ['Paulo Carvalho'] },
+          { name: 'phone_number', values: ['28999241253'] },
+          { name: 'email', values: ['paulo@casa.com'] },
+          { name: 'Cidade', values: ['Vitória'] },
+          { name: 'Bairro', values: ['Centro'] },
+          { name: 'Renda mensal', values: ['R$ 8.000'] },
+          { name: 'Tipo de renda', values: ['CLT'] },
+          { name: 'Estado civil', values: ['Casado'] },
+          { name: 'CPF', values: ['12345678901'] },
+          { name: 'Orçamento', values: ['450000'] },
+          { name: 'Empreendimento', values: ['Metrocasa Clube'] },
+          { name: 'Corretor', values: ['João'] },
+          { name: 'Equipe', values: ['Vendas 1'] },
+        ],
+      },
+    });
+    await service.handleWebhook(payload());
+    const created = createdLeads[0] as Record<string, unknown>;
+    assert.equal(created.nome, 'Paulo Carvalho');
+    assert.equal(created.telefone, '(28) 99924-1253');
+    assert.equal(created.email, 'paulo@casa.com');
+    assert.equal(created.cidade, 'Vitória');
+    assert.equal(created.bairro, 'Centro');
+    assert.equal(created.renda, 8000);
+    assert.equal(created.tipoRenda, 'CLT');
+    assert.equal(created.estadoCivil, 'Casado');
+    assert.equal(created.cpf, '123.456.789-01');
+    assert.equal(created.orcamentoMax, 450000);
+    assert.equal(created.corretorId, undefined);
+    assert.equal(created.equipeId, undefined);
+    const tags = created.tags as string[];
+    assert.equal(tags.some((t) => /corretor|equipe/i.test(t)), false);
   });
 
   it('não usa tenant default quando a connection aponta para outro tenant', async () => {

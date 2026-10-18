@@ -15,6 +15,12 @@ import { decryptPageAccessToken, metaTokenKey } from './meta-token.crypto';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
 import { FunisService } from '../funis/funis.service';
 import { LeadFilaService } from '../leads/lead-fila.service';
+import {
+  emptyMappedMetaLead,
+  mapMetaLeadFields,
+  metaFieldKeys,
+  type MappedMetaLead,
+} from './meta-lead-fields';
 
 type TenantMetaConn = {
   tenantId: string;
@@ -222,10 +228,11 @@ export class MetaService {
       adgroupId: null,
       pageIdSource: 'value',
     };
-    const mapped = this.mapFieldData(metaLead.field_data ?? []);
+    const fields = metaLead.field_data ?? [];
+    const mapped = mapMetaLeadFields(fields);
 
     this.logger.log(
-      `Importando lead da Graph leadgen_id=${leadgenId} tenantId=${connection.tenantId}`,
+      `Importando lead da Graph leadgen_id=${leadgenId} tenantId=${connection.tenantId} campos=${metaFieldKeys(fields)} telefone=${mapped.telefone ?? 'vazio'} email=${mapped.email ?? 'vazio'}`,
     );
 
     const { lead, created } = await this.findOrCreateLead(
@@ -371,18 +378,16 @@ export class MetaService {
             connection.pageAccessToken,
           );
       const mapped = dummy
-        ? {
+        ? emptyMappedMetaLead({
             nome: 'Lead de teste Meta',
             telefone: '(00) 44444-4444',
             email: 'teste-meta@facebook.meta.local',
-            cidade: null,
-            bairro: null,
             extraTags: ['Teste Meta'],
-          }
-        : this.mapFieldData(metaLead.field_data ?? []);
+          })
+        : mapMetaLeadFields(metaLead.field_data ?? []);
 
       this.logger.log(
-        `Criando lead no CRM leadgen_id=${event.leadgenId} tenantId=${connection.tenantId}`,
+        `Criando lead no CRM leadgen_id=${event.leadgenId} tenantId=${connection.tenantId} campos=${metaFieldKeys(metaLead.field_data ?? [])} telefone=${mapped.telefone ?? 'vazio'} email=${mapped.email ?? 'vazio'}`,
       );
 
       const { lead, created } = await this.findOrCreateLead(
@@ -422,7 +427,7 @@ export class MetaService {
   }
 
   private async findOrCreateLead(
-    mapped: ReturnType<MetaService['mapFieldData']>,
+    mapped: MappedMetaLead,
     event: LeadgenEvent,
     metaLead: MetaLeadPayload,
     tenantId: string,
@@ -447,6 +452,10 @@ export class MetaService {
     ];
 
     const placement = await this.funis.comercialPlacement(tenantId);
+    const empreendimentoId = await this.matchEmpreendimento(
+      tenantId,
+      mapped.empreendimentoNome,
+    );
     const lead = await this.prisma.lead.create({
       data: {
         tenantId,
@@ -454,15 +463,36 @@ export class MetaService {
         telefone: mapped.telefone ?? '(00) 00000-0000',
         email: mapped.email ?? `${event.leadgenId}@facebook.meta.local`,
         origem: 'Facebook Ads',
-        interesse: 'Comprar',
+        interesse: mapped.interesse ?? 'Comprar',
         cidade: mapped.cidade ?? 'A definir',
         bairro: mapped.bairro ?? 'A definir',
+        renda: mapped.renda ?? undefined,
+        tipoRenda: mapped.tipoRenda ?? undefined,
+        estadoCivil: mapped.estadoCivil ?? undefined,
+        cpf: mapped.cpf ?? undefined,
+        rg: mapped.rg ?? undefined,
+        endereco: mapped.endereco ?? undefined,
+        cep: mapped.cep ?? undefined,
+        orcamentoMax: mapped.orcamentoMax ?? undefined,
+        quartosMin: mapped.quartosMin ?? undefined,
+        vagasMin: mapped.vagasMin ?? undefined,
+        empreendimentoId: empreendimentoId ?? undefined,
         stage: placement.stage,
         funilId: placement.funilId,
         prioridade: 'Média',
         tags,
       },
     });
+    if (empreendimentoId) {
+      await this.prisma.leadEmpreendimentoInteresse.create({
+        data: {
+          tenantId,
+          leadId: lead.id,
+          empreendimentoId,
+          status: 'ativo',
+        },
+      }).catch(() => undefined);
+    }
     await this.fila.atribuirNovoLead({
       tenantId,
       leadId: lead.id,
@@ -471,9 +501,25 @@ export class MetaService {
     return { lead, created: true };
   }
 
+  /** Liga o lead ao cadastro do tenant pelo nome do form; não usa corretor/equipe. */
+  private async matchEmpreendimento(tenantId: string, nome: string | null) {
+    const q = nome?.trim();
+    if (!q) return null;
+    const exact = await this.prisma.empreendimento.findFirst({
+      where: { tenantId, ativo: true, nome: { equals: q, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (exact) return exact.id;
+    const partial = await this.prisma.empreendimento.findFirst({
+      where: { tenantId, ativo: true, nome: { contains: q, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    return partial?.id ?? null;
+  }
+
   /** Reusa lead existente sem vínculo Meta (evita conflito no leadId unique). */
   private async findReusableLead(
-    mapped: ReturnType<MetaService['mapFieldData']>,
+    mapped: MappedMetaLead,
     tenantId: string,
   ) {
     if (mapped.telefone) {
@@ -511,98 +557,6 @@ export class MetaService {
       where: { id: leadId },
       data: { tags: [...next] },
     });
-  }
-
-  private mapFieldData(fields: MetaLeadField[]) {
-    const byName = new Map<string, string>();
-    for (const field of fields) {
-      const key = field.name?.trim().toLowerCase();
-      const value = field.values?.find((v) => typeof v === 'string' && v.trim());
-      if (key && value) byName.set(key, value.trim());
-    }
-
-    const get = (...keys: string[]) => {
-      for (const key of keys) {
-        const value = byName.get(key);
-        if (value) return value;
-      }
-      return null;
-    };
-
-    const firstName = get('first_name', 'nome');
-    const lastName = get('last_name', 'sobrenome');
-    const joinedName = [firstName, lastName].filter(Boolean).join(' ').trim();
-    const fullName =
-      get('full_name', 'nome_completo', 'name') || joinedName || null;
-
-    const rawPhone = get(
-      'phone_number',
-      'phone',
-      'telefone',
-      'mobile_phone',
-      'work_phone_number',
-    );
-    const rawEmail = get('email', 'e-mail', 'work_email');
-    const cidade = get('city', 'cidade');
-    const bairro = get('street_address', 'bairro', 'neighborhood');
-
-    const extraTags: string[] = [];
-    for (const [key, value] of byName) {
-      if (
-        [
-          'full_name',
-          'first_name',
-          'last_name',
-          'nome',
-          'nome_completo',
-          'name',
-          'sobrenome',
-          'phone_number',
-          'phone',
-          'telefone',
-          'mobile_phone',
-          'work_phone_number',
-          'email',
-          'e-mail',
-          'work_email',
-          'city',
-          'cidade',
-          'street_address',
-          'bairro',
-          'neighborhood',
-        ].includes(key)
-      ) {
-        continue;
-      }
-      extraTags.push(`${key}: ${value.slice(0, 80)}`);
-    }
-
-    return {
-      nome: fullName || 'Lead Facebook',
-      telefone: rawPhone ? this.formatPhoneOrFallback(rawPhone) : null,
-      email: rawEmail && this.isValidEmail(rawEmail) ? rawEmail : null,
-      cidade,
-      bairro,
-      extraTags,
-    };
-  }
-
-  private formatPhoneOrFallback(raw: string) {
-    const digits = raw.replace(/\D/g, '').replace(/^55/, '');
-    if (/^\d{10,11}$/.test(digits)) {
-      const ddd = digits.slice(0, 2);
-      const local = digits.slice(2);
-      return local.length === 9
-        ? `(${ddd}) ${local.slice(0, 5)}-${local.slice(5)}`
-        : `(${ddd}) ${local.slice(0, 4)}-${local.slice(4)}`;
-    }
-    const fallback = digits.slice(-11) || '00000000000';
-    const padded = fallback.padStart(11, '0').slice(-11);
-    return `(${padded.slice(0, 2)}) ${padded.slice(2, 7)}-${padded.slice(7)}`;
-  }
-
-  private isValidEmail(value: string) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
   }
 
   private isDummyEvent(event: LeadgenEvent) {
