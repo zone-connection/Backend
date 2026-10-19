@@ -40,6 +40,33 @@ describe('CreateDocumentacaoDto leadId opcional', () => {
     assert.equal(dto.leadId, 'd4a3ffb2-c524-4c91-a5bd-eedace334ae9');
   });
 
+  it('aceita ficha de usado com origem separada da fonte', async () => {
+    const dto = plainToInstance(
+      CreateDocumentacaoDto,
+      base({
+        origem: 'usado',
+        fonte: 'Indicação',
+        proprietarioId: 'd4a3ffb2-c524-4c91-a5bd-eedace334ae9',
+        interessadoId: 'a1b2c3d4-e5f6-4789-a012-3456789abcde',
+        matricula: '12345',
+      }),
+    );
+    const errors = await validate(dto);
+    assert.equal(errors.length, 0);
+    assert.equal(dto.origem, 'usado');
+    assert.equal(dto.fonte, 'Indicação');
+    assert.equal(dto.matricula, '12345');
+  });
+
+  it('rejeita origem que não seja lançamento ou usado', async () => {
+    const dto = plainToInstance(
+      CreateDocumentacaoDto,
+      base({ origem: 'aluguel' }),
+    );
+    const errors = await validate(dto);
+    assert.ok(errors.some((error) => error.property === 'origem'));
+  });
+
   it('rejeita leadId inválido', async () => {
     const dto = plainToInstance(
       CreateDocumentacaoDto,

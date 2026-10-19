@@ -1186,6 +1186,11 @@ model Documentacao {
 
   /// Fonte configurável (catálogo documentacao_fonte; label livre).
   fonte   String @default("Outro")
+  /// lancamento | usado. Não usa o campo fonte.
+  origem  String @default("lancamento")
+  proprietarioId String?
+  interessadoId  String?
+  matricula      String @default("")
   /// Status de crédito/análise (texto livre; catálogo documentacao_status1).
   status1 String @default("Análise")
   /// Status comercial (texto livre; catálogo documentacao_status2).

@@ -2,6 +2,7 @@ import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -48,6 +49,25 @@ export class UpdateDocumentacaoDto {
   @MinLength(1, { message: 'Informe a fonte.' })
   @MaxLength(80)
   fonte?: string;
+
+  @IsOptional()
+  @IsIn(['lancamento', 'usado'], { message: 'Origem inválida.' })
+  origem?: 'lancamento' | 'usado';
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Proprietário inválido.' })
+  proprietarioId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Interessado inválido.' })
+  interessadoId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  matricula?: string | null;
 
   @IsOptional()
   @IsString({ message: 'Status 1 inválido.' })

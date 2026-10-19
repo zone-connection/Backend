@@ -42,6 +42,10 @@ const docSelect = {
   construtoraId: true,
   empreendimentoId: true,
   fonte: true,
+  origem: true,
+  proprietarioId: true,
+  interessadoId: true,
+  matricula: true,
   status1: true,
   status2: true,
   corretorId: true,
@@ -288,6 +292,10 @@ export class DocumentacaoService {
         construtoraId: dto.construtoraId || null,
         empreendimentoId: dto.empreendimentoId || null,
         fonte,
+        origem: dto.origem === 'usado' ? 'usado' : 'lancamento',
+        proprietarioId: dto.proprietarioId || null,
+        interessadoId: dto.interessadoId || null,
+        matricula: dto.matricula?.trim() || '',
         status1,
         status2,
         corretorId,
@@ -363,6 +371,18 @@ export class DocumentacaoService {
       data.empreendimento = dto.empreendimentoId
         ? { connect: { id: dto.empreendimentoId } }
         : { disconnect: true };
+    }
+    if (dto.origem !== undefined) {
+      data.origem = dto.origem === 'usado' ? 'usado' : 'lancamento';
+    }
+    if (dto.proprietarioId !== undefined) {
+      data.proprietarioId = dto.proprietarioId || null;
+    }
+    if (dto.interessadoId !== undefined) {
+      data.interessadoId = dto.interessadoId || null;
+    }
+    if (dto.matricula !== undefined) {
+      data.matricula = dto.matricula?.trim() || '';
     }
     if (dto.fonte !== undefined) {
       data.fonte = await this.resolveCatalogLabel(
