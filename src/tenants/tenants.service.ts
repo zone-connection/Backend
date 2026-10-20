@@ -391,7 +391,7 @@ export class TenantsService {
    * Gera senha temporária para o admin principal do tenant (super_admin).
    * A senha só é legível nesta resposta.
    */
-  async resetAdminPassword(tenantId: string) {
+  async resetAdminPassword(tenantId: string, password?: string) {
     await this.ensureExists(tenantId);
 
     const admin = await this.prisma.user.findFirst({
@@ -406,8 +406,9 @@ export class TenantsService {
       );
     }
 
-    const temporaryPassword = this.generateTemporaryPassword();
-    const hashed = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
+    const chosen = password?.trim() || undefined;
+    const temporaryPassword = chosen ? undefined : this.generateTemporaryPassword();
+    const hashed = await bcrypt.hash(chosen ?? temporaryPassword!, SALT_ROUNDS);
     const updated = await this.prisma.user.updateMany({
       where: { id: admin.id, tenantId },
       data: {
