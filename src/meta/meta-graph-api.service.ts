@@ -4,7 +4,10 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { idsFromGranularScopes } from './meta-granular-scopes';
+import {
+  idsFromGranularScopes,
+  parseGranularScopes,
+} from './meta-granular-scopes';
 import { resolveMetaAppId } from './meta-oauth.util';
 
 export type MetaLeadField = {
@@ -251,6 +254,33 @@ export class MetaGraphApiService {
     const granted = await this.fetchAssetsFromDebugToken(userAccessToken);
     for (const row of granted.pages) addPage(row);
     for (const row of granted.ads) addAd(row);
+    await Promise.all(
+      granted.businessIds.flatMap((businessId) => {
+        const id = encodeURIComponent(businessId);
+        return [
+          this.collectPagesSafe<GraphNamed>(
+            `${id}/owned_pages`,
+            'id,name,access_token',
+            userAccessToken,
+          ).then((rows) => rows.forEach(addPage)),
+          this.collectPagesSafe<GraphNamed>(
+            `${id}/client_pages`,
+            'id,name,access_token',
+            userAccessToken,
+          ).then((rows) => rows.forEach(addPage)),
+          this.collectPagesSafe<GraphAd>(
+            `${id}/owned_ad_accounts`,
+            'id,name',
+            userAccessToken,
+          ).then((rows) => rows.forEach(addAd)),
+          this.collectPagesSafe<GraphAd>(
+            `${id}/client_ad_accounts`,
+            'id,name',
+            userAccessToken,
+          ).then((rows) => rows.forEach(addAd)),
+        ];
+      }),
+    );
 
     const nested = await this.fetchMeBusinessCatalog(userAccessToken);
     for (const row of nested.pages) addPage(row);
@@ -259,6 +289,7 @@ export class MetaGraphApiService {
     const [
       accounts,
       assigned,
+      promotable,
       adAccounts,
       businesses,
     ] = await Promise.all([
@@ -270,6 +301,11 @@ export class MetaGraphApiService {
       this.collectPagesSafe<GraphNamed>(
         'me/assigned_pages',
         'id,name',
+        userAccessToken,
+      ),
+      this.collectPagesSafe<GraphNamed>(
+        'me/promotable_pages',
+        'id,name,access_token',
         userAccessToken,
       ),
       this.collectPagesSafe<GraphAd>(
@@ -284,10 +320,11 @@ export class MetaGraphApiService {
       ),
     ]);
     this.logger.log(
-      `me/accounts=${accounts.length} assigned=${assigned.length} adaccounts=${adAccounts.length} businesses=${businesses.length}`,
+      `me/accounts=${accounts.length} assigned=${assigned.length} promotable=${promotable.length} adaccounts=${adAccounts.length} businesses=${businesses.length}`,
     );
     for (const row of accounts) addPage(row);
     for (const row of assigned) addPage(row);
+    for (const row of promotable) addPage(row);
     for (const row of adAccounts) addAd(row);
 
     await Promise.all(
@@ -325,6 +362,7 @@ export class MetaGraphApiService {
   private async fetchAssetsFromDebugToken(userAccessToken: string): Promise<{
     pages: GraphNamed[];
     ads: GraphAd[];
+    businessIds: string[];
   }> {
     const version = this.graphVersion();
     const url = new URL(`https://graph.facebook.com/${version}/debug_token`);
@@ -335,28 +373,27 @@ export class MetaGraphApiService {
     );
     const pages: GraphNamed[] = [];
     const ads: GraphAd[] = [];
+    let businessIds: string[] = [];
     try {
       const body = await this.graphGet<{
         data?: {
           is_valid?: boolean;
           scopes?: string[];
-          granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
+          granular_scopes?: unknown;
+          data?: { granular_scopes?: unknown };
         };
         error?: { message?: string; code?: number };
       }>(url);
-      const nestedData = body.data as
-        | {
-            granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
-            data?: {
-              granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
-            };
-          }
-        | undefined;
-      const granular =
-        nestedData?.granular_scopes ?? nestedData?.data?.granular_scopes;
-      const { pageIds, adAccountIds } = idsFromGranularScopes(granular);
+      const nestedData = body.data;
+      const granular = parseGranularScopes(
+        nestedData?.granular_scopes ?? nestedData?.data?.granular_scopes,
+      );
+      const extracted = idsFromGranularScopes(granular);
+      const pageIds = extracted.pageIds;
+      const adAccountIds = extracted.adAccountIds;
+      businessIds = extracted.businessIds;
       this.logger.log(
-        `debug_token válido=${body.data?.is_valid ?? false} pages=${pageIds.length} ads=${adAccountIds.length} scopes=${(body.data?.scopes ?? []).join(',')} granular=${JSON.stringify(granular ?? [])}`,
+        `debug_token válido=${body.data?.is_valid ?? false} pages=${pageIds.length} ads=${adAccountIds.length} businesses=${businessIds.length} scopes=${(body.data?.scopes ?? []).join(',')} granular=${JSON.stringify(granular)}`,
       );
       const fetchedPages = await Promise.all(
         pageIds.map((id) => this.fetchPageDetails(id, userAccessToken)),
@@ -375,7 +412,7 @@ export class MetaGraphApiService {
         `debug_token falhou: ${err instanceof Error ? err.message : err}`,
       );
     }
-    return { pages, ads };
+    return { pages, ads, businessIds };
   }
 
   private async fetchPageDetails(
@@ -481,6 +518,41 @@ export class MetaGraphApiService {
       }
     }
     return rows;
+  }
+
+  async resolvePage(
+    userAccessToken: string,
+    pageId: string,
+  ): Promise<{ id: string; name: string; access_token: string } | null> {
+    const id = this.parsePageId(pageId);
+    if (!id) return null;
+    const details = await this.fetchPageDetails(id, userAccessToken);
+    const token =
+      details?.access_token ||
+      (await this.fetchPageAccessToken(id, userAccessToken));
+    if (!token) return null;
+    return {
+      id: details?.id ?? id,
+      name: details?.name ?? id,
+      access_token: token,
+    };
+  }
+
+  parsePageId(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    try {
+      const url = new URL(trimmed);
+      const fromQuery = url.searchParams.get('id');
+      if (fromQuery && /^\d+$/.test(fromQuery)) return fromQuery;
+      const parts = url.pathname.split('/').filter(Boolean);
+      const last = parts.at(-1) ?? '';
+      if (/^\d+$/.test(last)) return last;
+    } catch {
+      /* texto simples */
+    }
+    const digits = trimmed.match(/^\d+$/) ? trimmed : '';
+    return digits || trimmed;
   }
 
   private async fetchPageAccessToken(

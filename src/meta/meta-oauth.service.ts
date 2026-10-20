@@ -175,8 +175,19 @@ export class MetaOAuthService {
         query.code,
         payload.redirectUri,
       );
-      this.pending.set(this.pendingKey(payload.tenantId, payload.sub), {
-        userAccessToken: shortLived.accessToken,
+      let userAccessToken = shortLived.accessToken;
+      try {
+        const longLived = await this.graphApi.exchangeLongLivedUserToken(
+          shortLived.accessToken,
+        );
+        userAccessToken = longLived.accessToken;
+      } catch (err) {
+        this.logger.warn(
+          `Token longo Meta falhou, usando o curto: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+      await this.savePending({
+        userAccessToken,
         tenantId: payload.tenantId,
         userId: payload.sub,
         expiresAt: Date.now() + PENDING_TTL_MS,
@@ -197,7 +208,7 @@ export class MetaOAuthService {
     this.assertConfigured();
     this.assertCanManage(user);
     const tenantId = requireTenantId(user);
-    const session = this.requirePending(tenantId, user.id);
+    const session = await this.requirePending(tenantId, user.id);
     const [pages, adAccounts] = await Promise.all([
       this.graphApi.listUserPages(session.userAccessToken),
       this.graphApi.listAdAccounts(session.userAccessToken).catch((err) => {
@@ -223,13 +234,23 @@ export class MetaOAuthService {
     this.assertConfigured();
     this.assertCanManage(user);
     const tenantId = requireTenantId(user);
-    const session = this.requirePending(tenantId, user.id);
+    const session = await this.requirePending(tenantId, user.id);
     const pageId = dto.pageId.trim();
     const pages = await this.graphApi.listUserPages(session.userAccessToken);
-    const page = pages.find((item) => item.id === pageId);
+    const wanted = this.graphApi.parsePageId(pageId);
+    let page = pages.find(
+      (item) => item.id === pageId || item.id === wanted,
+    );
+    if (!page?.access_token) {
+      const resolved = await this.graphApi.resolvePage(
+        session.userAccessToken,
+        pageId,
+      );
+      if (resolved) page = resolved;
+    }
     if (!page) {
       throw new BadRequestException(
-        'Esta Página não está entre as que você autorizou no Facebook.',
+        'Esta Página não está entre as que você autorizou no Facebook. Conecte de novo e marque a Página na Meta, ou cole o ID numérico da Fan Page.',
       );
     }
     if (!page.access_token) {
@@ -303,7 +324,7 @@ export class MetaOAuthService {
       });
     }
 
-    this.pending.delete(this.pendingKey(tenantId, user.id));
+    await this.clearPending(tenantId, user.id);
     return this.status(user);
   }
 
@@ -319,19 +340,78 @@ export class MetaOAuthService {
       await this.graphApi.unsubscribePageApp(row.pageId, token);
     }
     await this.prisma.tenantMetaConnection.deleteMany({ where: { tenantId } });
-    this.pending.delete(this.pendingKey(tenantId, user.id));
+    await this.clearPending(tenantId, user.id);
     return { ok: true };
   }
 
-  private requirePending(tenantId: string, userId: string): PendingSession {
+  private async savePending(session: PendingSession) {
+    this.pending.set(this.pendingKey(session.tenantId, session.userId), session);
+    const key = metaTokenKey(this.config);
+    try {
+      await this.prisma.tenantMetaOAuthPending.upsert({
+        where: {
+          tenantId_userId: {
+            tenantId: session.tenantId,
+            userId: session.userId,
+          },
+        },
+        create: {
+          tenantId: session.tenantId,
+          userId: session.userId,
+          userAccessToken: encryptSecret(session.userAccessToken, key),
+          expiresAt: new Date(session.expiresAt),
+        },
+        update: {
+          userAccessToken: encryptSecret(session.userAccessToken, key),
+          expiresAt: new Date(session.expiresAt),
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Não gravou sessão Meta pendente no banco: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  private async clearPending(tenantId: string, userId: string) {
+    this.pending.delete(this.pendingKey(tenantId, userId));
+    await this.prisma.tenantMetaOAuthPending
+      .deleteMany({ where: { tenantId, userId } })
+      .catch(() => undefined);
+  }
+
+  private async requirePending(
+    tenantId: string,
+    userId: string,
+  ): Promise<PendingSession> {
     const key = this.pendingKey(tenantId, userId);
-    const session = this.pending.get(key);
-    if (!session || session.expiresAt < Date.now()) {
-      this.pending.delete(key);
+    const memory = this.pending.get(key);
+    if (memory && memory.expiresAt >= Date.now()) return memory;
+    this.pending.delete(key);
+
+    const row = await this.prisma.tenantMetaOAuthPending.findUnique({
+      where: { tenantId_userId: { tenantId, userId } },
+    });
+    if (!row || row.expiresAt.getTime() < Date.now()) {
+      if (row) {
+        await this.prisma.tenantMetaOAuthPending
+          .delete({ where: { id: row.id } })
+          .catch(() => undefined);
+      }
       throw new BadRequestException(
         'A autorização do Facebook expirou. Clique em Conectar Facebook de novo.',
       );
     }
+    const session: PendingSession = {
+      userAccessToken: decryptPageAccessToken(
+        row.userAccessToken,
+        metaTokenKey(this.config),
+      ),
+      tenantId,
+      userId,
+      expiresAt: row.expiresAt.getTime(),
+    };
+    this.pending.set(key, session);
     return session;
   }
 
