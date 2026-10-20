@@ -19,6 +19,14 @@ export class BootstrapTenantConnectionsService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    const tenants = await this.prisma.tenant.count();
+    if (tenants > 1) {
+      this.logger.log(
+        'Várias imobiliárias no CRM — conexões Meta/OZap do .env não são ligadas ao tenant padrão.',
+      );
+      return;
+    }
+
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: DEFAULT_TENANT_ID },
       select: { id: true },

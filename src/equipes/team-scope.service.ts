@@ -71,14 +71,15 @@ export class TeamScopeService {
   ): Promise<Prisma.LeadWhereInput> {
     const tenantId = requireTenantId(requester);
     const ids = await this.getVisibleCorretorIds(requester);
+    const channel = await this.channelIsolation(tenantId);
     if (ids === null) {
       if (requester.role === Role.analista) {
         return {
           tenantId,
-          AND: [whereNotRetrabalho],
+          AND: [whereNotRetrabalho, channel],
         };
       }
-      return { tenantId };
+      return { tenantId, AND: [channel] };
     }
 
     if (requester.role === Role.gerente) {
@@ -90,6 +91,7 @@ export class TeamScopeService {
         options?.includeAdminPool ?? this.gerenteSeesSharedLeads(requester);
       return {
         tenantId,
+        AND: [channel],
         OR: [
           { corretorId: { in: ids } },
           ...equipes.map((equipe) => ({
@@ -106,7 +108,60 @@ export class TeamScopeService {
 
     return {
       tenantId,
-      AND: [{ corretorId: { in: ids } }, whereNotRetrabalho],
+      AND: [{ corretorId: { in: ids } }, whereNotRetrabalho, channel],
+    };
+  }
+
+  /**
+   * Lead de Meta, WhatsApp ou OLX só aparece na imobiliária dona
+   * da página, da instância ou do imóvel. Cadastro manual não tem vínculo.
+   */
+  private async channelIsolation(tenantId: string): Promise<Prisma.LeadWhereInput> {
+    const [pages, instances, imoveis] = await Promise.all([
+      this.prisma.tenantMetaConnection.findMany({
+        where: { tenantId },
+        select: { pageId: true },
+      }),
+      this.prisma.tenantOzapConnection.findMany({
+        where: { tenantId },
+        select: { instanceId: true },
+      }),
+      this.prisma.imovel.findMany({
+        where: { tenantId },
+        select: { id: true },
+      }),
+    ]);
+    const pageIds = pages.map((page) => page.pageId);
+    const instanceIds = instances.map((row) => row.instanceId);
+    const imovelIds = imoveis.map((imovel) => imovel.id);
+    return {
+      AND: [
+        {
+          OR: [
+            { metaLink: { is: null } },
+            ...(pageIds.length > 0
+              ? [{ metaLink: { is: { pageId: { in: pageIds } } } }]
+              : []),
+          ],
+        },
+        {
+          OR: [
+            { ozapLink: { is: null } },
+            ...(instanceIds.length > 0
+              ? [{ ozapLink: { is: { instanceId: { in: instanceIds } } } }]
+              : []),
+          ],
+        },
+        {
+          OR: [
+            { grupoZapLink: { is: null } },
+            { grupoZapLink: { is: { imovelId: null } } },
+            ...(imovelIds.length > 0
+              ? [{ grupoZapLink: { is: { imovelId: { in: imovelIds } } } }]
+              : []),
+          ],
+        },
+      ],
     };
   }
 

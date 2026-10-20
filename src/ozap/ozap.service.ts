@@ -249,7 +249,10 @@ export class OzapService {
     let created = false;
     let lead = existingLink?.lead;
     if (lead && lead.tenantId !== tenantId) {
-      // Link aponta para lead de outro tenant — não reutiliza.
+      await tx.leadOzapLink.delete({ where: { id: existingLink!.id } });
+      this.logger.warn(
+        `Chat OZap ${chatId} desvinculado do lead ${lead.id}: pertence a outra imobiliária. Novo lead fica no tenant ${tenantId}.`,
+      );
       lead = undefined;
     }
     if (!lead) {

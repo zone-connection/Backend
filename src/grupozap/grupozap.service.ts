@@ -356,6 +356,29 @@ export class GrupoZapService {
     anuncianteId: string | undefined,
     lead: GrupoZapLead,
   ): Promise<string | null> {
+    // O imóvel manda: o lead entra na imobiliária dona do anúncio,
+    // mesmo que a URL do webhook seja de outro anunciante.
+    if (lead.clientListingId) {
+      const imovel = await this.prisma.imovel.findUnique({
+        where: { id: lead.clientListingId },
+        select: { tenantId: true },
+      });
+      if (imovel) {
+        if (anuncianteId) {
+          const connection = await this.prisma.tenantGrupoZapConnection.findUnique({
+            where: { anuncianteId },
+            select: { tenantId: true },
+          });
+          if (connection && connection.tenantId !== imovel.tenantId) {
+            this.logger.warn(
+              `Lead OLX ${lead.originLeadId} anunciante=${anuncianteId} tenant=${connection.tenantId} redirecionado para a imobiliária do imóvel ${imovel.tenantId}.`,
+            );
+          }
+        }
+        return imovel.tenantId;
+      }
+    }
+
     if (anuncianteId) {
       const connection = await this.prisma.tenantGrupoZapConnection.findUnique({
         where: { anuncianteId },
@@ -379,20 +402,6 @@ export class GrupoZapService {
           select: { ativo: true },
         });
         if (connection?.ativo) return match.id;
-      }
-    }
-
-    if (lead.clientListingId) {
-      const imovel = await this.prisma.imovel.findUnique({
-        where: { id: lead.clientListingId },
-        select: { tenantId: true },
-      });
-      if (imovel) {
-        const connection = await this.prisma.tenantGrupoZapConnection.findUnique({
-          where: { tenantId: imovel.tenantId },
-          select: { ativo: true },
-        });
-        if (connection?.ativo) return imovel.tenantId;
       }
     }
 
@@ -453,6 +462,13 @@ export class GrupoZapService {
         ? lead.mcmv.propertyValue
         : null;
 
+    const corretorDaImobiliaria = vendaUsado?.responsavelId
+      ? await this.prisma.user.findFirst({
+          where: { id: vendaUsado.responsavelId, tenantId },
+          select: { id: true },
+        })
+      : null;
+
     const created = await this.prisma.$transaction(async (tx) => {
       await tx.grupoZapWebhookDelivery.create({
         data: {
@@ -477,8 +493,8 @@ export class GrupoZapService {
           prioridade: lead.prioridade,
           orcamentoMax: orcamento,
           tags,
-          ...(vendaUsado?.responsavelId
-            ? { corretorId: vendaUsado.responsavelId }
+          ...(corretorDaImobiliaria
+            ? { corretorId: corretorDaImobiliaria.id }
             : {}),
         },
         select: { id: true, nome: true, telefone: true, origem: true, cidade: true },

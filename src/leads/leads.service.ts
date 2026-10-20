@@ -829,7 +829,8 @@ export class LeadsService {
     if (searchDigits.length >= 3) {
       const rows = await this.prisma.$queryRaw<{ id: string }[]>`
         SELECT id FROM leads
-        WHERE regexp_replace(telefone, '[^0-9]', '', 'g')
+        WHERE "tenantId" = ${requireTenantId(requester)}
+          AND regexp_replace(telefone, '[^0-9]', '', 'g')
           LIKE ${`%${searchDigits}%`}
       `;
       phoneMatchIds = rows.map((r) => r.id);
