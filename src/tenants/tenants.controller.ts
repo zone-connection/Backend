@@ -22,6 +22,7 @@ import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { CreateMetaConnectionDto } from './dto/create-meta-connection.dto';
 import { UpdateMetaConnectionDto } from './dto/update-meta-connection.dto';
 import { ResetUserPasswordDto } from '../users/dto/reset-user-password.dto';
+import { CreateOzapConnectionDto } from './dto/create-ozap-connection.dto';
 import { UpdateOzapConnectionDto } from './dto/update-ozap-connection.dto';
 import { UpdateTenantAdminDto } from './dto/update-tenant-admin.dto';
 import { PopulateDemoDataDto } from './dto/populate-demo-data.dto';
