@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, VendaUsadoStatus } from '@prisma/client';
+import { CaptacaoImovelTipo, Prisma, VendaUsadoStatus } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { CatalogService } from '../catalog/catalog.service';
 import { FunisService } from '../funis/funis.service';
@@ -405,6 +405,7 @@ export class GrupoZapService {
     body: unknown,
   ) {
     const origemLabel = lead.isMcmv ? 'MCMV OLX' : 'Grupo OLX';
+    const isEntradaUsados = !lead.isMcmv;
     const origemByLabel = await this.catalog.ensureOrigensForImport(tenantId, [
       origemLabel,
     ]);
@@ -414,12 +415,21 @@ export class GrupoZapService {
           where: { id: lead.clientListingId, tenantId },
           select: {
             id: true,
+            tipo: true,
             cidade: true,
             bairro: true,
-            vendaUsado: { select: { id: true } },
+            vendaUsado: { select: { id: true, responsavelId: true } },
           },
         })
       : null;
+    const vendaUsado =
+      imovel?.vendaUsado ??
+      (imovel
+        ? await this.prisma.vendaUsado.findFirst({
+            where: { tenantId, imovelId: imovel.id },
+            select: { id: true, responsavelId: true },
+          })
+        : null);
 
     const email = isValidEmail(lead.email)
       ? lead.email
@@ -427,7 +437,9 @@ export class GrupoZapService {
     const cidade = imovel?.cidade || lead.mcmv?.city || 'A definir';
     const bairro = imovel?.bairro || 'A definir';
     const tags = [
+      'OLX',
       'Grupo OLX',
+      ...(isEntradaUsados ? ['Usados'] : []),
       ...(lead.leadTypeLabel ? [lead.leadTypeLabel] : []),
       ...(lead.leadCerto ? ['LeadCerto'] : []),
       ...(lead.izi ? ['IZI'] : []),
@@ -465,6 +477,9 @@ export class GrupoZapService {
           prioridade: lead.prioridade,
           orcamentoMax: orcamento,
           tags,
+          ...(vendaUsado?.responsavelId
+            ? { corretorId: vendaUsado.responsavelId }
+            : {}),
         },
         select: { id: true, nome: true, telefone: true, origem: true, cidade: true },
       });
@@ -485,8 +500,13 @@ export class GrupoZapService {
         },
       });
 
-      if (imovel?.vendaUsado) {
-        await this.linkInteressado(tx, tenantId, imovel.vendaUsado.id, lead);
+      if (isEntradaUsados) {
+        await this.linkInteressado(tx, tenantId, vendaUsado?.id ?? null, lead, {
+          tipo: imovel?.tipo,
+          cidade,
+          bairro: imovel?.bairro,
+          precoMax: orcamento,
+        });
       }
 
       return created;
@@ -502,8 +522,14 @@ export class GrupoZapService {
   private async linkInteressado(
     tx: Prisma.TransactionClient,
     tenantId: string,
-    vendaUsadoId: string,
+    vendaUsadoId: string | null,
     lead: GrupoZapLead,
+    perfil?: {
+      tipo?: CaptacaoImovelTipo | null;
+      cidade?: string;
+      bairro?: string | null;
+      precoMax?: number | null;
+    },
   ) {
     const placeholder = lead.phone === '(00) 00000-0000';
     const email = isValidEmail(lead.email) ? lead.email : '';
@@ -519,6 +545,7 @@ export class GrupoZapService {
       : null;
 
     const note = lead.message.slice(0, 4000);
+    const cidade = (perfil?.cidade || lead.mcmv?.city || '').slice(0, 120);
     const interessadoId = existing
       ? existing.id
       : (
@@ -529,7 +556,10 @@ export class GrupoZapService {
               telefone: placeholder ? '' : lead.phone,
               email,
               observacoes: note,
-              cidade: lead.mcmv?.city ?? '',
+              cidade,
+              bairros: (perfil?.bairro ?? '').slice(0, 200),
+              tipoDesejado: perfil?.tipo ?? undefined,
+              precoMax: perfil?.precoMax ?? undefined,
             },
             select: { id: true },
           })
@@ -541,6 +571,8 @@ export class GrupoZapService {
         data: { observacoes: note },
       });
     }
+
+    if (!vendaUsadoId) return;
 
     await tx.vendaUsadoVinculo.upsert({
       where: {

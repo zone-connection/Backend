@@ -280,7 +280,13 @@ export class FunisService {
    */
   async comercialPlacement(tenantId: string) {
     const funil = await this.ensureTenantHasFunil(tenantId, FunilTipo.comercial);
-    return { funilId: funil.id, stage: this.firstStageSlug(funil) };
+    const novo = funil.etapas.find(
+      (etapa) => etapa.active && etapa.slug === DEFAULT_INITIAL_STAGE_SLUG,
+    );
+    return {
+      funilId: funil.id,
+      stage: novo?.slug ?? this.firstStageSlug(funil),
+    };
   }
 
   /**

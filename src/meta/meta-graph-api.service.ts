@@ -17,6 +17,7 @@ export type MetaLeadPayload = {
   created_time?: string;
   ad_id?: string;
   form_id?: string;
+  platform?: string;
   field_data?: MetaLeadField[];
 };
 
@@ -64,7 +65,7 @@ export class MetaGraphApiService {
     );
     url.searchParams.set(
       'fields',
-      'created_time,ad_id,form_id,field_data',
+      'created_time,ad_id,form_id,platform,field_data',
     );
     url.searchParams.set('access_token', pageAccessToken);
 
@@ -537,7 +538,7 @@ export class MetaGraphApiService {
   ): Promise<MetaLeadPayload[]> {
     const rows = await this.collectPages<MetaLeadPayload>(
       `${encodeURIComponent(formId)}/leads`,
-      'id,created_time,ad_id,form_id,field_data',
+      'id,created_time,ad_id,form_id,platform,field_data',
       pageAccessToken,
     );
     this.logger.log(

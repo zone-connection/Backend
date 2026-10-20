@@ -34,6 +34,29 @@ describe('extractLeadgenEvents', () => {
     assert.equal(result.events[0].pageId, '444444444444');
     assert.equal(result.events[0].leadgenId, '444444444444');
     assert.equal(result.events[0].pageIdSource, 'value');
+    assert.equal(result.events[0].platform, null);
+  });
+
+  it('lê platform do Instagram no webhook', () => {
+    const result = extractLeadgenEvents({
+      object: 'page',
+      entry: [
+        {
+          id: REAL_PAGE_ID,
+          changes: [
+            {
+              field: 'leadgen',
+              value: {
+                leadgen_id: 'ig-1',
+                page_id: REAL_PAGE_ID,
+                platform: 'ig',
+              },
+            },
+          ],
+        },
+      ],
+    });
+    assert.equal(result.events[0].platform, 'ig');
   });
 
   it('aceita campos extras de campanha real (campaign_id) sem descartar o evento', () => {

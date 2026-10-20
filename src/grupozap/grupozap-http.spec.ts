@@ -13,6 +13,7 @@ import { NestFactory } from '@nestjs/core';
 import { CatalogService } from '../catalog/catalog.service';
 import { FunisService } from '../funis/funis.service';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
+import { LeadFilaService } from '../leads/lead-fila.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { GrupoZapController } from './grupozap.controller';
 import {
@@ -38,6 +39,7 @@ const state = {
   },
   deliveries: new Set<string>(),
   leads: [] as { id: string; origem: string; tags: string[] }[],
+  interessados: [] as { id: string; nome: string }[],
   issues: [] as { imovelId: string; level: string; message: string }[],
 };
 
@@ -135,6 +137,21 @@ const prisma = {
   leadGrupoZapLink: {
     create: async () => ({ id: 'link' }),
   },
+  interessadoUsado: {
+    findFirst: async () => null,
+    create: async ({ data }: { data: { nome: string } }) => {
+      const row = { id: `int-${state.interessados.length + 1}`, nome: data.nome };
+      state.interessados.push(row);
+      return row;
+    },
+    update: async () => ({ id: 'int-1' }),
+  },
+  vendaUsado: {
+    findFirst: async () => null,
+  },
+  vendaUsadoVinculo: {
+    upsert: async () => ({ id: 'vinculo' }),
+  },
   $transaction: async (input: unknown) => {
     if (typeof input === 'function') {
       return (input as (tx: typeof prisma) => Promise<unknown>)(prisma);
@@ -179,6 +196,10 @@ const prisma = {
     {
       provide: LeadNotifyService,
       useValue: { notifyNewLead: async () => undefined },
+    },
+    {
+      provide: LeadFilaService,
+      useValue: { atribuirNovoLead: async () => undefined },
     },
   ],
 })
@@ -323,6 +344,9 @@ describe('HTTP Grupo OLX', () => {
     assert.equal(state.leads.length, 1);
     assert.equal(state.leads[0]?.origem, 'Grupo OLX');
     assert.ok(state.leads[0]?.tags.includes('Formulário'));
+    assert.ok(state.leads[0]?.tags.includes('OLX'));
+    assert.ok(state.leads[0]?.tags.includes('Usados'));
+    assert.equal(state.interessados.length, 1);
 
     const duplicate = await fetch(`${base}/api/grupozap/lead/${anuncianteId}`, {
       method: 'POST',

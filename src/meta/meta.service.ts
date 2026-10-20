@@ -27,6 +27,15 @@ type TenantMetaConn = {
   pageAccessToken: string;
 };
 
+function metaLeadCanal(
+  webhookPlatform?: string | null,
+  graphPlatform?: string | null,
+): 'Facebook' | 'Instagram' {
+  const raw = `${graphPlatform ?? ''} ${webhookPlatform ?? ''}`.toLowerCase();
+  if (raw.includes('ig') || raw.includes('instagram')) return 'Instagram';
+  return 'Facebook';
+}
+
 /** Ping da Lead Ads Testing Tool — não é a Página real nem um lead buscável. */
 const META_DUMMY_ID = '444444444444';
 
@@ -226,6 +235,7 @@ export class MetaService {
       formId: metaLead.form_id ?? formId,
       adId: metaLead.ad_id ?? null,
       adgroupId: null,
+      platform: metaLead.platform ?? null,
       pageIdSource: 'value',
     };
     const fields = metaLead.field_data ?? [];
@@ -441,8 +451,9 @@ export class MetaService {
       return { lead: reusable, created: false };
     }
 
+    const canal = metaLeadCanal(event.platform, metaLead.platform);
     const tags = [
-      'Facebook',
+      canal,
       'Lead Ads',
       ...mapped.extraTags,
       ...(event.formId ? [`Form: ${event.formId}`] : []),
@@ -456,13 +467,14 @@ export class MetaService {
       tenantId,
       mapped.empreendimentoNome,
     );
+    const origem = canal === 'Instagram' ? 'Instagram' : 'Facebook Ads';
     const lead = await this.prisma.lead.create({
       data: {
         tenantId,
         nome: mapped.nome,
         telefone: mapped.telefone ?? '(00) 00000-0000',
         email: mapped.email ?? `${event.leadgenId}@facebook.meta.local`,
-        origem: 'Facebook Ads',
+        origem,
         interesse: mapped.interesse ?? 'Comprar',
         cidade: mapped.cidade ?? 'A definir',
         bairro: mapped.bairro ?? 'A definir',
@@ -496,7 +508,7 @@ export class MetaService {
     await this.fila.atribuirNovoLead({
       tenantId,
       leadId: lead.id,
-      origem: 'Facebook Ads',
+      origem,
     });
     return { lead, created: true };
   }
