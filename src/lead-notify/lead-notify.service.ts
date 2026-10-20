@@ -40,6 +40,16 @@ export class LeadNotifyService {
     actorUserId?: string | null;
   }): Promise<void> {
     try {
+      const vinculado = await this.prisma.lead.findFirst({
+        where: { id: params.lead.id, tenantId: params.tenantId },
+        select: { id: true },
+      });
+      if (!vinculado) {
+        this.logger.warn(
+          `Notificação ignorada: lead ${params.lead.id} não está vinculado à imobiliária ${params.tenantId}.`,
+        );
+        return;
+      }
       if (
         params.lead.corretorId &&
         params.lead.corretorId !== params.actorUserId
@@ -272,6 +282,12 @@ export class LeadNotifyService {
     if (!connection) return false;
     const to = user?.whatsapp?.trim() || user?.phone?.trim() || '';
     if (!to) return false;
+    if (await this.phoneBelongsToAnotherTenant(params.tenantId, to)) {
+      this.logger.warn(
+        `WhatsApp ignorado user=${params.userId}: número pertence a outra imobiliária.`,
+      );
+      return false;
+    }
 
     try {
       await this.ozapApi.sendText({
@@ -338,6 +354,26 @@ export class LeadNotifyService {
       }),
     });
     this.logger.log(`E-mail de lead enviado user=${params.userId} to=${to}`);
+  }
+
+  /** Não manda aviso de lead no WhatsApp cadastrado em outra imobiliária. */
+  private async phoneBelongsToAnotherTenant(tenantId: string, phone: string) {
+    const digits = phone.replace(/\D/g, '');
+    const tail = digits.slice(-11);
+    if (tail.length < 10) return false;
+
+    const tenants = await this.prisma.tenant.findMany({
+      where: { id: { not: tenantId }, telefone: { not: '' } },
+      select: { telefone: true },
+    });
+
+    return tenants.some((tenant) => {
+      const other = tenant.telefone.replace(/\D/g, '').slice(-11);
+      return (
+        other.length >= 10 &&
+        (other === tail || other.endsWith(tail) || tail.endsWith(other))
+      );
+    });
   }
 
   private crmUrl(leadId?: string | null): string | null {
