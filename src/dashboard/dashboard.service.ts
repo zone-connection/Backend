@@ -415,6 +415,8 @@ export class DashboardService {
       windows;
     const origem = filtros.origem?.trim() || undefined;
     const operacao = filtros.operacao;
+    const documentoOrigem =
+      operacao === 'lancamento' || operacao === 'usado' ? operacao : undefined;
     const origemWhere = origem ? { origem } : {};
     const diasParado = DIAS_PARADO_DEFAULT;
     const paradoAntes = new Date(
@@ -459,7 +461,7 @@ export class DashboardService {
     });
     const docEscopoWhere = {
       tenantId,
-      ...(operacao ? { origem: operacao } : {}),
+      ...(documentoOrigem ? { origem: documentoOrigem } : {}),
       ...documentacaoOperacionalWhere(),
       ...(corretorIds
         ? documentacaoVinculadaAoCorretorWhere(corretorIds)
@@ -703,13 +705,13 @@ export class DashboardService {
         papel: comissaoPapel,
         userId: requester.id,
         corretorIds,
-        ...(operacao ? { documentoOrigem: operacao } : {}),
+        ...(documentoOrigem ? { documentoOrigem } : {}),
       }),
       this.aggregateComissaoMes(tenantId, mesAnterior, {
         papel: comissaoPapel,
         userId: requester.id,
         corretorIds,
-        ...(operacao ? { documentoOrigem: operacao } : {}),
+        ...(documentoOrigem ? { documentoOrigem } : {}),
       }),
     ]);
 
@@ -739,7 +741,7 @@ export class DashboardService {
       mesAtual,
       mesAnterior,
       origem,
-      operacao,
+      documentoOrigem,
     );
     const distribuicaoEquipes = await this.buildDistribuicaoEquipes(
       tenantId,
