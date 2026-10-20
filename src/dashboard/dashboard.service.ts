@@ -846,6 +846,9 @@ export class DashboardService {
       },
     );
 
+    const vistaUsados = operacao === 'usado';
+    const zeroMetrica = metric(0, 0);
+
     return {
       usados,
       periodo: {
@@ -858,26 +861,30 @@ export class DashboardService {
           fim: mesAnterior.fim.toISOString(),
         },
       },
-      entradas: {
-        hoje: mostrarSnapshotAtual ? entradasHoje : 0,
-        semana: mostrarSnapshotAtual ? entradasSemana : 0,
-        mes: metric(entradasMes, entradasMesAnt),
-      },
-      funil: mostrarSnapshotAtual
-        ? funil.map((item) => ({
-            etapa: item.stage,
-            total: item._count._all,
-          }))
-        : funil.map((item) => ({
-            etapa: item.stage,
-            total: 0,
-          })),
+      entradas: vistaUsados
+        ? { hoje: 0, semana: 0, mes: zeroMetrica }
+        : {
+            hoje: mostrarSnapshotAtual ? entradasHoje : 0,
+            semana: mostrarSnapshotAtual ? entradasSemana : 0,
+            mes: metric(entradasMes, entradasMesAnt),
+          },
+      funil: vistaUsados
+        ? funil.map((item) => ({ etapa: item.stage, total: 0 }))
+        : mostrarSnapshotAtual
+          ? funil.map((item) => ({
+              etapa: item.stage,
+              total: item._count._all,
+            }))
+          : funil.map((item) => ({
+              etapa: item.stage,
+              total: 0,
+            })),
       /**
        * Conversão = vendas do mês ÷ documentações criadas no mês.
        * Ex.: 60 fichas de documentação e 3 vendas → 5%.
        */
       conversao: {
-        entradas: metric(entradasMes, entradasMesAnt),
+        entradas: vistaUsados ? zeroMetrica : metric(entradasMes, entradasMesAnt),
         documentacoes: metric(docsMes, docsMesAnt),
         aprovacoes: metric(aprovacoesMes, aprovacoesMesAnt),
         vendas: metric(vendasMesTotal, vendasMesAntTotal),
@@ -915,11 +922,13 @@ export class DashboardService {
         papel: comissaoPapel,
       },
       atencao: {
-        semDono: mostrarSnapshotAtual ? semDono : 0,
-        parados: mostrarSnapshotAtual ? parados : 0,
+        semDono: vistaUsados || !mostrarSnapshotAtual ? 0 : semDono,
+        parados: vistaUsados || !mostrarSnapshotAtual ? 0 : parados,
         diasParado,
       },
-      perdidos: {
+      perdidos: vistaUsados
+        ? { mes: zeroMetrica, motivos: [] }
+        : {
         mes: metric(perdidosMes, perdidosMesAnt),
         motivos: perdidosMotivos.map((item) => {
           const motivo = item.motivoPerda ?? 'Sem motivo';
@@ -929,7 +938,15 @@ export class DashboardService {
           };
         }),
       },
-      agenda: mostrarSnapshotAtual
+      agenda: vistaUsados
+        ? {
+            totalHoje: 0,
+            pendentesHoje: 0,
+            concluidosHoje: 0,
+            atrasados: 0,
+            itens: [],
+          }
+        : mostrarSnapshotAtual
         ? {
             totalHoje: agendaHoje.length,
             pendentesHoje: agendaHoje.filter(
@@ -955,9 +972,24 @@ export class DashboardService {
             atrasados: 0,
             itens: [],
           },
-      ranking: rankingResposta,
-      equipes: equipesResposta,
-      metas: mostrarSnapshotAtual
+      ranking: vistaUsados
+        ? rankingResposta.map((row) => ({ ...row, leads: 0, visitas: 0 }))
+        : rankingResposta,
+      equipes: vistaUsados
+        ? equipesResposta.map((eq) => ({
+            ...eq,
+            leads: 0,
+            clientes: 0,
+            total: 0,
+          }))
+        : equipesResposta,
+      metas: vistaUsados
+        ? {
+            corretores: [],
+            equipes: [],
+            imobiliaria: { meta: 0, atual: 0, percentual: 0 },
+          }
+        : mostrarSnapshotAtual
         ? metas
         : {
             corretores: [],
