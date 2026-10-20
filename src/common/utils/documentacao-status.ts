@@ -3,26 +3,25 @@ import { Prisma } from '@prisma/client';
 /** Fichas sintéticas criadas ao lançar comissão de cliente fora do CRM. */
 export const DOCUMENTACAO_FONTE_COMISSAO = 'Comissão';
 
+const FONTES_SO_COMISSAO = ['Comissão', 'Comissao'];
+
+function textoDeComissao(campo: 'fonte' | 'origem') {
+  return FONTES_SO_COMISSAO.map((valor) =>
+    campo === 'fonte'
+      ? { fonte: { equals: valor, mode: 'insensitive' as const } }
+      : {
+          lead: {
+            origem: { equals: valor, mode: 'insensitive' as const },
+          },
+        },
+  );
+}
+
 /** Lista operacional: esconde documentação gerada só para comissão. */
 export function documentacaoOperacionalWhere(): Prisma.DocumentacaoWhereInput {
   return {
     NOT: {
-      OR: [
-        {
-          fonte: {
-            equals: DOCUMENTACAO_FONTE_COMISSAO,
-            mode: 'insensitive',
-          },
-        },
-        {
-          lead: {
-            origem: {
-              equals: DOCUMENTACAO_FONTE_COMISSAO,
-              mode: 'insensitive',
-            },
-          },
-        },
-      ],
+      OR: [...textoDeComissao('fonte'), ...textoDeComissao('origem')],
     },
   };
 }

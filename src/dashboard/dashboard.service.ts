@@ -1231,7 +1231,12 @@ export class DashboardService {
       status: { not: FinanceiroComissaoStatus.rascunho },
       dataVenda: { gte: periodo.inicio, lt: periodo.fim },
       ...(opts.documentoOrigem
-        ? { documentacao: { origem: opts.documentoOrigem } }
+        ? {
+            documentacao: {
+              origem: opts.documentoOrigem,
+              AND: [documentacaoOperacionalWhere()],
+            },
+          }
         : {}),
     };
 
@@ -1251,6 +1256,13 @@ export class DashboardService {
       select: {
         status: true,
         vgv: true,
+        documentacaoId: true,
+        documentacao: {
+          select: {
+            fonte: true,
+            lead: { select: { origem: true } },
+          },
+        },
         valorCorretor: true,
         valorGerente: true,
         comissaoLiquida: true,
@@ -1269,8 +1281,20 @@ export class DashboardService {
     for (const row of rows) {
       const valor = valueOf(row);
       resumo.total += valor;
-      resumo.vgv += moneyNumber(row.vgv);
-      resumo.vendas += 1;
+      // Comissão avulsa não é venda registrada: não entra em VGV nem em vendas.
+      const marcador = (value?: string | null) =>
+        (value ?? '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/[^a-z]/g, '') === 'comissao';
+      const fichaDeComissao =
+        marcador(row.documentacao?.fonte) ||
+        marcador(row.documentacao?.lead?.origem);
+      if (row.documentacaoId && !fichaDeComissao) {
+        resumo.vgv += moneyNumber(row.vgv);
+        resumo.vendas += 1;
+      }
       if (row.status === FinanceiroComissaoStatus.pendente) {
         resumo.pendente += valor;
       } else if (row.status === FinanceiroComissaoStatus.liberada) {
@@ -1416,6 +1440,7 @@ export class DashboardService {
         tenantId,
         gerenteId: { not: null },
         AND: [
+          documentacaoOperacionalWhere(),
           status2VendidoWhere(),
           documentacaoVendaNoPeriodoWhere(periodo),
           ...(origem ? [{ lead: { origem } }] : []),
