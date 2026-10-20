@@ -57,6 +57,11 @@ export class QueryDashboardDto {
   @IsString()
   origem?: string;
 
+  /** Recorte das fichas de documentação: lançamento ou usado. */
+  @IsOptional()
+  @IsIn(['lancamento', 'usado'])
+  operacao?: 'lancamento' | 'usado';
+
   /** Recorte rápido do ranking (hoje, semana, mês…). */
   @IsOptional()
   @IsIn(RANKING_FAIXAS)

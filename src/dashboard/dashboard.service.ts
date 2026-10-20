@@ -395,6 +395,7 @@ export class DashboardService {
       mes?: number;
       ano?: number;
       origem?: string;
+      operacao?: 'lancamento' | 'usado';
       granularidade?: PeriodoGranularidade;
     } = {},
   ) {
@@ -412,6 +413,7 @@ export class DashboardService {
     const { mesAtual, mesAnterior, inicioHoje, inicioAmanha, inicioSemana } =
       windows;
     const origem = filtros.origem?.trim() || undefined;
+    const operacao = filtros.operacao;
     const origemWhere = origem ? { origem } : {};
     const diasParado = DIAS_PARADO_DEFAULT;
     const paradoAntes = new Date(
@@ -456,6 +458,7 @@ export class DashboardService {
     });
     const docEscopoWhere = {
       tenantId,
+      ...(operacao ? { origem: operacao } : {}),
       ...documentacaoOperacionalWhere(),
       ...(corretorIds
         ? documentacaoVinculadaAoCorretorWhere(corretorIds)
@@ -699,11 +702,13 @@ export class DashboardService {
         papel: comissaoPapel,
         userId: requester.id,
         corretorIds,
+        ...(operacao ? { documentoOrigem: operacao } : {}),
       }),
       this.aggregateComissaoMes(tenantId, mesAnterior, {
         papel: comissaoPapel,
         userId: requester.id,
         corretorIds,
+        ...(operacao ? { documentoOrigem: operacao } : {}),
       }),
     ]);
 
@@ -733,6 +738,7 @@ export class DashboardService {
       mesAtual,
       mesAnterior,
       origem,
+      operacao,
     );
     const distribuicaoEquipes = await this.buildDistribuicaoEquipes(
       tenantId,
@@ -1138,13 +1144,14 @@ export class DashboardService {
     tenantId: string,
     corretorIds: string[],
     periodo: Periodo,
-    opts?: { origem?: string },
+    opts?: { origem?: string; documentoOrigem?: 'lancamento' | 'usado' },
   ): Promise<{ vendas: Map<string, number>; vgv: Map<string, number> }> {
     const vendas = new Map<string, number>();
     const vgv = new Map<string, number>();
     if (corretorIds.length === 0) return { vendas, vgv };
 
     const origem = opts?.origem?.trim() || undefined;
+    const documentoOrigem = opts?.documentoOrigem;
     const countedLeads = new Set<string>();
 
     const markSale = (
@@ -1169,6 +1176,7 @@ export class DashboardService {
     const docs = await this.prisma.documentacao.findMany({
       where: {
         tenantId,
+        ...(documentoOrigem ? { origem: documentoOrigem } : {}),
         AND: [
           documentacaoOperacionalWhere(),
           documentacaoVinculadaAoCorretorWhere(corretorIds),
@@ -1560,6 +1568,7 @@ export class DashboardService {
     mesAtual: Periodo,
     mesAnterior: Periodo,
     origem?: string,
+    documentoOrigem?: 'lancamento' | 'usado',
   ) {
     if (corretores.length === 0) return [];
     const ids = corretores.map((c) => c.id);
@@ -1591,9 +1600,11 @@ export class DashboardService {
         }),
         this.aggregateVendasPorCorretor(tenantId, ids, mesAtual, {
           origem,
+          documentoOrigem,
         }),
         this.aggregateVendasPorCorretor(tenantId, ids, mesAnterior, {
           origem,
+          documentoOrigem,
         }),
       ]);
 
