@@ -12,6 +12,7 @@ import {
   ContatoTipo,
   FinanceiroComissaoStatus,
   FunilEtapaPapel,
+  FunilTipo,
   MetaEscopo,
   MetaPeriodo,
   MetaTipo,
@@ -395,7 +396,7 @@ export class DashboardService {
       mes?: number;
       ano?: number;
       origem?: string;
-      operacao?: 'lancamento' | 'usado';
+      operacao?: 'lancamento' | 'usado' | 'captacao';
       granularidade?: PeriodoGranularidade;
     } = {},
   ) {
@@ -848,9 +849,19 @@ export class DashboardService {
 
     const vistaUsados = operacao === 'usado';
     const zeroMetrica = metric(0, 0);
+    const captacao =
+      operacao === 'captacao'
+        ? await this.resumoCaptacoes(
+            tenantId,
+            mesAtual,
+            mesAnterior,
+            corretorIds,
+          )
+        : null;
 
     return {
       usados,
+      captacao,
       periodo: {
         mesAtual: {
           inicio: mesAtual.inicio.toISOString(),
@@ -996,6 +1007,118 @@ export class DashboardService {
             equipes: [],
             imobiliaria: { meta: 0, atual: 0, percentual: 0 },
           },
+    };
+  }
+
+  /** Captações do período, no mesmo recorte da visão geral de captação. */
+  private async resumoCaptacoes(
+    tenantId: string,
+    mesAtual: Periodo,
+    mesAnterior: Periodo,
+    corretorIds?: string[] | null,
+  ) {
+    const escopo = {
+      tenantId,
+      ...(corretorIds ? { responsavelId: { in: corretorIds } } : {}),
+    };
+    const aberta = {
+      OR: [
+        { funilEtapa: { papel: null } },
+        { funilEtapa: { papel: { not: FunilEtapaPapel.perdido } } },
+      ],
+    };
+    const paradoAntes = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const [novas, novasAnt, porEtapa, proprietarios, paradas, exclusividade, portal, funil] =
+      await Promise.all([
+        this.prisma.captacao.count({
+          where: {
+            ...escopo,
+            createdAt: { gte: mesAtual.inicio, lt: mesAtual.fim },
+          },
+        }),
+        this.prisma.captacao.count({
+          where: {
+            ...escopo,
+            createdAt: { gte: mesAnterior.inicio, lt: mesAnterior.fim },
+          },
+        }),
+        this.prisma.captacao.groupBy({
+          by: ['funilEtapaId'],
+          where: escopo,
+          _count: { _all: true },
+        }),
+        this.prisma.proprietario.count({ where: { tenantId } }),
+        this.prisma.captacao.count({
+          where: { ...escopo, ...aberta, lastMovementAt: { lt: paradoAntes } },
+        }),
+        this.prisma.captacao.count({
+          where: { ...escopo, ...aberta, exclusividade: true },
+        }),
+        this.prisma.captacao.count({
+          where: {
+            ...escopo,
+            AND: [
+              aberta,
+              {
+                OR: [
+                  { sugestaoProprietario: true },
+                  { canceladoPeloProprietario: true },
+                ],
+              },
+            ],
+          },
+        }),
+        this.prisma.funil.findFirst({
+          where: { tenantId, tipo: FunilTipo.captacao, ativo: true },
+          include: {
+            etapas: {
+              where: { active: true },
+              orderBy: { sortOrder: 'asc' },
+            },
+          },
+        }),
+      ]);
+
+    const etapaIds = porEtapa.map((row) => row.funilEtapaId);
+    const etapas = await this.prisma.funilEtapa.findMany({
+      where: { id: { in: etapaIds } },
+      select: { id: true, label: true, papel: true, color: true, sortOrder: true },
+    });
+    const etapaMap = new Map(etapas.map((etapa) => [etapa.id, etapa]));
+    let ativas = 0;
+    let captados = 0;
+    for (const row of porEtapa) {
+      const etapa = etapaMap.get(row.funilEtapaId);
+      if (etapa?.papel === FunilEtapaPapel.perdido) continue;
+      if (
+        etapa?.papel === FunilEtapaPapel.captado ||
+        etapa?.papel === FunilEtapaPapel.venda
+      ) {
+        captados += row._count._all;
+      } else {
+        ativas += row._count._all;
+      }
+    }
+    const etapasFunil = funil?.etapas ?? [];
+    const barras = (etapasFunil.length ? etapasFunil : etapas)
+      .filter((etapa) => etapa.papel !== FunilEtapaPapel.perdido)
+      .map((etapa) => ({
+        etapa: etapa.label,
+        total:
+          porEtapa.find((row) => row.funilEtapaId === etapa.id)?._count._all ??
+          0,
+        color: etapa.color ?? null,
+      }));
+
+    return {
+      novas: metric(novas, novasAnt),
+      ativas,
+      captados,
+      proprietarios,
+      paradas,
+      exclusividade,
+      portal,
+      funil: barras,
     };
   }
 
