@@ -183,6 +183,79 @@ export class MediaService {
     }
   }
 
+  /** Arquivo, foto ou vídeo de treinamento. */
+  async uploadAsset(params: {
+    buffer: Buffer;
+    mimetype: string;
+    filename: string;
+    folder: string;
+  }): Promise<UploadedMedia> {
+    this.ensureConfigured();
+    const name = (params.filename || '').toLowerCase();
+    const mime = (params.mimetype || '').toLowerCase();
+    const video =
+      mime.startsWith('video/') || /\.(mp4|webm|mov|m4v)$/.test(name);
+    const image =
+      mime.startsWith('image/') || /\.(jpe?g|png|webp|gif)$/.test(name);
+    const document =
+      /\.(pdf|docx?|xlsx?|pptx?|txt|zip)$/.test(name) ||
+      mime === 'application/pdf' ||
+      mime.includes('officedocument') ||
+      mime === 'text/plain' ||
+      mime === 'application/zip';
+    if (!video && !image && !document) {
+      throw new BadRequestException(
+        'Envie uma foto (JPG, PNG, WEBP, GIF), um vídeo (MP4, WEBM, MOV) ou um arquivo (PDF, Word, Excel, PowerPoint, TXT ou ZIP).',
+      );
+    }
+    const max = video ? 40 * 1024 * 1024 : 15 * 1024 * 1024;
+    if (params.buffer.length > max) {
+      throw new BadRequestException(
+        video
+          ? 'O vídeo deve ter no máximo 40 MB.'
+          : 'O arquivo deve ter no máximo 15 MB.',
+      );
+    }
+    try {
+      const result = await new Promise<UploadApiResponse>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: params.folder,
+            resource_type: video ? 'video' : image ? 'image' : 'raw',
+            unique_filename: true,
+            filename_override: params.filename,
+            use_filename: true,
+          },
+          (error, uploaded) => {
+            if (error || !uploaded) {
+              reject(error ?? new Error('Falha no upload do arquivo.'));
+              return;
+            }
+            resolve(uploaded);
+          },
+        );
+        stream.end(params.buffer);
+      });
+      const url = result.secure_url?.trim();
+      const publicId = result.public_id?.trim();
+      if (!url || !publicId) {
+        throw new ServiceUnavailableException(
+          'O Cloudinary não retornou a URL do arquivo.',
+        );
+      }
+      return { url, publicId };
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      if (error instanceof BadRequestException) throw error;
+      this.logger.error(
+        `Falha no upload Cloudinary (asset): ${this.errorMessage(error)}`,
+      );
+      throw new ServiceUnavailableException(
+        this.cloudinaryFailureMessage(error),
+      );
+    }
+  }
+
   async destroyRaw(publicId: string | null | undefined): Promise<void> {
     const id = publicId?.trim();
     if (!id) return;

@@ -8,6 +8,7 @@ import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import { MediaService } from '../media/media.service';
 import { CreateTreinamentoSecaoDto } from './dto/create-secao.dto';
 import { UpdateTreinamentoSecaoDto } from './dto/update-secao.dto';
 import { CreateTreinamentoLinkDto } from './dto/create-link.dto';
@@ -59,7 +60,10 @@ export type TreinamentoSecaoNode = {
 
 @Injectable()
 export class TreinamentoService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly media: MediaService,
+  ) {}
 
   async tree(requester: AuthenticatedUser): Promise<TreinamentoSecaoNode[]> {
     const tenantId = requireTenantId(requester);
@@ -156,6 +160,45 @@ export class TreinamentoService {
         secaoId: dto.secaoId,
         titulo: dto.titulo.trim(),
         url: dto.url.trim(),
+        sortOrder: (last?.sortOrder ?? -1) + 1,
+      },
+      select: linkSelect,
+    });
+  }
+
+  async uploadLink(
+    file: Express.Multer.File | undefined,
+    secaoId: string,
+    titulo: string | undefined,
+    requester: AuthenticatedUser,
+  ) {
+    this.assertCanManage(requester);
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Selecione um arquivo.');
+    }
+    const tenantId = requireTenantId(requester);
+    await this.requireSecao(secaoId, tenantId);
+    const uploaded = await this.media.uploadAsset({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      filename: file.originalname,
+      folder: `crm/${tenantId}/treinamento`,
+    });
+    const nome =
+      titulo?.trim() ||
+      file.originalname.replace(/\.[^.]+$/, '').trim() ||
+      'Arquivo';
+    const last = await this.prisma.treinamentoLink.findFirst({
+      where: { tenantId, secaoId },
+      orderBy: { sortOrder: 'desc' },
+      select: { sortOrder: true },
+    });
+    return this.prisma.treinamentoLink.create({
+      data: {
+        tenantId,
+        secaoId,
+        titulo: nome.slice(0, 160),
+        url: uploaded.url,
         sortOrder: (last?.sortOrder ?? -1) + 1,
       },
       select: linkSelect,
