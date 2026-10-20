@@ -1654,6 +1654,7 @@ export class FinanceiroService {
             equipe: corretor?.equipe?.name ?? "",
             gerenteId: row.gerente?.id ?? corretor?.equipe?.gerenteId ?? null,
             gerente: row.gerente?.name ?? corretor?.equipe?.gerente.name ?? "",
+            origem: row.origem === "usado" ? "usado" : "lancamento",
           };
         })
         // createComissao exige corretor — não oferece venda sem dono.

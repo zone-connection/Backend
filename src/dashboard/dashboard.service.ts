@@ -829,7 +829,19 @@ export class DashboardService {
           total: 0,
         }));
 
+    const usados = await this.resumoVendasUsados(
+      tenantId,
+      mesAtual,
+      mesAnterior,
+      {
+        papel: comissaoPapel,
+        userId: requester.id,
+        corretorIds,
+      },
+    );
+
     return {
+      usados,
       periodo: {
         mesAtual: {
           inicio: mesAtual.inicio.toISOString(),
@@ -949,6 +961,94 @@ export class DashboardService {
     };
   }
 
+  /** VGV, ranking e comissão das fichas de documentação marcadas como usado. */
+  private async resumoVendasUsados(
+    tenantId: string,
+    mesAtual: Periodo,
+    mesAnterior: Periodo,
+    comissaoOpts: {
+      papel: 'corretor' | 'gerente' | 'admin';
+      userId: string;
+      corretorIds?: string[] | null;
+    },
+  ) {
+    const wherePeriodo = (periodo: Periodo): Prisma.DocumentacaoWhereInput => ({
+      tenantId,
+      origem: 'usado',
+      AND: [
+        documentacaoOperacionalWhere(),
+        documentacaoVendaNoPeriodoWhere(periodo),
+        { OR: [status2VendidoWhere(), { vgv: { gt: 0 } }] },
+        ...(comissaoOpts.corretorIds
+          ? [documentacaoVinculadaAoCorretorWhere(comissaoOpts.corretorIds)]
+          : []),
+      ],
+    });
+    const select = {
+      id: true,
+      status2: true,
+      vgv: true,
+      corretorId: true,
+      corretor: {
+        select: { id: true, name: true, equipe: { select: { name: true } } },
+      },
+    } as const;
+    const [docsMes, docsAnt, comissaoMes, comissaoAnt] = await Promise.all([
+      this.prisma.documentacao.findMany({
+        where: wherePeriodo(mesAtual),
+        select,
+      }),
+      this.prisma.documentacao.findMany({
+        where: wherePeriodo(mesAnterior),
+        select,
+      }),
+      this.aggregateComissaoMes(tenantId, mesAtual, {
+        ...comissaoOpts,
+        documentoOrigem: 'usado',
+      }),
+      this.aggregateComissaoMes(tenantId, mesAnterior, {
+        ...comissaoOpts,
+        documentoOrigem: 'usado',
+      }),
+    ]);
+    const vendidos = (docs: typeof docsMes) =>
+      docs.filter((doc) => isStatusVendido(doc.status2) || (doc.vgv ?? 0) > 0);
+    const vgvDe = (docs: typeof docsMes) =>
+      vendidos(docs).reduce((acc, doc) => acc + (doc.vgv ?? 0), 0);
+    const vendasDe = (docs: typeof docsMes) =>
+      docs.filter((doc) => isStatusVendido(doc.status2)).length;
+    const porCorretor = new Map<
+      string,
+      { nome: string; equipe: string | null; vendas: number; vgv: number }
+    >();
+    for (const doc of vendidos(docsMes)) {
+      if (!doc.corretorId || !doc.corretor) continue;
+      const atual = porCorretor.get(doc.corretorId) ?? {
+        nome: doc.corretor.name,
+        equipe: doc.corretor.equipe?.name ?? null,
+        vendas: 0,
+        vgv: 0,
+      };
+      if (isStatusVendido(doc.status2)) atual.vendas += 1;
+      atual.vgv += doc.vgv ?? 0;
+      porCorretor.set(doc.corretorId, atual);
+    }
+    const ranking = [...porCorretor.entries()]
+      .map(([corretorId, row]) => ({ corretorId, ...row }))
+      .sort((a, b) => b.vgv - a.vgv || a.nome.localeCompare(b.nome, 'pt-BR'));
+    return {
+      vendas: metric(vendasDe(docsMes), vendasDe(docsAnt)),
+      vgv: metric(vgvDe(docsMes), vgvDe(docsAnt)),
+      ranking,
+      comissao: {
+        total: metric(comissaoMes.total, comissaoAnt.total),
+        aReceber: metric(comissaoMes.aReceber, comissaoAnt.aReceber),
+        pendente: metric(comissaoMes.pendente, comissaoAnt.pendente),
+        papel: comissaoOpts.papel,
+      },
+    };
+  }
+
   /**
    * Soma as comissões lançadas com dataVenda no período.
    * Corretor → valorCorretor; gerente → valorGerente; admin → comissão líquida.
@@ -960,12 +1060,16 @@ export class DashboardService {
       papel: 'corretor' | 'gerente' | 'admin';
       userId: string;
       corretorIds?: string[] | null;
+      documentoOrigem?: 'lancamento' | 'usado';
     },
   ): Promise<ComissaoResumo> {
     const where: Prisma.FinanceiroComissaoWhereInput = {
       tenantId,
       status: { not: FinanceiroComissaoStatus.rascunho },
       dataVenda: { gte: periodo.inicio, lt: periodo.fim },
+      ...(opts.documentoOrigem
+        ? { documentacao: { origem: opts.documentoOrigem } }
+        : {}),
     };
 
     if (opts.papel === 'corretor') {
