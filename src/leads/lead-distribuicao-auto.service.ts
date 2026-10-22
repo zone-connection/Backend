@@ -118,7 +118,8 @@ export class LeadDistribuicaoAutoService
       ),
     );
     const online = corretores.filter((c) => onlineIds.has(c.id));
-    if (online.length === 0) return 0;
+    // Um único corretor online não esvazia o pool: a quantidade continua manual.
+    if (online.length < 2) return 0;
 
     const pool = await this.prisma.lead.findMany({
       where: {

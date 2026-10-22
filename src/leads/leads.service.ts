@@ -670,28 +670,43 @@ export class LeadsService {
           const slice = leads.slice(offset, offset + aloc.quantidade);
           offset += aloc.quantidade;
           const corretor = byId.get(aloc.corretorId)!;
-          const retrabalhoIds = slice
-            .filter((l) => isOrigemRetrabalho(l.origemAtrasoLiberacao))
-            .map((l) => l.id);
-          const outrosIds = slice
-            .filter((l) => !isOrigemRetrabalho(l.origemAtrasoLiberacao))
-            .map((l) => l.id);
+          const ids = slice.map((lead) => lead.id);
+          if (ids.length !== aloc.quantidade) {
+            throw new BadRequestException(
+              'A quantidade distribuída não confere com o pedido.',
+            );
+          }
           const owner = {
             corretorId: corretor.id,
             equipeId: corretor.equipeId,
           };
+          const limite = {
+            tenantId,
+            id: { in: ids },
+            perdidoAt: null,
+            ...(selecionados.length === 0 ? { corretorId: null as null } : {}),
+          };
+          const retrabalhoIds = slice
+            .filter((lead) => isOrigemRetrabalho(lead.origemAtrasoLiberacao))
+            .map((lead) => lead.id);
+          const outrosIds = ids.filter((id) => !retrabalhoIds.includes(id));
+          let updated = 0;
           if (retrabalhoIds.length > 0) {
-            await tx.lead.updateMany({
-              where: { id: { in: retrabalhoIds } },
+            const result = await tx.lead.updateMany({
+              where: { ...limite, id: { in: retrabalhoIds } },
               data: {
                 ...owner,
-                ...dadosAposRedistribuir({ retrabalho: true, resetPrazo: true }),
+                ...dadosAposRedistribuir({
+                  retrabalho: true,
+                  resetPrazo: true,
+                }),
               },
             });
+            updated += result.count;
           }
           if (outrosIds.length > 0) {
-            await tx.lead.updateMany({
-              where: { id: { in: outrosIds } },
+            const result = await tx.lead.updateMany({
+              where: { ...limite, id: { in: outrosIds } },
               data: {
                 ...owner,
                 ...dadosAposRedistribuir({
@@ -700,6 +715,12 @@ export class LeadsService {
                 }),
               },
             });
+            updated += result.count;
+          }
+          if (updated !== ids.length) {
+            throw new BadRequestException(
+              'A distribuição passou do número pedido. Nada foi gravado.',
+            );
           }
           resultado.push({
             corretorId: corretor.id,
@@ -758,24 +779,20 @@ export class LeadsService {
       retrabalho: boolean;
     }> = [];
 
-    let leadIdx = 0;
-    let corretorIdx = 0;
-    while (leadIdx < leads.length) {
-      const corretor = corretores[corretorIdx % corretores.length]!;
-      const take = Math.min(porCorretor, leads.length - leadIdx);
-      for (let i = 0; i < take; i++) {
-        const lead = leads[leadIdx++]!;
-        assignments.push({
-          leadId: lead.id,
-          corretorId: corretor.id,
-          equipeId: corretor.equipeId,
-          retrabalho: isOrigemRetrabalho(lead.origemAtrasoLiberacao),
-        });
-        counts.set(corretor.id, (counts.get(corretor.id) ?? 0) + 1);
-        if (!firstLead.has(corretor.id)) firstLead.set(corretor.id, lead.id);
-      }
-      corretorIdx += 1;
-    }
+    // Uma rodada só: cada corretor recebe no máximo `porCorretor`.
+    // O restante do pool fica sem dono para a próxima distribuição.
+    const lote = leads.slice(0, porCorretor * corretores.length);
+    lote.forEach((lead, index) => {
+      const corretor = corretores[index % corretores.length]!;
+      assignments.push({
+        leadId: lead.id,
+        corretorId: corretor.id,
+        equipeId: corretor.equipeId,
+        retrabalho: isOrigemRetrabalho(lead.origemAtrasoLiberacao),
+      });
+      counts.set(corretor.id, (counts.get(corretor.id) ?? 0) + 1);
+      if (!firstLead.has(corretor.id)) firstLead.set(corretor.id, lead.id);
+    });
 
     await this.prisma.$transaction(
       assignments.map((a) =>
