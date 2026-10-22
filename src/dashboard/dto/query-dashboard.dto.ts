@@ -81,4 +81,9 @@ export class QueryDashboardDto {
   @IsOptional()
   @IsIn(RANKING_CATEGORIAS)
   categoria?: RankingCategoria;
+
+  /** Lista dos cards de entrada: leads do período ou vendas do VGV. */
+  @IsOptional()
+  @IsIn(['hoje', 'semana', 'mes', 'vgv'])
+  recorte?: 'hoje' | 'semana' | 'mes' | 'vgv';
 }

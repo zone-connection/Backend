@@ -69,6 +69,23 @@ export class DashboardController {
     return this.dashboardService.resumoCorretor(requester);
   }
 
+  @Get('entrada')
+  @Roles(
+    Role.admin,
+    Role.gerente,
+    Role.analista,
+    Role.corretor,
+    Role.treinee,
+    Role.financeiro,
+    Role.super_admin,
+  )
+  listaEntrada(
+    @CurrentUser() requester: AuthenticatedUser,
+    @Query() query: QueryDashboardDto,
+  ) {
+    return this.dashboardService.listaEntrada(requester, query);
+  }
+
   @Get('admin')
   @Roles(
     Role.admin,

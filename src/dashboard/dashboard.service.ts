@@ -2938,6 +2938,148 @@ export class DashboardService {
     };
   }
 
+  async listaEntrada(
+    requester: AuthenticatedUser,
+    filtros: {
+      mes?: number;
+      ano?: number;
+      origem?: string;
+      operacao?: 'lancamento' | 'usado' | 'captacao';
+      granularidade?: PeriodoGranularidade;
+      recorte?: 'hoje' | 'semana' | 'mes' | 'vgv';
+    } = {},
+  ) {
+    await this.assertDashboardGerencial(requester, [
+      'dashboard',
+      'taxaConversao',
+    ]);
+    const recorte = filtros.recorte ?? 'mes';
+    const tenantId = requireTenantId(requester);
+    const windows = janelasBrasil({
+      mes: filtros.mes,
+      ano: filtros.ano,
+      granularidade: filtros.granularidade,
+    });
+    const { mesAtual, inicioHoje, inicioAmanha, inicioSemana } = windows;
+    const origem = filtros.origem?.trim() || undefined;
+    const documentoOrigem =
+      filtros.operacao === 'lancamento' || filtros.operacao === 'usado'
+        ? filtros.operacao
+        : undefined;
+    const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
+    const leadScope = await this.teamScope.leadScope(requester);
+
+    if (recorte !== 'vgv') {
+      const periodo =
+        recorte === 'hoje'
+          ? { inicio: inicioHoje, fim: inicioAmanha }
+          : recorte === 'semana'
+            ? { inicio: inicioSemana, fim: inicioAmanha }
+            : mesAtual;
+      const leads = await this.prisma.lead.findMany({
+        where: {
+          ...leadScope,
+          tipo: ContatoTipo.lead,
+          perdidoAt: null,
+          createdAt: { gte: periodo.inicio, lt: periodo.fim },
+          ...(origem ? { origem } : {}),
+        },
+        select: {
+          id: true,
+          nome: true,
+          telefone: true,
+          origem: true,
+          createdAt: true,
+          corretor: { select: { name: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      });
+      return {
+        recorte,
+        leads: leads.map((lead) => ({
+          id: lead.id,
+          nome: lead.nome,
+          telefone: lead.telefone,
+          origem: lead.origem,
+          createdAt: lead.createdAt.toISOString(),
+          corretor: lead.corretor?.name ?? null,
+        })),
+        vendas: [],
+      };
+    }
+
+    const docs = await this.prisma.documentacao.findMany({
+      where: {
+        tenantId,
+        ...(documentoOrigem ? { origem: documentoOrigem } : {}),
+        ...documentacaoOperacionalWhere(),
+        ...(corretorIds
+          ? documentacaoVinculadaAoCorretorWhere(corretorIds)
+          : {}),
+        ...documentacaoLeadEscopoWhere(leadScope, origem),
+        AND: [
+          documentacaoVendaNoPeriodoWhere(mesAtual),
+          { OR: [status2VendidoWhere(), { vgv: { gt: 0 } }] },
+        ],
+      },
+      select: {
+        id: true,
+        nome: true,
+        vgv: true,
+        dataVenda: true,
+        createdAt: true,
+        status2: true,
+        corretor: { select: { name: true } },
+        empreendimento: { select: { nome: true } },
+      },
+      orderBy: [{ dataVenda: 'desc' }, { createdAt: 'desc' }],
+      take: 200,
+    });
+    const avulsas = await this.prisma.cadastroVenda.findMany({
+          where: {
+            tenantId,
+            dataVenda: { gte: mesAtual.inicio, lt: mesAtual.fim },
+            ...(corretorIds ? { corretorId: { in: corretorIds } } : {}),
+          },
+          select: {
+            id: true,
+            clienteNome: true,
+            vgv: true,
+            dataVenda: true,
+            corretor: { select: { name: true } },
+            empreendimento: { select: { nome: true } },
+          },
+          orderBy: { dataVenda: 'desc' },
+          take: 200,
+        });
+
+    return {
+      recorte,
+      leads: [],
+      vendas: [
+        ...docs.map((doc) => ({
+          id: doc.id,
+          nome: doc.nome,
+          vgv: moneyNumber(doc.vgv),
+          data: (doc.dataVenda ?? doc.createdAt).toISOString(),
+          status: doc.status2,
+          corretor: doc.corretor?.name ?? null,
+          empreendimento: doc.empreendimento?.nome ?? null,
+        })),
+        ...avulsas.map((row) => ({
+          id: row.id,
+          nome: row.clienteNome,
+          vgv: moneyNumber(row.vgv),
+          data: row.dataVenda.toISOString(),
+          status: 'Cadastro de venda',
+          corretor: row.corretor?.name ?? null,
+          empreendimento: row.empreendimento?.nome ?? null,
+        })),
+      ],
+    };
+  }
+
   private async assertDashboardGerencial(
     requester: AuthenticatedUser,
     moduleKeys: readonly string[] = ['dashboard'],
