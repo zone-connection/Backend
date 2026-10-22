@@ -98,6 +98,16 @@ export class LeadsController {
     return this.leadsService.distribuirCorretores(dto, requester);
   }
 
+  @Post('desvincular')
+  @UseGuards(RolesGuard)
+  @Roles(Role.admin, Role.gerente)
+  desvincularCorretores(
+    @Body() dto: RemoveLeadsBulkDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.desvincularCorretores(dto.ids, requester);
+  }
+
   /** Soft-delete em lote — precisa ficar antes de POST :id/perder. */
   @Post('perder')
   markLostMany(

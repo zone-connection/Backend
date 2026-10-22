@@ -832,6 +832,80 @@ export class LeadsService {
     };
   }
 
+  async desvincularCorretores(ids: string[], requester: AuthenticatedUser) {
+    if (requester.role !== Role.admin && requester.role !== Role.gerente) {
+      throw new ForbiddenException(
+        'Somente admin ou gerente podem desvincular o corretor.',
+      );
+    }
+    const tenantId = requireTenantId(requester);
+    const scope = await this.teamScope.leadScope(requester);
+    const vendaSlugs = await this.funis.getSlugsByPapel(
+      tenantId,
+      FunilEtapaPapel.venda,
+    );
+    const leads = await this.prisma.lead.findMany({
+      where: {
+        AND: [
+          scope,
+          {
+            id: { in: ids },
+            tipo: ContatoTipo.lead,
+            perdidoAt: null,
+          },
+        ],
+      },
+      select: {
+        id: true,
+        stage: true,
+        corretorId: true,
+        equipeId: true,
+      },
+    });
+    const eligible = leads.filter(
+      (lead) =>
+        Boolean(lead.corretorId) &&
+        !leadImpedeRedistribuicao({ stage: lead.stage, vendaSlugs }),
+    );
+    const skipped = ids.length - eligible.length;
+    if (eligible.length === 0) {
+      return { updated: 0, skipped };
+    }
+    const eligibleIds = eligible.map((lead) => lead.id);
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.lead.updateMany({
+        where: { tenantId, id: { in: eligibleIds }, perdidoAt: null },
+        data: {
+          corretorId: null,
+          filaDistribuidoAt: null,
+          prazoDueAt: null,
+          alertaProximoAt: null,
+          lastMovementAt: now,
+        },
+      }),
+      this.prisma.leadReatribuicao.createMany({
+        data: eligible.map((lead) => ({
+          tenantId,
+          leadId: lead.id,
+          fromCorretorId: lead.corretorId,
+          toCorretorId: null,
+          toEquipeId: lead.equipeId,
+          origem: TriagemOrigem.manual,
+        })),
+      }),
+      this.prisma.triagemEvent.createMany({
+        data: eligible.map((lead) => ({
+          leadId: lead.id,
+          autorId: requester.id,
+          texto: `${requester.name} desvinculou o corretor do lead.`,
+          origem: TriagemOrigem.manual,
+        })),
+      }),
+    ]);
+    return { updated: eligible.length, skipped };
+  }
+
   async findAll(
     query: QueryLeadsDto,
     requester: AuthenticatedUser,
