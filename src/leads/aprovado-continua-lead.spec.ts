@@ -147,6 +147,7 @@ describe('ficha de documentação não mexe no funil', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     const result = await service.findAll({ page: 1, limit: 20 }, user());
@@ -214,6 +215,7 @@ describe('ficha de documentação não mexe no funil', () => {
     };
     const service = new LeadsService(
       prisma as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

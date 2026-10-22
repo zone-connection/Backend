@@ -108,7 +108,7 @@ export class TeamScopeService {
 
     return {
       tenantId,
-      AND: [{ corretorId: { in: ids } }, whereNotRetrabalho, channel],
+      AND: [{ corretorId: { in: ids } }, whereNotRetrabalho],
     };
   }
 
