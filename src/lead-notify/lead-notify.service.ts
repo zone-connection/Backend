@@ -20,6 +20,7 @@ import {
   pickPublicFrontendUrl,
   type LeadNotifySnapshot,
 } from './lead-notify.messages';
+import { isPhoneOwnedByAnotherTenant } from './lead-notify-phone';
 
 @Injectable()
 export class LeadNotifyService {
@@ -358,22 +359,24 @@ export class LeadNotifyService {
 
   /** Não manda aviso de lead no WhatsApp cadastrado em outra imobiliária. */
   private async phoneBelongsToAnotherTenant(tenantId: string, phone: string) {
-    const digits = phone.replace(/\D/g, '');
-    const tail = digits.slice(-11);
-    if (tail.length < 10) return false;
-
-    const tenants = await this.prisma.tenant.findMany({
-      where: { id: { not: tenantId }, telefone: { not: '' } },
-      select: { telefone: true },
-    });
-
-    return tenants.some((tenant) => {
-      const other = tenant.telefone.replace(/\D/g, '').slice(-11);
-      return (
-        other.length >= 10 &&
-        (other === tail || other.endsWith(tail) || tail.endsWith(other))
-      );
-    });
+    const [tenants, users] = await Promise.all([
+      this.prisma.tenant.findMany({
+        where: { id: { not: tenantId } },
+        select: { telefone: true },
+      }),
+      this.prisma.user.findMany({
+        where: {
+          tenantId: { not: tenantId },
+          OR: [{ whatsapp: { not: null } }, { phone: { not: null } }],
+        },
+        select: { whatsapp: true, phone: true },
+      }),
+    ]);
+    const otherPhones = [
+      ...tenants.map((tenant) => tenant.telefone),
+      ...users.flatMap((user) => [user.whatsapp, user.phone]),
+    ];
+    return isPhoneOwnedByAnotherTenant(phone, otherPhones);
   }
 
   private crmUrl(leadId?: string | null): string | null {
