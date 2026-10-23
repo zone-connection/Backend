@@ -54,6 +54,9 @@ import {
   VendaUsadoStatus,
   VendaUsadoVisitaInteresse,
   VendaUsadoVisitaStatus,
+  TarefaEtiqueta,
+  TarefaPrioridade,
+  TarefaStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
@@ -104,6 +107,7 @@ import {
   type DemoUserKey,
 } from './demo-seed.data';
 import { PopulateDemoDataDto } from './dto/populate-demo-data.dto';
+import { venceEmFrom } from '../tarefas/tarefa-schedule';
 import {
   applyPlanoModules,
   MURAL_CHAVES_OPT_IN_KEY,
@@ -140,6 +144,7 @@ export type DemoDataCounts = {
   vinculosProposta: number;
   corretoresParceiros: number;
   parcerias: number;
+  tarefas: number;
 };
 
 type DemoDocumentacaoResumo = {
@@ -259,6 +264,7 @@ export class TenantDemoDataService {
       vinculosProposta: 0,
       corretoresParceiros: 0,
       parcerias: 0,
+      tarefas: 0,
     };
 
     counts.catalogItems = await this.seedCatalogAndFunil(tenantId);
@@ -367,6 +373,10 @@ export class TenantDemoDataService {
     counts.corretoresParceiros = parceiros.corretores;
     counts.parcerias = parceiros.parcerias;
     counts.presencas = await this.seedPresencas(tenantId, userIdByKey);
+    counts.tarefas = await this.seedTarefas(tenantId, {
+      leadIdByKey,
+      adminId,
+    });
 
     return {
       tenantId,
@@ -468,6 +478,10 @@ export class TenantDemoDataService {
         await tx.proprietario.deleteMany({ where: { tenantId } });
 
         await tx.notificacao.deleteMany({ where: { tenantId } });
+        await tx.tarefaComentario.deleteMany({
+          where: { tarefa: { tenantId } },
+        });
+        await tx.tarefa.deleteMany({ where: { tenantId } });
         await tx.agendamento.deleteMany({ where: { tenantId } });
         await tx.meta.deleteMany({ where: { tenantId } });
         await tx.analise.deleteMany({ where: { tenantId } });
@@ -2565,6 +2579,271 @@ export class TenantDemoDataService {
     }
 
     return criadas;
+  }
+
+  // -------------------------------------------------------------------
+  // Tarefas do dia (o que a tela Minhas tarefas mostra)
+  // -------------------------------------------------------------------
+
+  private ymdSaoPaulo(offsetDays: number): string {
+    const hoje = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const [ano, mes, dia] = hoje.split('-').map(Number);
+    const data = new Date(Date.UTC(ano!, (mes ?? 1) - 1, (dia ?? 1) + offsetDays));
+    return data.toISOString().slice(0, 10);
+  }
+
+  private async seedTarefas(
+    tenantId: string,
+    ctx: { leadIdByKey: Map<string, string>; adminId: string },
+  ): Promise<number> {
+    const hoje = this.ymdSaoPaulo(0);
+    const ontem = this.ymdSaoPaulo(-1);
+    const amanha = this.ymdSaoPaulo(1);
+    const imoveis = await this.prisma.imovel.findMany({
+      where: { tenantId },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+      take: 8,
+    });
+    const imovel = (index: number) => imoveis[index]?.id ?? null;
+    const lead = (key: string) => ctx.leadIdByKey.get(key) ?? null;
+
+    const defs: {
+      titulo: string;
+      descricao: string;
+      data: string;
+      horario: string;
+      prioridade: TarefaPrioridade;
+      tipo: AgendamentoTipo;
+      etiqueta: TarefaEtiqueta;
+      status: TarefaStatus;
+      leadKey?: string;
+      imovelIndex?: number;
+    }[] = [
+      {
+        titulo: 'Reunião com cliente – João Silva',
+        descricao: 'Apresentar proposta do empreendimento Vista do Mar.',
+        data: hoje,
+        horario: '07:00',
+        prioridade: TarefaPrioridade.alta,
+        tipo: AgendamentoTipo.reuniao,
+        etiqueta: TarefaEtiqueta.cliente,
+        status: TarefaStatus.aberta,
+        leadKey: 'juliana',
+        imovelIndex: 0,
+      },
+      {
+        titulo: 'Retorno de ligação – Fernanda Costa',
+        descricao: 'Cliente interessada no Residencial Aurora.',
+        data: hoje,
+        horario: '08:30',
+        prioridade: TarefaPrioridade.media,
+        tipo: AgendamentoTipo.ligacao,
+        etiqueta: TarefaEtiqueta.ligacao,
+        status: TarefaStatus.aberta,
+        leadKey: 'fernando',
+        imovelIndex: 1,
+      },
+      {
+        titulo: 'Atualizar cadastro – Carlos Mendes',
+        descricao: 'Enviar documentos pendentes.',
+        data: hoje,
+        horario: '10:00',
+        prioridade: TarefaPrioridade.baixa,
+        tipo: AgendamentoTipo.tarefa,
+        etiqueta: TarefaEtiqueta.documentos,
+        status: TarefaStatus.aberta,
+        leadKey: 'marcelo',
+        imovelIndex: 2,
+      },
+      {
+        titulo: 'Acompanhar captação – Zona Sul',
+        descricao: 'Visitar imóvel e enviar relatório fotográfico.',
+        data: hoje,
+        horario: '11:30',
+        prioridade: TarefaPrioridade.media,
+        tipo: AgendamentoTipo.visita,
+        etiqueta: TarefaEtiqueta.captacao,
+        status: TarefaStatus.aberta,
+        leadKey: 'patricia',
+        imovelIndex: 3,
+      },
+      {
+        titulo: 'Reunião interna – Equipe de vendas',
+        descricao: 'Alinhar metas e novos leads da semana.',
+        data: hoje,
+        horario: '13:00',
+        prioridade: TarefaPrioridade.baixa,
+        tipo: AgendamentoTipo.reuniao,
+        etiqueta: TarefaEtiqueta.interna,
+        status: TarefaStatus.aberta,
+        leadKey: 'bruno',
+      },
+      {
+        titulo: 'Follow-up – Cliente Letícia',
+        descricao: 'Verificar andamento do financiamento.',
+        data: hoje,
+        horario: '15:00',
+        prioridade: TarefaPrioridade.media,
+        tipo: AgendamentoTipo.ligacao,
+        etiqueta: TarefaEtiqueta.followup,
+        status: TarefaStatus.aberta,
+        leadKey: 'leticia',
+        imovelIndex: 4,
+      },
+      {
+        titulo: 'Enviar contrato – Ricardo Alves',
+        descricao: 'Contrato de compra e venda já revisado.',
+        data: hoje,
+        horario: '16:30',
+        prioridade: TarefaPrioridade.alta,
+        tipo: AgendamentoTipo.outro,
+        etiqueta: TarefaEtiqueta.contrato,
+        status: TarefaStatus.aberta,
+        leadKey: 'thiago',
+        imovelIndex: 5,
+      },
+      {
+        titulo: 'Confirmar visita – Marina Dias',
+        descricao: 'Visita ao decorado no fim da tarde.',
+        data: hoje,
+        horario: '18:00',
+        prioridade: TarefaPrioridade.baixa,
+        tipo: AgendamentoTipo.visita,
+        etiqueta: TarefaEtiqueta.captacao,
+        status: TarefaStatus.concluida,
+        leadKey: 'aline',
+        imovelIndex: 6,
+      },
+      {
+        titulo: 'Enviar boleto da reserva',
+        descricao: 'Segunda via para o cliente.',
+        data: hoje,
+        horario: '18:30',
+        prioridade: TarefaPrioridade.media,
+        tipo: AgendamentoTipo.tarefa,
+        etiqueta: TarefaEtiqueta.contrato,
+        status: TarefaStatus.concluida,
+        leadKey: 'juliana',
+      },
+      {
+        titulo: 'Registrar feedback da visita',
+        descricao: 'Anotar objeções do plantão.',
+        data: hoje,
+        horario: '19:00',
+        prioridade: TarefaPrioridade.baixa,
+        tipo: AgendamentoTipo.tarefa,
+        etiqueta: TarefaEtiqueta.interna,
+        status: TarefaStatus.concluida,
+      },
+      {
+        titulo: 'Atualizar funil da manhã',
+        descricao: 'Mover leads atendidos.',
+        data: hoje,
+        horario: '19:30',
+        prioridade: TarefaPrioridade.media,
+        tipo: AgendamentoTipo.tarefa,
+        etiqueta: TarefaEtiqueta.documentos,
+        status: TarefaStatus.concluida,
+      },
+      {
+        titulo: 'Fechar relatório do dia',
+        descricao: 'Resumo para a equipe.',
+        data: hoje,
+        horario: '20:00',
+        prioridade: TarefaPrioridade.baixa,
+        tipo: AgendamentoTipo.tarefa,
+        etiqueta: TarefaEtiqueta.interna,
+        status: TarefaStatus.concluida,
+      },
+      {
+        titulo: 'Ligar para proposta parada',
+        descricao: 'Cliente pediu retorno sobre as condições.',
+        data: amanha,
+        horario: '09:00',
+        prioridade: TarefaPrioridade.media,
+        tipo: AgendamentoTipo.ligacao,
+        etiqueta: TarefaEtiqueta.ligacao,
+        status: TarefaStatus.aberta,
+        leadKey: 'paulo',
+      },
+      {
+        titulo: 'Separar pasta de documentos',
+        descricao: 'Conferir RG, comprovante e ficha.',
+        data: amanha,
+        horario: '14:00',
+        prioridade: TarefaPrioridade.baixa,
+        tipo: AgendamentoTipo.tarefa,
+        etiqueta: TarefaEtiqueta.documentos,
+        status: TarefaStatus.aberta,
+        leadKey: 'renata',
+      },
+      {
+        titulo: 'Retornar proposta vencida',
+        descricao: 'Prazo da reserva terminou ontem.',
+        data: ontem,
+        horario: '09:30',
+        prioridade: TarefaPrioridade.alta,
+        tipo: AgendamentoTipo.tarefa,
+        etiqueta: TarefaEtiqueta.cliente,
+        status: TarefaStatus.aberta,
+        leadKey: 'gustavo',
+        imovelIndex: 7,
+      },
+      {
+        titulo: 'Reagendar visita perdida',
+        descricao: 'Cliente não compareceu ao plantão.',
+        data: ontem,
+        horario: '11:00',
+        prioridade: TarefaPrioridade.media,
+        tipo: AgendamentoTipo.visita,
+        etiqueta: TarefaEtiqueta.captacao,
+        status: TarefaStatus.aberta,
+        leadKey: 'camila',
+      },
+    ];
+
+    const jaExistentes = new Set(
+      (
+        await this.prisma.tarefa.findMany({
+          where: { tenantId, titulo: { in: defs.map((d) => d.titulo) } },
+          select: { titulo: true },
+        })
+      ).map((t) => t.titulo),
+    );
+
+    const agora = new Date();
+    const data: Prisma.TarefaCreateManyInput[] = [];
+    for (const def of defs) {
+      if (jaExistentes.has(def.titulo)) continue;
+      data.push({
+        tenantId,
+        titulo: def.titulo,
+        descricao: def.descricao,
+        data: def.data,
+        horario: def.horario,
+        venceEm: venceEmFrom(def.data, def.horario),
+        prioridade: def.prioridade,
+        status: def.status,
+        tipo: def.tipo,
+        etiqueta: def.etiqueta,
+        responsavelId: ctx.adminId,
+        criadoPorId: ctx.adminId,
+        leadId: def.leadKey ? lead(def.leadKey) : null,
+        imovelId:
+          def.imovelIndex != null ? imovel(def.imovelIndex) : null,
+        concluidaEm: def.status === TarefaStatus.concluida ? agora : null,
+      });
+    }
+
+    if (data.length === 0) return 0;
+    const created = await this.prisma.tarefa.createMany({ data });
+    return created.count;
   }
 
   // -------------------------------------------------------------------
