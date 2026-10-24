@@ -11,6 +11,7 @@ import {
   FinanceiroParceiroTipo,
   FinanceiroTituloStatus,
   FinanceiroTituloTipo,
+  ContatoTipo,
   Prisma,
   Role,
   UserStatus,
@@ -1833,9 +1834,35 @@ export class FinanceiroService {
     });
     const premiacao = this.calculatePremiacao(dto);
     const hoje = todayIsoBrasil();
+    const dataVenda = parseDayStart(dto.dataVenda || hoje);
+    let documentacaoId: string | undefined;
+    if (dto.registrarDocumentacao === true && !isDraft) {
+      const doc = await this.prisma.documentacao.create({
+        data: {
+          tenantId,
+          autorId: requester.id,
+          tipoContato: ContatoTipo.cliente,
+          stageSituacao: "",
+          nome: clienteNome,
+          construtoraId: dto.construtoraId || null,
+          empreendimentoId: dto.empreendimentoId || null,
+          fonte: "Outro",
+          origem: "lancamento",
+          status1: "Aprovado",
+          status2: "Vendido",
+          corretorId: corretor.id,
+          gerenteId: corretor.equipe?.gerenteId ?? null,
+          dataVenda,
+          vgv: dto.vgv ?? null,
+        },
+        select: { id: true },
+      });
+      documentacaoId = doc.id;
+    }
     const row = await this.prisma.financeiroComissao.create({
       data: {
         tenantId,
+        ...(documentacaoId ? { documentacaoId } : {}),
         corretorId: corretor.id,
         gerenteId: corretor.equipe?.gerenteId ?? null,
         equipeId: corretor.equipeId,
@@ -1844,7 +1871,7 @@ export class FinanceiroService {
         equipe: corretor.equipe?.name ?? "",
         empreendimento,
         cliente: clienteNome,
-        dataVenda: parseDayStart(dto.dataVenda || hoje),
+        dataVenda,
         dataPrevistaRecebimento: parseDayStart(
           dto.dataPrevistaRecebimento || hoje,
         ),

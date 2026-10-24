@@ -16,10 +16,10 @@ import {
 } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import {
-  isStatusVendido,
   documentacaoOperacionalWhere,
   documentacaoVendaNoPeriodoWhere,
   documentacaoVinculadaAoCorretorWhere,
+  status2Group,
 } from '../common/utils/documentacao-status';
 import { requireTenantId, isPlatformAdmin } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
@@ -622,7 +622,7 @@ export class MetasService {
       const seen = new Set<string>();
       atual = 0;
       for (const doc of docs) {
-        if (!isStatusVendido(doc.status2) || seen.has(doc.id)) continue;
+        if (status2Group(doc.status2) !== 'vendido' || seen.has(doc.id)) continue;
         seen.add(doc.id);
         atual += 1;
       }
@@ -642,7 +642,7 @@ export class MetasService {
         select: { status2: true, vgv: true },
       });
       atual = docsVgv
-        .filter((row) => isStatusVendido(row.status2))
+        .filter((row) => status2Group(row.status2) === 'vendido')
         .reduce((total, row) => total + (row.vgv ?? 0), 0);
     }
 

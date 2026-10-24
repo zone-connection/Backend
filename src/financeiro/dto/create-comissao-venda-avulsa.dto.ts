@@ -1,6 +1,7 @@
 import { FinanceiroComissaoStatus } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
@@ -103,4 +104,9 @@ export class CreateComissaoVendaAvulsaDto extends PremiacaoComissaoDto {
   @IsString()
   @MaxLength(2000)
   observacao?: string;
+
+  /** Quando true, cria uma ficha vendida em Documentação. Padrão: não cria. */
+  @IsOptional()
+  @IsBoolean()
+  registrarDocumentacao?: boolean;
 }

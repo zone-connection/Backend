@@ -220,6 +220,22 @@ export class DocumentacaoService {
       return self ? [mapRow(self)] : [];
     }
 
+    if (requester.role === Role.gerente) {
+      const visibleIds =
+        (await this.teamScope.getVisibleCorretorIds(requester)) ?? [];
+      const rows = await this.prisma.user.findMany({
+        where: {
+          tenantId,
+          status: UserStatus.ativo,
+          id: { in: visibleIds },
+          role: { in: [Role.corretor, Role.treinee, Role.gerente] },
+        },
+        select,
+        orderBy: { name: 'asc' },
+      });
+      return rows.map(mapRow);
+    }
+
     const rows = await this.prisma.user.findMany({
       where: {
         tenantId,
