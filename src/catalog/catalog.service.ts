@@ -7,19 +7,26 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
-import { CatalogItem, CatalogType, Role } from '@prisma/client';
+import { CatalogItem, CatalogType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
-import { requireTenantId } from '../common/utils/tenant';
+import { isPlatformAdmin, requireTenantId } from '../common/utils/tenant';
 import { CreateCatalogItemDto } from './dto/create-catalog-item.dto';
 import { UpdateCatalogItemDto } from './dto/update-catalog-item.dto';
 import { QueryCatalogDto } from './dto/query-catalog.dto';
 import { ReorderCatalogDto } from './dto/reorder-catalog.dto';
 import { slugify } from './catalog.util';
 import {
+  canonicalizeStatus1,
+  canonicalizeStatus2,
+} from '../common/utils/documentacao-status';
+import {
   DEFAULT_DOCUMENTACAO_FONTES,
   DEFAULT_DOCUMENTACAO_STATUS1,
   DEFAULT_DOCUMENTACAO_STATUS2,
+  DEFAULT_EMPREENDIMENTO_STATUS,
+  DEFAULT_EMPREENDIMENTO_TAGS,
+  DEFAULT_EMPREENDIMENTO_TIPOS,
   DEFAULT_INITIAL_STAGE_SLUG,
   DEFAULT_MOTIVOS_PERDA,
 } from './catalog.defaults';
@@ -27,11 +34,31 @@ import { FunisService } from '../funis/funis.service';
 
 export type GroupedCatalog = Record<CatalogType, CatalogItem[]>;
 
-const DOCUMENTACAO_CATALOG_TYPES = new Set<CatalogType>([
+/** Catálogos que o analista pode criar/editar/excluir em Configurações. */
+const ANALISTA_CATALOG_TYPES = new Set<CatalogType>([
+  CatalogType.origem,
+  CatalogType.motivo_perda,
+  CatalogType.tag,
+  CatalogType.cca,
   CatalogType.documentacao_fonte,
   CatalogType.documentacao_status1,
   CatalogType.documentacao_status2,
+  CatalogType.empreendimento_tipo,
+  CatalogType.empreendimento_status,
+  CatalogType.empreendimento_tag,
 ]);
+
+/** Treinee: origens, tags, CCAs e catálogos de empreendimento. Motivos de perda são definidos pela gerência. */
+const TREINEE_CATALOG_TYPES = new Set<CatalogType>([
+  CatalogType.origem,
+  CatalogType.tag,
+  CatalogType.cca,
+  CatalogType.empreendimento_tipo,
+  CatalogType.empreendimento_status,
+  CatalogType.empreendimento_tag,
+]);
+
+const HEX_COR = /^#[0-9A-Fa-f]{6}$/;
 
 const DOCUMENTACAO_CATALOG_DEFAULTS: Record<
   | typeof CatalogType.documentacao_fonte
@@ -78,6 +105,7 @@ export class CatalogService {
     const tenantId = requireTenantId(requester);
     await this.ensureDocumentacaoCatalogDefaults(tenantId);
     await this.ensureMotivoPerdaDefaults(tenantId);
+    await this.ensureEmpreendimentoCatalogDefaults(tenantId);
 
     const items = await this.prisma.catalogItem.findMany({
       where: {
@@ -94,9 +122,13 @@ export class CatalogService {
       [CatalogType.origem]: [],
       [CatalogType.motivo_perda]: [],
       [CatalogType.tag]: [],
+      [CatalogType.cca]: [],
       [CatalogType.documentacao_fonte]: [],
       [CatalogType.documentacao_status1]: [],
       [CatalogType.documentacao_status2]: [],
+      [CatalogType.empreendimento_tipo]: [],
+      [CatalogType.empreendimento_status]: [],
+      [CatalogType.empreendimento_tag]: [],
     } as GroupedCatalog;
 
     if (activeOnly) {
@@ -109,6 +141,99 @@ export class CatalogService {
       grouped[item.type].push(item);
     }
     return grouped;
+  }
+
+  /**
+   * Cadastra no catálogo as origens da importação que ainda não existem.
+   * Reaproveita o label já cadastrado (ignora maiúsculas/minúsculas) e reativa itens inativos.
+   */
+  async ensureOrigensForImport(
+    tenantId: string,
+    labels: string[],
+  ): Promise<Map<string, string>> {
+    const canonical = new Map<string, string>();
+    const unique = [
+      ...new Set(
+        labels
+          .map((label) => label.trim().slice(0, 60))
+          .filter((label) => label.length > 0),
+      ),
+    ];
+    if (unique.length === 0) return canonical;
+
+    const existing = await this.prisma.catalogItem.findMany({
+      where: { tenantId, type: CatalogType.origem },
+    });
+    const byLower = new Map(
+      existing.map((item) => [item.label.trim().toLowerCase(), item]),
+    );
+    let nextSort =
+      existing.reduce(
+        (max, item) => (item.sortOrder > max ? item.sortOrder : max),
+        -1,
+      ) + 1;
+    const defaultColor = 'bg-slate-200 text-slate-700';
+
+    for (const label of unique) {
+      const key = label.toLowerCase();
+      const found = byLower.get(key);
+      if (found) {
+        if (!found.active) {
+          const updated = await this.prisma.catalogItem.update({
+            where: { id: found.id },
+            data: { active: true },
+          });
+          byLower.set(key, updated);
+        }
+        canonical.set(label, found.label);
+        continue;
+      }
+
+      try {
+        const created = await this.prisma.catalogItem.create({
+          data: {
+            tenantId,
+            type: CatalogType.origem,
+            label,
+            slug: slugify(label),
+            color: defaultColor,
+            sortOrder: nextSort++,
+            active: true,
+          },
+        });
+        byLower.set(key, created);
+        canonical.set(label, created.label);
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          const raced = await this.prisma.catalogItem.findUnique({
+            where: {
+              tenantId_type_label: {
+                tenantId,
+                type: CatalogType.origem,
+                label,
+              },
+            },
+          });
+          if (raced) {
+            if (!raced.active) {
+              await this.prisma.catalogItem.update({
+                where: { id: raced.id },
+                data: { active: true },
+              });
+            }
+            byLower.set(key, raced);
+            canonical.set(label, raced.label);
+            continue;
+          }
+        }
+        throw err;
+      }
+    }
+
+    return canonical;
   }
 
   /** Garante fontes/status padrão da documentação no tenant. */
@@ -162,6 +287,45 @@ export class CatalogService {
     }
   }
 
+  private async ensureEmpreendimentoCatalogDefaults(tenantId: string) {
+    const defaults: Array<{
+      type: CatalogType;
+      items: readonly { label: string; color: string }[];
+    }> = [
+      {
+        type: CatalogType.empreendimento_tipo,
+        items: DEFAULT_EMPREENDIMENTO_TIPOS,
+      },
+      {
+        type: CatalogType.empreendimento_status,
+        items: DEFAULT_EMPREENDIMENTO_STATUS,
+      },
+      {
+        type: CatalogType.empreendimento_tag,
+        items: DEFAULT_EMPREENDIMENTO_TAGS,
+      },
+    ];
+    for (const group of defaults) {
+      const count = await this.prisma.catalogItem.count({
+        where: { tenantId, type: group.type },
+      });
+      if (count > 0) continue;
+      for (const [index, item] of group.items.entries()) {
+        await this.prisma.catalogItem.create({
+          data: {
+            tenantId,
+            type: group.type,
+            label: item.label,
+            slug: slugify(item.label),
+            color: item.color,
+            sortOrder: index,
+            active: true,
+          },
+        });
+      }
+    }
+  }
+
   async create(
     dto: CreateCatalogItemDto,
     requester: AuthenticatedUser,
@@ -189,7 +353,7 @@ export class CatalogService {
         type: dto.type,
         label,
         slug: slugify(label),
-        color: dto.color?.trim() || null,
+        color: this.normalizeCatalogColor(dto.type, dto.color),
         sortOrder,
       },
     });
@@ -210,16 +374,39 @@ export class CatalogService {
     }
 
     // Slug não muda no rename: é o ID estável usado em Lead.stage e no histórico.
-    return this.prisma.catalogItem.update({
+    const updated = await this.prisma.catalogItem.update({
       where: { id },
       data: {
         ...(label ? { label } : {}),
         ...(dto.color !== undefined
-          ? { color: dto.color?.trim() || null }
+          ? { color: this.normalizeCatalogColor(existing.type, dto.color) }
           : {}),
         ...(dto.active !== undefined ? { active: dto.active } : {}),
       },
     });
+
+    if (label && label !== existing.label) {
+      await this.propagateDocumentacaoLabel(
+        tenantId,
+        existing.type,
+        existing.label,
+        label,
+      );
+      await this.propagateCcaLabel(
+        tenantId,
+        existing.type,
+        existing.label,
+        label,
+      );
+      await this.propagateEmpreendimentoLabel(
+        tenantId,
+        existing.type,
+        existing.label,
+        label,
+      );
+    }
+
+    return updated;
   }
 
   /** Soft-delete: mantém o item mas o remove das listas ativas. */
@@ -229,6 +416,7 @@ export class CatalogService {
   ): Promise<CatalogItem> {
     const tenantId = requireTenantId(requester);
     const existing = await this.ensureExists(id, tenantId);
+    this.assertCanMutateCatalogType(requester, existing.type);
     if (
       existing.type === CatalogType.funil_etapa &&
       existing.slug === DEFAULT_INITIAL_STAGE_SLUG
@@ -297,33 +485,152 @@ export class CatalogService {
     return this.funisService.getDefaultStageSlug(tenantId);
   }
 
+  /**
+   * Ao renomear status/fonte da documentação, atualiza as fichas que usam o rótulo antigo.
+   */
+  private async propagateDocumentacaoLabel(
+    tenantId: string,
+    type: CatalogType,
+    oldLabel: string,
+    newLabel: string,
+  ): Promise<void> {
+    const aliases = new Set<string>([oldLabel.trim()]);
+    if (type === CatalogType.documentacao_status1) {
+      aliases.add(canonicalizeStatus1(oldLabel));
+      await this.prisma.documentacao.updateMany({
+        where: {
+          tenantId,
+          OR: [...aliases].map((alias) => ({
+            status1: { equals: alias, mode: 'insensitive' as const },
+          })),
+        },
+        data: { status1: newLabel },
+      });
+      return;
+    }
+    if (type === CatalogType.documentacao_status2) {
+      aliases.add(canonicalizeStatus2(oldLabel));
+      await this.prisma.documentacao.updateMany({
+        where: {
+          tenantId,
+          OR: [...aliases].map((alias) => ({
+            status2: { equals: alias, mode: 'insensitive' as const },
+          })),
+        },
+        data: { status2: newLabel },
+      });
+      return;
+    }
+    if (type === CatalogType.documentacao_fonte) {
+      await this.prisma.documentacao.updateMany({
+        where: {
+          tenantId,
+          fonte: { equals: oldLabel, mode: 'insensitive' },
+        },
+        data: { fonte: newLabel },
+      });
+    }
+  }
+
+  private async propagateEmpreendimentoLabel(
+    tenantId: string,
+    type: CatalogType,
+    oldLabel: string,
+    newLabel: string,
+  ): Promise<void> {
+    if (type === CatalogType.empreendimento_tipo) {
+      await this.prisma.empreendimento.updateMany({
+        where: { tenantId, tipo: oldLabel },
+        data: { tipo: newLabel },
+      });
+      return;
+    }
+    if (type === CatalogType.empreendimento_status) {
+      await this.prisma.empreendimento.updateMany({
+        where: { tenantId, status: oldLabel },
+        data: { status: newLabel },
+      });
+      return;
+    }
+    if (type !== CatalogType.empreendimento_tag) return;
+    const rows = await this.prisma.empreendimento.findMany({
+      where: { tenantId, tags: { has: oldLabel } },
+      select: { id: true, tags: true },
+    });
+    for (const row of rows) {
+      await this.prisma.empreendimento.update({
+        where: { id: row.id },
+        data: {
+          tags: row.tags.map((tag) => (tag === oldLabel ? newLabel : tag)),
+        },
+      });
+    }
+  }
+
+  private async propagateCcaLabel(
+    tenantId: string,
+    type: CatalogType,
+    oldLabel: string,
+    newLabel: string,
+  ): Promise<void> {
+    if (type !== CatalogType.cca) return;
+    await this.prisma.construtora.updateMany({
+      where: { tenantId, cca: oldLabel },
+      data: { cca: newLabel },
+    });
+  }
+
+  private normalizeCatalogColor(
+    type: CatalogType,
+    color?: string | null,
+  ): string | null {
+    const trimmed = color?.trim() || null;
+    if (type !== CatalogType.cca) return trimmed;
+    if (!trimmed) return null;
+    if (!HEX_COR.test(trimmed)) {
+      throw new BadRequestException(
+        'Informe a cor do CCA no formato hexadecimal #RRGGBB.',
+      );
+    }
+    return trimmed.toUpperCase();
+  }
+
   private assertCanMutateCatalogType(
     requester: AuthenticatedUser,
     type: CatalogType,
   ) {
-    if (requester.role === Role.admin || requester.role === Role.gerente) {
-      return;
-    }
     if (
-      requester.role === Role.analista &&
-      DOCUMENTACAO_CATALOG_TYPES.has(type)
+      isPlatformAdmin(requester) ||
+      requester.role === Role.admin ||
+      requester.role === Role.gerente
     ) {
       return;
     }
     if (
-      requester.role === Role.corretor &&
-      type === CatalogType.motivo_perda
+      requester.role === Role.analista &&
+      ANALISTA_CATALOG_TYPES.has(type)
+    ) {
+      return;
+    }
+    if (
+      requester.role === Role.treinee &&
+      TREINEE_CATALOG_TYPES.has(type)
     ) {
       return;
     }
     if (requester.role === Role.analista) {
       throw new ForbiddenException(
-        'Analistas só podem criar fontes e status da documentação.',
+        'Analistas só podem alterar documentação, origens, motivos de perda, tags, CCAs e catálogos de imóveis.',
+      );
+    }
+    if (requester.role === Role.treinee) {
+      throw new ForbiddenException(
+        'Treinees só podem alterar origens, tags, CCAs e catálogos de imóveis.',
       );
     }
     if (requester.role === Role.corretor) {
       throw new ForbiddenException(
-        'Corretores só podem criar ou editar motivos de perda.',
+        'Corretores não podem criar ou editar itens de catálogo. Use os motivos de perda cadastrados pela gerência.',
       );
     }
     throw new ForbiddenException('Sem permissão para alterar este catálogo.');

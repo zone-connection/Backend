@@ -10,6 +10,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
+  FinanceiroDespesaNatureza,
   FinanceiroMovimentoTipo,
   FinanceiroTituloStatus,
 } from '@prisma/client';
@@ -61,4 +62,10 @@ export class UpdateMovimentoDto {
   @IsString()
   @MaxLength(80)
   formaPagamento?: string | null;
+
+  @IsOptional()
+  @IsEnum(FinanceiroDespesaNatureza, {
+    message: 'Natureza inválida. Use fixa ou variavel.',
+  })
+  natureza?: FinanceiroDespesaNatureza | null;
 }

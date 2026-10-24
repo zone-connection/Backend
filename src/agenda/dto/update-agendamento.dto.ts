@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsIn,
   IsISO8601,
   IsOptional,
@@ -69,4 +70,23 @@ export class UpdateAgendamentoDto {
   @IsString()
   @MaxLength(2000)
   observacoes?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Empreendimento inválido.' })
+  empreendimentoId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Imóvel inválido.' })
+  imovelId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  toleranciaAtiva?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Chave inválida.' })
+  muralChaveId?: string | null;
 }
