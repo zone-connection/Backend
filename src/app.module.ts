@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { PrismaModule } from './prisma/prisma.module';
@@ -49,6 +49,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { CsrfGuard } from './common/guards/csrf.guard';
 import { validateEnv } from './config/env.validation';
 import { THROTTLE } from './config/security.constants';
+import { PrismaSchemaExceptionFilter } from './common/filters/prisma-schema.filter';
 
 @Module({
   imports: [
@@ -101,6 +102,10 @@ import { THROTTLE } from './config/security.constants';
   ],
   controllers: [AppController],
   providers: [
+    {
+      provide: APP_FILTER,
+      useClass: PrismaSchemaExceptionFilter,
+    },
     // A ordem importa: o rate limiting roda antes da autenticação, para que
     // uma enxurrada de requisições seja barrada sem tocar no banco.
     {

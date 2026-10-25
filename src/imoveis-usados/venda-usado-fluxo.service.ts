@@ -96,39 +96,43 @@ export class VendaUsadoFluxoService {
 
   async listTodasPropostas(user: AuthenticatedUser) {
     const tenantId = requireTenantId(user);
-    const rows = await this.prisma.vendaUsadoProposta.findMany({
-      where: { tenantId },
-      include: {
-        ...propostaInclude,
-        vendaUsado: {
-          select: {
-            id: true,
-            imovel: {
-              select: {
-                id: true,
-                tipo: true,
-                logradouro: true,
-                numero: true,
-                bairro: true,
-                cidade: true,
-                fotoUrl: true,
+    try {
+      const rows = await this.prisma.vendaUsadoProposta.findMany({
+        where: { tenantId },
+        include: {
+          ...propostaInclude,
+          vendaUsado: {
+            select: {
+              id: true,
+              imovel: {
+                select: {
+                  id: true,
+                  tipo: true,
+                  logradouro: true,
+                  numero: true,
+                  bairro: true,
+                  cidade: true,
+                  fotoUrl: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    return rows.map((row) => ({
-      ...this.exposeProposta(row),
-      vendaUsado: {
-        ...row.vendaUsado,
-        imovel: {
-          ...row.vendaUsado.imovel,
-          titulo: imovelTitulo(row.vendaUsado.imovel),
+        orderBy: { createdAt: 'desc' },
+      });
+      return rows.map((row) => ({
+        ...this.exposeProposta(row),
+        vendaUsado: {
+          ...row.vendaUsado,
+          imovel: {
+            ...row.vendaUsado.imovel,
+            titulo: imovelTitulo(row.vendaUsado.imovel),
+          },
         },
-      },
-    }));
+      }));
+    } catch {
+      return [];
+    }
   }
 
   async listVisitas(vendaId: string, user: AuthenticatedUser) {

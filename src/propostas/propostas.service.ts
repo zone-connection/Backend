@@ -220,11 +220,21 @@ export class PropostasService {
 
     if (query.status) where.status = query.status;
 
-    return this.prisma.proposta.findMany({
-      where,
-      select: propostaSelect,
-      orderBy: prismaTableOrderBy(query.sort, "clienteNome"),
-    });
+    try {
+      return await this.prisma.proposta.findMany({
+        where,
+        select: propostaSelect,
+        orderBy: prismaTableOrderBy(query.sort, "clienteNome"),
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        (error.code === "P2021" || error.code === "P2022")
+      ) {
+        return [];
+      }
+      throw error;
+    }
   }
 
   async buscarCep(cep: string, requester: AuthenticatedUser) {
