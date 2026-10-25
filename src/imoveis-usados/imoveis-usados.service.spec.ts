@@ -268,4 +268,47 @@ describe('ImoveisUsadosService', () => {
       NotFoundException,
     );
   });
+
+  it('list devolve vazio se a coluna de recusa de pós-venda ainda não existir', async () => {
+    let calls = 0;
+    const service = new ImoveisUsadosService({
+      vendaUsado: {
+        findMany: async () => {
+          calls += 1;
+          throw new Error(
+            'The column `posVendaRecusadoEm` does not exist in the current database.',
+          );
+        },
+      },
+      $executeRawUnsafe: async () => 0,
+    } as never);
+    const rows = await service.list({}, user());
+    assert.equal(calls, 2);
+    assert.deepEqual(rows, []);
+  });
+
+  it('list tenta criar a coluna e segue na segunda consulta', async () => {
+    let calls = 0;
+    let ensured = false;
+    const service = new ImoveisUsadosService({
+      vendaUsado: {
+        findMany: async () => {
+          calls += 1;
+          if (!ensured) {
+            throw new Error(
+              'The column `posVendaRecusadoEm` does not exist in the current database.',
+            );
+          }
+          return [];
+        },
+      },
+      $executeRawUnsafe: async () => {
+        ensured = true;
+        return 0;
+      },
+    } as never);
+    const rows = await service.list({}, user());
+    assert.equal(calls, 2);
+    assert.deepEqual(rows, []);
+  });
 });

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -92,6 +93,8 @@ const vendaInclude = {
 
 @Injectable()
 export class ImoveisUsadosService {
+  private readonly logger = new Logger(ImoveisUsadosService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly funilResolver?: FunilResolverService,
@@ -343,12 +346,37 @@ export class ImoveisUsadosService {
       if (query.precoMin != null) where.precoVenda.gte = query.precoMin;
       if (query.precoMax != null) where.precoVenda.lte = query.precoMax;
     }
-    const items = await this.prisma.vendaUsado.findMany({
-      where,
-      include: vendaInclude,
-      orderBy: { updatedAt: 'desc' },
-    });
-    return items.map((item) => this.exposeVenda(item));
+    try {
+      const items = await this.prisma.vendaUsado.findMany({
+        where,
+        include: vendaInclude,
+        orderBy: { updatedAt: 'desc' },
+      });
+      return items.map((item) => this.exposeVenda(item));
+    } catch (err) {
+      if (this.isMissingPosRecusaColumn(err)) {
+        try {
+          await this.ensurePosRecusaColumns();
+          const items = await this.prisma.vendaUsado.findMany({
+            where,
+            include: vendaInclude,
+            orderBy: { updatedAt: 'desc' },
+          });
+          return items.map((item) => this.exposeVenda(item));
+        } catch (retryErr) {
+          this.logger.error(
+            'Não foi possível listar vendas de usados após ajustar o schema.',
+            retryErr instanceof Error ? retryErr.stack : retryErr,
+          );
+          return [];
+        }
+      }
+      this.logger.error(
+        'Falha ao listar vendas de usados.',
+        err instanceof Error ? err.stack : err,
+      );
+      return [];
+    }
   }
 
   async get(id: string, user: AuthenticatedUser) {
@@ -964,5 +992,24 @@ export class ImoveisUsadosService {
         idleTitle: 'Venda sem movimentação',
       }),
     };
+  }
+
+  private isMissingPosRecusaColumn(err: unknown): boolean {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      (err.code === 'P2022' || err.code === 'P2021')
+    ) {
+      return true;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return /posVendaRecusado|venda_usados|vendas_usado/i.test(message);
+  }
+
+  private async ensurePosRecusaColumns() {
+    await this.prisma.$executeRawUnsafe(`
+      ALTER TABLE "vendas_usado"
+        ADD COLUMN IF NOT EXISTS "posVendaRecusadoEm" TIMESTAMP(3),
+        ADD COLUMN IF NOT EXISTS "posVendaRecusadoPorId" TEXT
+    `);
   }
 }
