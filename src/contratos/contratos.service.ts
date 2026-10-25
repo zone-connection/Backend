@@ -76,14 +76,18 @@ export class ContratosService {
 
   async listDocumentos(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    return this.prisma.contratoDocumento.findMany({
-      where: {
-        tenantId,
-        ...(this.veTodos(requester) ? {} : { autorId: requester.id }),
-      },
-      select: documentoSelect,
-      orderBy: { updatedAt: 'desc' },
-    });
+    try {
+      return await this.prisma.contratoDocumento.findMany({
+        where: {
+          tenantId,
+          ...(this.veTodos(requester) ? {} : { autorId: requester.id }),
+        },
+        select: documentoSelect,
+        orderBy: { updatedAt: 'desc' },
+      });
+    } catch {
+      return [];
+    }
   }
 
   async upsertDocumento(

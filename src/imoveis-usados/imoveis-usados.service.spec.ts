@@ -269,6 +269,24 @@ describe('ImoveisUsadosService', () => {
     );
   });
 
+  it('list omite as colunas de recusa de pós-venda', async () => {
+    let omit: unknown;
+    const service = new ImoveisUsadosService({
+      vendaUsado: {
+        findMany: async (args: { omit?: unknown }) => {
+          omit = args.omit;
+          return [];
+        },
+      },
+    } as never);
+    const rows = await service.list({}, user());
+    assert.deepEqual(omit, {
+      posVendaRecusadoEm: true,
+      posVendaRecusadoPorId: true,
+    });
+    assert.deepEqual(rows, []);
+  });
+
   it('list devolve vazio se a coluna de recusa de pós-venda ainda não existir', async () => {
     let calls = 0;
     const service = new ImoveisUsadosService({

@@ -59,6 +59,12 @@ import {
 const SEM_FUNIL =
   'Não existe um funil de Venda de Usados ativo para este Tenant.';
 
+/** Colunas da migration de pós-venda que ainda não existem em produção. */
+const vendaOmitPosRecusa = {
+  posVendaRecusadoEm: true,
+  posVendaRecusadoPorId: true,
+} as const;
+
 const vendaInclude = {
   imovel: {
     include: {
@@ -349,33 +355,38 @@ export class ImoveisUsadosService {
     try {
       const items = await this.prisma.vendaUsado.findMany({
         where,
+        omit: vendaOmitPosRecusa,
         include: vendaInclude,
         orderBy: { updatedAt: 'desc' },
       });
       return items.map((item) => this.exposeVenda(item));
     } catch (err) {
-      if (this.isMissingPosRecusaColumn(err)) {
-        try {
-          await this.ensurePosRecusaColumns();
-          const items = await this.prisma.vendaUsado.findMany({
-            where,
-            include: vendaInclude,
-            orderBy: { updatedAt: 'desc' },
-          });
-          return items.map((item) => this.exposeVenda(item));
-        } catch (retryErr) {
-          this.logger.error(
-            'Não foi possível listar vendas de usados após ajustar o schema.',
-            retryErr instanceof Error ? retryErr.stack : retryErr,
-          );
-          return [];
-        }
-      }
       this.logger.error(
         'Falha ao listar vendas de usados.',
         err instanceof Error ? err.stack : err,
       );
-      return [];
+      if (this.isMissingPosRecusaColumn(err)) {
+        try {
+          await this.ensurePosRecusaColumns();
+        } catch {
+          /* schema sem ALTER; segue sem as colunas */
+        }
+      }
+      try {
+        const items = await this.prisma.vendaUsado.findMany({
+          where,
+          omit: vendaOmitPosRecusa,
+          include: vendaInclude,
+          orderBy: { updatedAt: 'desc' },
+        });
+        return items.map((item) => this.exposeVenda(item));
+      } catch (retryErr) {
+        this.logger.error(
+          'Não foi possível listar vendas de usados na segunda tentativa.',
+          retryErr instanceof Error ? retryErr.stack : retryErr,
+        );
+        return [];
+      }
     }
   }
 
@@ -383,6 +394,7 @@ export class ImoveisUsadosService {
     const tenantId = requireTenantId(user);
     const item = await this.prisma.vendaUsado.findFirst({
       where: { id, tenantId },
+      omit: vendaOmitPosRecusa,
       include: {
         ...vendaInclude,
         vinculos: {
@@ -532,6 +544,7 @@ export class ImoveisUsadosService {
     const tenantId = requireTenantId(user);
     const current = await this.prisma.vendaUsado.findFirst({
       where: { id, tenantId },
+      omit: vendaOmitPosRecusa,
       include: { funil: { include: { etapas: true } }, funilEtapa: true },
     });
     if (!current) throw new NotFoundException('Venda de usado não encontrada.');
@@ -707,6 +720,7 @@ export class ImoveisUsadosService {
     const tenantId = requireTenantId(user);
     const venda = await this.prisma.vendaUsado.findFirst({
       where: { id: vendaId, tenantId },
+      omit: vendaOmitPosRecusa,
       include: { imovel: true, vinculos: { select: { interessadoId: true } } },
     });
     if (!venda) throw new NotFoundException('Venda de usado não encontrada.');

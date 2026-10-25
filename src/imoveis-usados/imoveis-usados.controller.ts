@@ -105,7 +105,7 @@ export class ImoveisUsadosController {
     @Query() query: QueryVendasUsadoDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.service.list(query, user);
+    return this.service.list(query, user).catch(() => []);
   }
 
   @Get(':id/matching')
