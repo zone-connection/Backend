@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { CatalogType, FunilEtapaPapel, FunilTipo, Prisma, Role } from '@prisma/client';
@@ -78,6 +79,8 @@ type EtapaComPapel = {
 
 @Injectable()
 export class FunisService {
+  private readonly logger = new Logger(FunisService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly monitoramento: LeadMonitoramentoService,
@@ -85,7 +88,15 @@ export class FunisService {
 
   async list(requester: AuthenticatedUser, query?: QueryFunisDto) {
     const tenantId = requireTenantId(requester);
-    await this.ensureTenantOperationFunnels(tenantId);
+    try {
+      await this.ensureTenantOperationFunnels(tenantId);
+    } catch (error) {
+      this.logger.error(
+        `Não foi possível garantir funis do tenant ${tenantId}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
     const tipo = query?.tipo;
     return this.prisma.funil.findMany({
       where: { tenantId, ...(tipo ? { tipo } : {}) },
@@ -994,10 +1005,24 @@ export class FunisService {
 
   async ensureTenantOperationFunnels(tenantId: string) {
     await this.reclaimLegacyCommercialFunnels(tenantId);
-    await this.ensureTenantHasFunil(tenantId, FunilTipo.comercial);
-    await this.ensureTenantHasFunil(tenantId, FunilTipo.captacao);
-    await this.ensureTenantHasFunil(tenantId, FunilTipo.venda_usados);
-    await this.ensureTenantHasFunil(tenantId, FunilTipo.pos_venda);
+    const tipos: FunilTipo[] = [
+      FunilTipo.comercial,
+      FunilTipo.captacao,
+      FunilTipo.venda_usados,
+      FunilTipo.pos_venda,
+    ];
+    for (const tipo of tipos) {
+      try {
+        await this.ensureTenantHasFunil(tenantId, tipo);
+      } catch (error) {
+        this.logger.error(
+          `ensureTenantHasFunil(${tipo}) falhou no tenant ${tenantId}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+        if (tipo === FunilTipo.comercial) throw error;
+      }
+    }
   }
 
   /**
