@@ -245,6 +245,7 @@ model Tenant {
   propostaPublicaLinks           PropostaPublicaLink[]
   propostaHistoricos             PropostaHistorico[]
   tarefas                        Tarefa[]
+  lembretesPessoais              LembretePessoal[]
   documentoTags                  DocumentoTag[]
   arquivosDocumentos             ArquivoDocumento[]
   arquivoVinculos                ArquivoVinculo[]
@@ -534,6 +535,7 @@ model User {
   presencaLancamentos             PresencaLancamento[]
   tarefasResponsavel              Tarefa[] @relation("TarefaResponsavel")
   tarefasCriadas                  Tarefa[] @relation("TarefaCriador")
+  lembretesPessoais               LembretePessoal[]
   tarefaComentarios               TarefaComentario[]
   whatsappTags                    WhatsappUserTag[]
   whatsappChatTags                WhatsappUserChatTag[]
@@ -4161,6 +4163,35 @@ model TarefaComentario {
 
   @@index([tarefaId])
   @@map("tarefa_comentarios")
+}
+
+/// Com que frequência o aviso volta a aparecer no próximo login.
+enum LembretePessoalRecorrencia {
+  sempre
+  diaria
+  semanal
+  mensal
+  uma_vez
+}
+
+/// Aviso pessoal exibido ao entrar no CRM, com recorrência escolhida pelo usuário.
+model LembretePessoal {
+  id              String                     @id @default(uuid())
+  tenantId        String
+  tenant          Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  titulo          String
+  descricao       String                     @default("")
+  ativo           Boolean                    @default(true)
+  recorrencia     LembretePessoalRecorrencia @default(sempre)
+  reconhecidoEm   DateTime?
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+
+  @@index([userId, ativo])
+  @@index([tenantId, userId])
+  @@map("lembretes_pessoais")
 }
 
 enum ArquivoCategoria {

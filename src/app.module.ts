@@ -22,6 +22,7 @@ import { ImoveisUsadosModule } from './imoveis-usados/imoveis-usados.module';
 import { PortalProprietarioModule } from './portal-proprietario/portal-proprietario.module';
 import { ParceriasModule } from './parcerias/parcerias.module';
 import { TarefasModule } from './tarefas/tarefas.module';
+import { LembretesModule } from './lembretes/lembretes.module';
 import { ArquivosModule } from './arquivos/arquivos.module';
 import { ProcessosModule } from './processos/processos.module';
 import { ConstrutorasModule } from './construtoras/construtoras.module';
@@ -94,6 +95,7 @@ import { THROTTLE } from './config/security.constants';
     PortalProprietarioModule,
     ParceriasModule,
     TarefasModule,
+    LembretesModule,
     ArquivosModule,
     ProcessosModule,
   ],
