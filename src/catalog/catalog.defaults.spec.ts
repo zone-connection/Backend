@@ -4,6 +4,7 @@ import {
   DEFAULT_CAPTATION_FUNNEL_STAGES,
   DEFAULT_DOCUMENTACAO_STATUS1,
   DEFAULT_FUNNEL_STAGES,
+  DEFAULT_POS_VENDA_FUNNEL_STAGES,
   DEFAULT_VENDA_USADOS_FUNNEL_STAGES,
   defaultStagesForTipo,
 } from './catalog.defaults';
@@ -51,5 +52,14 @@ describe('etapas padrão por tipo de funil', () => {
       stages.filter((s) => s.papel === 'analise').length,
       0,
     );
+  });
+
+  it('pós-venda tem entrada, concluído e cancelado', () => {
+    const stages = defaultStagesForTipo('pos_venda');
+    assert.equal(stages, DEFAULT_POS_VENDA_FUNNEL_STAGES);
+    assert.equal(stages.length, 6);
+    assert.equal(stages[0]?.papel, 'inicial');
+    assert.ok(stages.some((s) => s.papel === 'concluido'));
+    assert.ok(stages.some((s) => s.papel === 'perdido'));
   });
 });

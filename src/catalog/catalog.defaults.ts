@@ -5,7 +5,13 @@
  */
 export const DEFAULT_INITIAL_STAGE_SLUG = 'novo';
 
-export type DefaultFunnelPapel = 'inicial' | 'analise' | 'venda' | 'captado' | 'perdido';
+export type DefaultFunnelPapel =
+  | 'inicial'
+  | 'analise'
+  | 'venda'
+  | 'captado'
+  | 'perdido'
+  | 'concluido';
 
 export interface DefaultFunnelStage {
   label: string;
@@ -89,12 +95,17 @@ export const DEFAULT_FUNNEL_STAGES: readonly DefaultFunnelStage[] = [
 ] as const;
 
 /** Tipo de operação do funil (espelha o enum Prisma FunilTipo). */
-export type FunilOperacaoTipo = 'comercial' | 'captacao' | 'venda_usados';
+export type FunilOperacaoTipo =
+  | 'comercial'
+  | 'captacao'
+  | 'venda_usados'
+  | 'pos_venda';
 
 export const DEFAULT_FUNIL_NAME: Record<FunilOperacaoTipo, string> = {
   comercial: 'Funil padrão',
   captacao: 'Funil de Captação',
   venda_usados: 'Funil de Venda de Usados',
+  pos_venda: 'Funil de Pós-venda',
 };
 
 export const DEFAULT_CAPTATION_FUNNEL_STAGES: readonly DefaultFunnelStage[] = [
@@ -212,11 +223,54 @@ export const DEFAULT_VENDA_USADOS_FUNNEL_STAGES: readonly DefaultFunnelStage[] =
     },
   ] as const;
 
+export const DEFAULT_POS_VENDA_FUNNEL_STAGES: readonly DefaultFunnelStage[] = [
+  {
+    label: 'Entrada',
+    slug: 'entrada-pos-venda',
+    color: 'bg-slate-200 text-slate-700',
+    sortOrder: 0,
+    papel: 'inicial',
+  },
+  {
+    label: 'Documentação',
+    slug: 'documentacao-pos-venda',
+    color: 'bg-indigo-100 text-indigo-700',
+    sortOrder: 1,
+  },
+  {
+    label: 'Pendências',
+    slug: 'pendencias-pos-venda',
+    color: 'bg-amber-100 text-amber-700',
+    sortOrder: 2,
+  },
+  {
+    label: 'Em andamento',
+    slug: 'em-andamento-pos-venda',
+    color: 'bg-cyan-100 text-cyan-700',
+    sortOrder: 3,
+  },
+  {
+    label: 'Concluído',
+    slug: 'concluido-pos-venda',
+    color: 'bg-green-200 text-green-800',
+    sortOrder: 4,
+    papel: 'concluido',
+  },
+  {
+    label: 'Cancelado',
+    slug: 'cancelado-pos-venda',
+    color: 'bg-red-100 text-red-700',
+    sortOrder: 5,
+    papel: 'perdido',
+  },
+] as const;
+
 export function defaultStagesForTipo(
   tipo: FunilOperacaoTipo,
 ): readonly DefaultFunnelStage[] {
   if (tipo === 'captacao') return DEFAULT_CAPTATION_FUNNEL_STAGES;
   if (tipo === 'venda_usados') return DEFAULT_VENDA_USADOS_FUNNEL_STAGES;
+  if (tipo === 'pos_venda') return DEFAULT_POS_VENDA_FUNNEL_STAGES;
   return DEFAULT_FUNNEL_STAGES;
 }
 

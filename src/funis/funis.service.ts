@@ -997,6 +997,7 @@ export class FunisService {
     await this.ensureTenantHasFunil(tenantId, FunilTipo.comercial);
     await this.ensureTenantHasFunil(tenantId, FunilTipo.captacao);
     await this.ensureTenantHasFunil(tenantId, FunilTipo.venda_usados);
+    await this.ensureTenantHasFunil(tenantId, FunilTipo.pos_venda);
   }
 
   /**

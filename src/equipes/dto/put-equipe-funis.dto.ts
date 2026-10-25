@@ -15,4 +15,9 @@ export class PutEquipeFunisDto {
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsUUID()
   venda_usados?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID()
+  pos_venda?: string | null;
 }

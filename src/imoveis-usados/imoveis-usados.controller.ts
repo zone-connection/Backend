@@ -19,7 +19,10 @@ import { VendaUsadoFluxoService } from './venda-usado-fluxo.service';
 import { VendaUsadoFechamentoService } from './venda-usado-fechamento.service';
 import { ImovelChaveService } from './imovel-chave.service';
 import { VendaUsadoPosVendaService } from './venda-usado-pos-venda.service';
-import { IMOVEIS_USADOS_ROLES } from './imoveis-usados.roles';
+import {
+  IMOVEIS_USADOS_ROLES,
+  POS_VENDA_ENCAMINHAR_ROLES,
+} from './imoveis-usados.roles';
 import {
   CreateVendaUsadoDto,
   QueryVendasUsadoDto,
@@ -49,6 +52,7 @@ import {
   CreatePosVendaDto,
   CreatePosVendaPendenciaDto,
   MovimentarChaveDto,
+  MoverPosVendaEtapaDto,
   UpdateImovelChaveDto,
   UpdatePosVendaDto,
   UpdatePosVendaPendenciaDto,
@@ -474,6 +478,12 @@ export class ImoveisUsadosController {
     return this.chaves.historico(id, chaveId, user);
   }
 
+  @Get('pos-vendas')
+  @Roles(...IMOVEIS_USADOS_ROLES)
+  listPosVendas(@CurrentUser() user: AuthenticatedUser) {
+    return this.posVenda.list(user);
+  }
+
   @Get(':id/pos-venda')
   @Roles(...IMOVEIS_USADOS_ROLES)
   getPosVenda(
@@ -484,13 +494,32 @@ export class ImoveisUsadosController {
   }
 
   @Post(':id/pos-venda')
-  @Roles(...IMOVEIS_USADOS_ROLES)
+  @Roles(...POS_VENDA_ENCAMINHAR_ROLES)
   iniciarPosVenda(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreatePosVendaDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.posVenda.iniciar(id, dto, user);
+  }
+
+  @Post(':id/pos-venda/encaminhar')
+  @Roles(...POS_VENDA_ENCAMINHAR_ROLES)
+  encaminharPosVenda(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreatePosVendaDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.posVenda.encaminhar(id, dto, user);
+  }
+
+  @Post(':id/pos-venda/recusar')
+  @Roles(...POS_VENDA_ENCAMINHAR_ROLES)
+  recusarPosVenda(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.posVenda.recusar(id, user);
   }
 
   @Patch(':id/pos-venda')
@@ -501,6 +530,16 @@ export class ImoveisUsadosController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.posVenda.update(id, dto, user);
+  }
+
+  @Post(':id/pos-venda/mover-etapa')
+  @Roles(...IMOVEIS_USADOS_ROLES)
+  moverPosVendaEtapa(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: MoverPosVendaEtapaDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.posVenda.moverEtapa(id, dto.funilEtapaId, user);
   }
 
   @Post(':id/pos-venda/concluir')

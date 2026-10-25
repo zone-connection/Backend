@@ -527,6 +527,8 @@ model User {
   muralMovimentosConfirmouPara    MuralChaveMovimento[] @relation("MuralMovConfirmouPara")
   vendasUsadoPosVenda             VendaUsadoPosVenda[] @relation("VendaUsadoPosVendaResponsavel")
   vendasUsadoPosVendaPendencia    VendaUsadoPosVendaPendencia[] @relation("VendaUsadoPosVendaPendenciaResponsavel")
+  vendasUsadoPosVendaEncaminhadas VendaUsadoPosVenda[] @relation("VendaUsadoPosVendaEncaminhadoPor")
+  vendasUsadoPosVendaRecusadas    VendaUsado[] @relation("VendaUsadoPosVendaRecusa")
   parceriasConvidadas             Parceria[] @relation("ParceriaConvidadoPor")
   parceriasParticipacaoCasa       ParceriaParticipacao[] @relation("ParceriaParticipacaoResponsavel")
   presencaLancamentos             PresencaLancamento[]
@@ -1991,6 +1993,7 @@ enum FunilEtapaPapel {
   venda
   captado
   perdido
+  concluido
 }
 
 /// Tipo de operação do funil. Um funil ativo por (tenant, tipo).
@@ -1998,6 +2001,7 @@ enum FunilTipo {
   comercial
   captacao
   venda_usados
+  pos_venda
 }
 
 /// Funil nomeado do tenant. Um `ativo` por tipo de operação.
@@ -2026,6 +2030,7 @@ model Funil {
   leads Lead[]
   captacoes Captacao[]
   vendasUsado VendaUsado[]
+  posVendas VendaUsadoPosVenda[]
   equipeFunis EquipeFunil[]
 
   createdAt DateTime @default(now())
@@ -2123,6 +2128,7 @@ model FunilEtapa {
 
   captacoes Captacao[]
   vendasUsado VendaUsado[]
+  posVendas VendaUsadoPosVenda[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2758,6 +2764,11 @@ model VendaUsado {
   chaveMovimentos ImovelChaveMovimento[]
   posVenda   VendaUsadoPosVenda?
 
+  /// Gerente/admin recusou encaminhar ao funil de pós-venda (pode encaminhar depois).
+  posVendaRecusadoEm    DateTime?
+  posVendaRecusadoPorId String?
+  posVendaRecusadoPor   User?     @relation("VendaUsadoPosVendaRecusa", fields: [posVendaRecusadoPorId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3206,7 +3217,7 @@ model MuralChaveMovimento {
   @@map("mural_chave_movimentos")
 }
 
-/// Acompanhamento após a venda concluída.
+/// Acompanhamento após a venda concluída (funil de pós-venda).
 model VendaUsadoPosVenda {
   id             String                   @id @default(uuid())
   tenantId       String
@@ -3221,10 +3232,23 @@ model VendaUsadoPosVenda {
   proprietario   Proprietario             @relation(fields: [proprietarioId], references: [id], onDelete: Restrict)
   responsavelId  String
   responsavel    User                     @relation("VendaUsadoPosVendaResponsavel", fields: [responsavelId], references: [id], onDelete: Restrict)
+  funilId        String?
+  funil          Funil?                   @relation(fields: [funilId], references: [id], onDelete: Restrict)
+  funilEtapaId   String?
+  funilEtapa     FunilEtapa?              @relation(fields: [funilEtapaId], references: [id], onDelete: Restrict)
   status         VendaUsadoPosVendaStatus @default(pendente)
   observacoes    String                   @default("")
   concluidoAt    DateTime?
   canceladoAt    DateTime?
+  encaminhadoEm  DateTime?
+  encaminhadoPorId String?
+  encaminhadoPor User?                    @relation("VendaUsadoPosVendaEncaminhadoPor", fields: [encaminhadoPorId], references: [id], onDelete: SetNull)
+
+  stageEnteredAt    DateTime @default(now())
+  lastStageChangeAt DateTime @default(now())
+  lastMovementAt    DateTime @default(now())
+  prazoDueAt        DateTime?
+  alertaProximoAt   DateTime?
 
   pendencias VendaUsadoPosVendaPendencia[]
 
@@ -3232,6 +3256,8 @@ model VendaUsadoPosVenda {
   updatedAt DateTime @updatedAt
 
   @@index([tenantId, status])
+  @@index([tenantId, funilEtapaId])
+  @@index([tenantId, responsavelId])
   @@map("venda_usado_pos_vendas")
 }
 

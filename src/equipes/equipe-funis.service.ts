@@ -25,7 +25,7 @@ export type EquipeFunilResumo = {
 };
 
 export type EquipeFunisMap = Record<
-  'comercial' | 'captacao' | 'venda_usados',
+  'comercial' | 'captacao' | 'venda_usados' | 'pos_venda',
   EquipeFunilResumo | null
 >;
 
@@ -33,6 +33,7 @@ const EMPTY_FUNIS: EquipeFunisMap = {
   comercial: null,
   captacao: null,
   venda_usados: null,
+  pos_venda: null,
 };
 
 @Injectable()
@@ -54,6 +55,7 @@ export class EquipeFunisService {
       if (row.tipo === FunilTipo.comercial) out.comercial = row.funil;
       if (row.tipo === FunilTipo.captacao) out.captacao = row.funil;
       if (row.tipo === FunilTipo.venda_usados) out.venda_usados = row.funil;
+      if (row.tipo === FunilTipo.pos_venda) out.pos_venda = row.funil;
     }
     return out;
   }
@@ -98,6 +100,10 @@ export class EquipeFunisService {
       {
         tipo: FunilTipo.venda_usados,
         funilId: this.normalizeId(dto.venda_usados),
+      },
+      {
+        tipo: FunilTipo.pos_venda,
+        funilId: this.normalizeId(dto.pos_venda),
       },
     ];
 

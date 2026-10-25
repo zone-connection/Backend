@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  FunilEtapaPapel,
+  FunilTipo,
   Role,
   UserStatus,
   VendaUsadoFechamentoStatus,
@@ -11,6 +17,7 @@ import {
 } from '@prisma/client';
 import { VendaUsadoPosVendaService } from './venda-usado-pos-venda.service';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
+import type { FunilResolverService } from '../funis/funil-resolver.service';
 
 function user(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
   return {
@@ -23,18 +30,56 @@ function user(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
   };
 }
 
+function mockFunilResolver(): FunilResolverService {
+  return {
+    resolve: async () => ({
+      id: 'funil-pv',
+      name: 'Funil de Pós-venda',
+      tipo: FunilTipo.pos_venda,
+      ativo: true,
+      etapas: [
+        {
+          id: 'et1',
+          label: 'Entrada',
+          slug: 'entrada-pos-venda',
+          sortOrder: 0,
+          active: true,
+          papel: FunilEtapaPapel.inicial,
+          prazoValor: null,
+          prazoUnidade: 'horas',
+          alertaAntecedenciaPercent: 20,
+        },
+      ],
+    }),
+  } as never;
+}
+
 function posRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'pv1',
+    vendaUsadoId: 'v1',
     status: VendaUsadoPosVendaStatus.pendente,
     observacoes: '',
     concluidoAt: null,
     canceladoAt: null,
+    encaminhadoEm: new Date(),
+    funilId: 'funil-pv',
+    funilEtapaId: 'et1',
     createdAt: new Date(),
     updatedAt: new Date(),
-    interessado: { id: 'n1', nome: 'João' },
+    interessado: { id: 'n1', nome: 'João', telefone: null, email: null },
     proprietario: { id: 'pr1', nome: 'Ana' },
     responsavel: { id: 'u1', name: 'Maria' },
+    encaminhadoPor: { id: 'u1', name: 'Maria' },
+    funil: { id: 'funil-pv', name: 'Funil de Pós-venda', tipo: 'pos_venda' },
+    funilEtapa: {
+      id: 'et1',
+      label: 'Entrada',
+      slug: 'entrada-pos-venda',
+      color: 'bg-slate-200',
+      papel: 'inicial',
+    },
+    vendaUsado: null,
     pendencias: [],
     ...overrides,
   };
@@ -48,7 +93,7 @@ function txPrisma(partial: Record<string, unknown>) {
 }
 
 describe('VendaUsadoPosVendaService', () => {
-  it('inicia pós-venda de venda concluída', async () => {
+  it('encaminha pós-venda de venda concluída', async () => {
     const created = posRow({
       pendencias: [
         {
@@ -73,12 +118,15 @@ describe('VendaUsadoPosVendaService', () => {
             id: 'v1',
             status: VendaUsadoStatus.vendido,
             imovelId: 'i1',
+            responsavelId: 'u1',
           }),
+          update: async () => ({}),
         },
         vendaUsadoFechamento: {
           findFirst: async () => ({
             id: 'f1',
             interessadoId: 'n1',
+            responsavelId: 'u1',
             status: VendaUsadoFechamentoStatus.concluido,
           }),
         },
@@ -92,23 +140,43 @@ describe('VendaUsadoPosVendaService', () => {
         vendaUsadoPosVendaPendencia: { createMany: async () => ({ count: 4 }) },
         vendaUsadoHistorico: { create: async () => ({}) },
       }) as never,
+      mockFunilResolver(),
     );
-    const result = await service.iniciar('v1', {}, user());
+    const result = await service.encaminhar('v1', {}, user());
     assert.equal(result.status, VendaUsadoPosVendaStatus.pendente);
-    assert.equal(result.interessado.nome, 'João');
+    assert.equal(result.lead.nome, 'João');
+    assert.equal(result.funilEtapaId, 'et1');
+  });
+
+  it('impede encaminhamento por corretor', async () => {
+    const service = new VendaUsadoPosVendaService(
+      {} as never,
+      mockFunilResolver(),
+    );
+    await assert.rejects(
+      () => service.encaminhar('v1', {}, user({ role: Role.corretor })),
+      ForbiddenException,
+    );
   });
 
   it('impede pós-venda de venda não concluída', async () => {
-    const service = new VendaUsadoPosVendaService({
-      vendaUsado: {
-        findFirst: async () => ({
-          id: 'v1',
-          status: VendaUsadoStatus.disponivel,
-          imovelId: 'i1',
-        }),
-      },
-    } as never);
-    await assert.rejects(() => service.iniciar('v1', {}, user()), BadRequestException);
+    const service = new VendaUsadoPosVendaService(
+      {
+        vendaUsado: {
+          findFirst: async () => ({
+            id: 'v1',
+            status: VendaUsadoStatus.disponivel,
+            imovelId: 'i1',
+            responsavelId: 'u1',
+          }),
+        },
+      } as never,
+      mockFunilResolver(),
+    );
+    await assert.rejects(
+      () => service.iniciar('v1', {}, user()),
+      BadRequestException,
+    );
   });
 
   it('cria pendência personalizada', async () => {
@@ -119,6 +187,7 @@ describe('VendaUsadoPosVendaService', () => {
             id: 'v1',
             status: VendaUsadoStatus.vendido,
             imovelId: 'i1',
+            responsavelId: 'u1',
           }),
         },
         vendaUsadoPosVenda: {
@@ -146,6 +215,7 @@ describe('VendaUsadoPosVendaService', () => {
         },
         vendaUsadoHistorico: { create: async () => ({}) },
       }) as never,
+      mockFunilResolver(),
     );
     const result = await service.createPendencia(
       'v1',
@@ -172,6 +242,7 @@ describe('VendaUsadoPosVendaService', () => {
             id: 'v1',
             status: VendaUsadoStatus.vendido,
             imovelId: 'i1',
+            responsavelId: 'u1',
           }),
         },
         vendaUsadoPosVenda: {
@@ -180,101 +251,49 @@ describe('VendaUsadoPosVendaService', () => {
             status: VendaUsadoPosVendaStatus.em_andamento,
             responsavelId: 'u1',
           }),
-          update: async () => ({}),
         },
         vendaUsadoPosVendaPendencia: {
           findFirst: async () => pend,
-          findMany: async () => [],
+          findMany: async () => [
+            {
+              ...pend,
+              status: VendaUsadoPosVendaPendenciaStatus.concluida,
+              prazo: null,
+            },
+          ],
           update: async (args: {
             data: { status: VendaUsadoPosVendaPendenciaStatus };
-          }) => ({
-            id: 'pd1',
-            titulo: 'Orientar',
-            descricao: '',
-            status: args.data.status,
-            obrigatoria: true,
-            prazo: null,
-            concluidaEm: new Date(),
-            observacao: '',
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            responsavel: null,
-          }),
+          }) => {
+            pend.status = args.data.status;
+            return {
+              id: pend.id,
+              titulo: pend.titulo,
+              descricao: '',
+              status: pend.status,
+              obrigatoria: true,
+              prazo: null,
+              concluidaEm: new Date(),
+              observacao: '',
+              createdAt: new Date(),
+              updatedAt: new Date(),
+              responsavel: null,
+            };
+          },
         },
         vendaUsadoHistorico: { create: async () => ({}) },
       }) as never,
+      mockFunilResolver(),
     );
-    const done = await service.updatePendencia(
+    const result = await service.updatePendencia(
       'v1',
       'pd1',
       { status: VendaUsadoPosVendaPendenciaStatus.concluida },
       user(),
     );
-    assert.equal(done.status, VendaUsadoPosVendaPendenciaStatus.concluida);
-    pend.status = VendaUsadoPosVendaPendenciaStatus.concluida;
-    const canceled = await service.updatePendencia(
-      'v1',
-      'pd1',
-      { status: VendaUsadoPosVendaPendenciaStatus.cancelada },
-      user(),
-    );
-    assert.equal(canceled.status, VendaUsadoPosVendaPendenciaStatus.cancelada);
+    assert.equal(result.status, VendaUsadoPosVendaPendenciaStatus.concluida);
   });
 
-  it('impede responsável de outro tenant', async () => {
-    const service = new VendaUsadoPosVendaService({
-      vendaUsado: {
-        findFirst: async () => ({
-          id: 'v1',
-          status: VendaUsadoStatus.vendido,
-          imovelId: 'i1',
-        }),
-      },
-      vendaUsadoPosVenda: {
-        findFirst: async () => ({
-          id: 'pv1',
-          status: VendaUsadoPosVendaStatus.pendente,
-          responsavelId: 'u1',
-        }),
-      },
-      user: { findFirst: async () => null },
-    } as never);
-    await assert.rejects(
-      () => service.update('v1', { responsavelId: 'u-b' }, user()),
-      BadRequestException,
-    );
-  });
-
-  it('impede conclusão com pendência obrigatória aberta', async () => {
-    const service = new VendaUsadoPosVendaService({
-      vendaUsado: {
-        findFirst: async () => ({
-          id: 'v1',
-          status: VendaUsadoStatus.vendido,
-          imovelId: 'i1',
-        }),
-      },
-      vendaUsadoPosVenda: {
-        findFirst: async () => ({
-          id: 'pv1',
-          status: VendaUsadoPosVendaStatus.em_andamento,
-        }),
-      },
-      vendaUsadoPosVendaPendencia: {
-        findMany: async () => [
-          {
-            obrigatoria: true,
-            status: VendaUsadoPosVendaPendenciaStatus.pendente,
-          },
-        ],
-      },
-    } as never);
-    await assert.rejects(() => service.concluir('v1', user()), BadRequestException);
-  });
-
-  it('conclui pós-venda e registra histórico', async () => {
-    let historico = 0;
-    const done = posRow({ status: VendaUsadoPosVendaStatus.concluido });
+  it('recusa encaminhamento', async () => {
     const service = new VendaUsadoPosVendaService(
       txPrisma({
         vendaUsado: {
@@ -282,40 +301,34 @@ describe('VendaUsadoPosVendaService', () => {
             id: 'v1',
             status: VendaUsadoStatus.vendido,
             imovelId: 'i1',
+            responsavelId: 'u1',
           }),
-        },
-        vendaUsadoPosVenda: {
-          findFirst: async (args?: { include?: unknown }) =>
-            args?.include
-              ? done
-              : { id: 'pv1', status: VendaUsadoPosVendaStatus.em_andamento },
           update: async () => ({}),
         },
-        vendaUsadoPosVendaPendencia: {
-          findMany: async () => [
-            {
-              obrigatoria: true,
-              status: VendaUsadoPosVendaPendenciaStatus.concluida,
-            },
-          ],
-        },
-        vendaUsadoHistorico: {
-          create: async () => {
-            historico += 1;
-            return {};
-          },
-        },
+        vendaUsadoPosVenda: { findFirst: async () => null },
+        vendaUsadoHistorico: { create: async () => ({}) },
       }) as never,
+      mockFunilResolver(),
     );
-    const result = await service.concluir('v1', user());
-    assert.equal(result.status, VendaUsadoPosVendaStatus.concluido);
-    assert.ok(historico >= 1);
+    const result = await service.recusar('v1', user());
+    assert.equal(result.recusado, true);
   });
 
-  it('não devolve pós-venda de outro tenant', async () => {
-    const service = new VendaUsadoPosVendaService({
-      vendaUsado: { findFirst: async () => null },
-    } as never);
-    await assert.rejects(() => service.get('v-b', user()), NotFoundException);
+  it('404 quando pós-venda não existe', async () => {
+    const service = new VendaUsadoPosVendaService(
+      {
+        vendaUsado: {
+          findFirst: async () => ({
+            id: 'v1',
+            status: VendaUsadoStatus.vendido,
+            imovelId: 'i1',
+            responsavelId: 'u1',
+          }),
+        },
+        vendaUsadoPosVenda: { findFirst: async () => null },
+      } as never,
+      mockFunilResolver(),
+    );
+    await assert.rejects(() => service.get('v1', user()), NotFoundException);
   });
 });

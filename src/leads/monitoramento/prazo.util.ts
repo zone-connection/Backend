@@ -73,7 +73,8 @@ export function isEtapaTerminal(
   return (
     papel === FunilEtapaPapel.venda ||
     papel === FunilEtapaPapel.captado ||
-    papel === FunilEtapaPapel.perdido
+    papel === FunilEtapaPapel.perdido ||
+    papel === FunilEtapaPapel.concluido
   );
 }
 

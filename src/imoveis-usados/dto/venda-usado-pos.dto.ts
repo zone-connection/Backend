@@ -104,6 +104,10 @@ export class CreatePosVendaDto {
   responsavelId?: string;
 
   @IsOptional()
+  @IsUUID()
+  funilId?: string;
+
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   observacoes?: string;
@@ -119,9 +123,18 @@ export class UpdatePosVendaDto {
   responsavelId?: string;
 
   @IsOptional()
+  @IsUUID()
+  funilEtapaId?: string;
+
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   observacoes?: string;
+}
+
+export class MoverPosVendaEtapaDto {
+  @IsUUID()
+  funilEtapaId!: string;
 }
 
 export class CreatePosVendaPendenciaDto {

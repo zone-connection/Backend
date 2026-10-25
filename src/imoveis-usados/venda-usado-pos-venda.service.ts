@@ -1,9 +1,12 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import {
+  FunilEtapaPapel,
+  FunilTipo,
   UserStatus,
   VendaUsadoFechamentoStatus,
   VendaUsadoHistoricoTipo,
@@ -14,6 +17,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
+import { FunilResolverService } from '../funis/funil-resolver.service';
+import {
+  prazoFieldsForEtapa,
+  type OperacaoEtapaPrazo,
+} from '../operacao/operacao-monitoramento.util';
 import {
   CreatePosVendaDto,
   CreatePosVendaPendenciaDto,
@@ -21,12 +29,53 @@ import {
   UpdatePosVendaPendenciaDto,
 } from './dto/venda-usado-pos.dto';
 import { POS_VENDA_PENDENCIAS_PADRAO } from './venda-usado-pos.defaults';
+import { canEncaminharPosVenda } from './imoveis-usados.roles';
 import { POS_VENDA_STATUS_LABEL } from './venda-usado.matching';
 
+function posVendaStageTiming(now: Date, etapa: OperacaoEtapaPrazo | null) {
+  return {
+    stageEnteredAt: now,
+    lastStageChangeAt: now,
+    lastMovementAt: now,
+    ...prazoFieldsForEtapa(now, etapa),
+  };
+}
+
 const posInclude = {
-  interessado: { select: { id: true, nome: true } },
+  interessado: { select: { id: true, nome: true, telefone: true, email: true } },
   proprietario: { select: { id: true, nome: true } },
   responsavel: { select: { id: true, name: true } },
+  encaminhadoPor: { select: { id: true, name: true } },
+  funil: { select: { id: true, name: true, tipo: true } },
+  funilEtapa: {
+    select: { id: true, label: true, slug: true, color: true, papel: true },
+  },
+  vendaUsado: {
+    select: {
+      id: true,
+      status: true,
+      precoVenda: true,
+      posVendaRecusadoEm: true,
+      responsavel: { select: { id: true, name: true } },
+      imovel: {
+        select: {
+          id: true,
+          tipo: true,
+          logradouro: true,
+          numero: true,
+          bairro: true,
+          cidade: true,
+          estado: true,
+        },
+      },
+      fechamento: {
+        select: {
+          concluidoAt: true,
+          proposta: { select: { valor: true } },
+        },
+      },
+    },
+  },
   pendencias: {
     include: { responsavel: { select: { id: true, name: true } } },
     orderBy: { createdAt: 'asc' as const },
@@ -35,7 +84,27 @@ const posInclude = {
 
 @Injectable()
 export class VendaUsadoPosVendaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly funilResolver: FunilResolverService,
+  ) {}
+
+  async list(user: AuthenticatedUser) {
+    const tenantId = requireTenantId(user);
+    const rows = await this.prisma.vendaUsadoPosVenda.findMany({
+      where: {
+        tenantId,
+        status: {
+          notIn: [
+            VendaUsadoPosVendaStatus.cancelado,
+          ],
+        },
+      },
+      include: posInclude as never,
+      orderBy: { updatedAt: 'desc' },
+    });
+    return (rows as never[]).map((row) => this.expose(row as never));
+  }
 
   async get(vendaId: string, user: AuthenticatedUser) {
     const tenantId = requireTenantId(user);
@@ -48,7 +117,76 @@ export class VendaUsadoPosVendaService {
     return this.expose(row as never);
   }
 
-  async iniciar(vendaId: string, dto: CreatePosVendaDto, user: AuthenticatedUser) {
+  /** Encaminha a venda concluída ao funil de pós-venda (só admin/gerente). */
+  async encaminhar(
+    vendaId: string,
+    dto: CreatePosVendaDto,
+    user: AuthenticatedUser,
+  ) {
+    this.assertPodeEncaminhar(user);
+    return this.iniciar(vendaId, dto, user, true);
+  }
+
+  /** Registra recusa de encaminhamento sem criar o processo. */
+  async recusar(vendaId: string, user: AuthenticatedUser) {
+    this.assertPodeEncaminhar(user);
+    const tenantId = requireTenantId(user);
+    const venda = await this.requireVenda(vendaId, tenantId);
+    if (venda.status !== VendaUsadoStatus.vendido) {
+      throw new BadRequestException(
+        'Só é possível recusar o encaminhamento de uma venda concluída.',
+      );
+    }
+    const existente = await this.prisma.vendaUsadoPosVenda.findFirst({
+      where: {
+        vendaUsadoId: vendaId,
+        tenantId,
+        status: { not: VendaUsadoPosVendaStatus.cancelado },
+      },
+      select: { id: true },
+    });
+    if (existente) {
+      throw new BadRequestException(
+        'Esta venda já possui um processo de pós-venda.',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.vendaUsado.update({
+        where: { id: vendaId },
+        data: {
+          posVendaRecusadoEm: new Date(),
+          posVendaRecusadoPorId: user.id,
+        },
+      });
+      await tx.vendaUsadoHistorico.create({
+        data: {
+          tenantId,
+          vendaUsadoId: vendaId,
+          tipo: VendaUsadoHistoricoTipo.pos_venda,
+          texto: `${user.name} optou por não encaminhar a venda ao funil de pós-venda.`,
+          autorId: user.id,
+        },
+      });
+    });
+
+    return {
+      ok: true as const,
+      recusado: true as const,
+      recusadoEm: new Date().toISOString(),
+      recusadoPor: { id: user.id, name: user.name },
+    };
+  }
+
+  async iniciar(
+    vendaId: string,
+    dto: CreatePosVendaDto,
+    user: AuthenticatedUser,
+    fromEncaminhar = false,
+  ) {
+    if (!fromEncaminhar) {
+      this.assertPodeEncaminhar(user);
+    }
     const tenantId = requireTenantId(user);
     const venda = await this.requireVenda(vendaId, tenantId);
     if (venda.status !== VendaUsadoStatus.vendido) {
@@ -83,8 +221,33 @@ export class VendaUsadoPosVendaService {
     });
     if (!imovel) throw new NotFoundException('Imóvel não encontrado.');
 
-    const responsavelId = dto.responsavelId ?? user.id;
+    const responsavelId =
+      dto.responsavelId ??
+      fechamento.responsavelId ??
+      venda.responsavelId ??
+      user.id;
     await this.requireResponsavel(responsavelId, tenantId);
+
+    const funil = await this.funilResolver.resolve({
+      tenantId,
+      tipo: FunilTipo.pos_venda,
+      userId: responsavelId,
+      funilId: dto.funilId,
+    });
+    const etapaInicial =
+      funil.etapas
+        .filter((e) => e.active)
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .find((e) => e.papel === FunilEtapaPapel.inicial) ??
+      funil.etapas
+        .filter((e) => e.active)
+        .sort((a, b) => a.sortOrder - b.sortOrder)[0];
+    if (!etapaInicial) {
+      throw new BadRequestException(
+        'O funil de pós-venda não possui etapas ativas. Configure as etapas em Configurações.',
+      );
+    }
+    const timing = posVendaStageTiming(new Date(), etapaInicial);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const pos = existente
@@ -94,10 +257,15 @@ export class VendaUsadoPosVendaService {
               interessadoId: fechamento.interessadoId,
               proprietarioId: imovel.proprietarioId,
               responsavelId,
+              funilId: funil.id,
+              funilEtapaId: etapaInicial.id,
               status: VendaUsadoPosVendaStatus.pendente,
               observacoes: dto.observacoes?.trim() ?? '',
               concluidoAt: null,
               canceladoAt: null,
+              encaminhadoEm: new Date(),
+              encaminhadoPorId: user.id,
+              ...timing,
             },
           })
         : await tx.vendaUsadoPosVenda.create({
@@ -108,7 +276,12 @@ export class VendaUsadoPosVendaService {
               interessadoId: fechamento.interessadoId,
               proprietarioId: imovel.proprietarioId,
               responsavelId,
+              funilId: funil.id,
+              funilEtapaId: etapaInicial.id,
               observacoes: dto.observacoes?.trim() ?? '',
+              encaminhadoEm: new Date(),
+              encaminhadoPorId: user.id,
+              ...timing,
             },
           });
       if (existente) {
@@ -125,12 +298,19 @@ export class VendaUsadoPosVendaService {
           obrigatoria: item.obrigatoria,
         })),
       });
+      await tx.vendaUsado.update({
+        where: { id: vendaId },
+        data: {
+          posVendaRecusadoEm: null,
+          posVendaRecusadoPorId: null,
+        },
+      });
       await tx.vendaUsadoHistorico.create({
         data: {
           tenantId,
           vendaUsadoId: vendaId,
           tipo: VendaUsadoHistoricoTipo.pos_venda,
-          texto: `${user.name} iniciou o pós-venda.`,
+          texto: `${user.name} encaminhou a venda ao funil de pós-venda (${etapaInicial.label}).`,
           autorId: user.id,
         },
       });
@@ -155,13 +335,18 @@ export class VendaUsadoPosVendaService {
     if (dto.responsavelId) {
       await this.requireResponsavel(dto.responsavelId, tenantId);
     }
+    if (dto.funilEtapaId) {
+      return this.moverEtapa(vendaId, dto.funilEtapaId, user);
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.vendaUsadoPosVenda.update({
         where: { id: pos.id },
         data: {
           ...(dto.responsavelId ? { responsavelId: dto.responsavelId } : {}),
-          ...(dto.observacoes != null ? { observacoes: dto.observacoes.trim() } : {}),
+          ...(dto.observacoes != null
+            ? { observacoes: dto.observacoes.trim() }
+            : {}),
           ...(dto.status === VendaUsadoPosVendaStatus.cancelado
             ? {
                 status: VendaUsadoPosVendaStatus.cancelado,
@@ -192,6 +377,73 @@ export class VendaUsadoPosVendaService {
           },
         });
       }
+      return row;
+    });
+    return this.expose(updated as never);
+  }
+
+  async moverEtapa(
+    vendaId: string,
+    funilEtapaId: string,
+    user: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(user);
+    const pos = await this.requirePos(vendaId, tenantId);
+    this.assertAberto(pos.status);
+    if (!pos.funilId) {
+      throw new BadRequestException(
+        'Este pós-venda ainda não está vinculado a um funil. Encaminhe novamente.',
+      );
+    }
+    if (pos.funilEtapaId === funilEtapaId) {
+      const current = await this.prisma.vendaUsadoPosVenda.findFirstOrThrow({
+        where: { id: pos.id, tenantId },
+        include: posInclude as never,
+      });
+      return this.expose(current as never);
+    }
+
+    const etapa = await this.prisma.funilEtapa.findFirst({
+      where: {
+        id: funilEtapaId,
+        funilId: pos.funilId,
+        active: true,
+      },
+    });
+    if (!etapa) {
+      throw new BadRequestException('Etapa inválida para este funil de pós-venda.');
+    }
+
+    const timing = posVendaStageTiming(new Date(), etapa);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const data: Record<string, unknown> = {
+        funilEtapaId: etapa.id,
+        ...timing,
+      };
+      if (etapa.papel === FunilEtapaPapel.concluido) {
+        data.status = VendaUsadoPosVendaStatus.concluido;
+        data.concluidoAt = new Date();
+      } else if (etapa.papel === FunilEtapaPapel.perdido) {
+        data.status = VendaUsadoPosVendaStatus.cancelado;
+        data.canceladoAt = new Date();
+      } else if (pos.status === VendaUsadoPosVendaStatus.pendente) {
+        data.status = VendaUsadoPosVendaStatus.em_andamento;
+      }
+
+      const row = await tx.vendaUsadoPosVenda.update({
+        where: { id: pos.id },
+        data,
+        include: posInclude as never,
+      });
+      await tx.vendaUsadoHistorico.create({
+        data: {
+          tenantId,
+          vendaUsadoId: vendaId,
+          tipo: VendaUsadoHistoricoTipo.pos_venda,
+          texto: `${user.name} moveu o pós-venda para "${etapa.label}".`,
+          autorId: user.id,
+        },
+      });
       return row;
     });
     return this.expose(updated as never);
@@ -278,7 +530,9 @@ export class VendaUsadoPosVendaService {
           ...(dto.prazo !== undefined
             ? { prazo: dto.prazo ? new Date(dto.prazo) : null }
             : {}),
-          ...(dto.observacao != null ? { observacao: dto.observacao.trim() } : {}),
+          ...(dto.observacao != null
+            ? { observacao: dto.observacao.trim() }
+            : {}),
           ...(next === VendaUsadoPosVendaPendenciaStatus.concluida
             ? { concluidaEm: now }
             : {}),
@@ -326,12 +580,32 @@ export class VendaUsadoPosVendaService {
         'Conclua as pendências obrigatórias antes de encerrar o pós-venda.',
       );
     }
+
+    let etapaConcluidaId: string | null = null;
+    if (pos.funilId) {
+      const etapa = await this.prisma.funilEtapa.findFirst({
+        where: {
+          funilId: pos.funilId,
+          active: true,
+          papel: FunilEtapaPapel.concluido,
+        },
+        orderBy: { sortOrder: 'asc' },
+      });
+      etapaConcluidaId = etapa?.id ?? null;
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.vendaUsadoPosVenda.update({
         where: { id: pos.id },
         data: {
           status: VendaUsadoPosVendaStatus.concluido,
           concluidoAt: new Date(),
+          ...(etapaConcluidaId
+            ? {
+                funilEtapaId: etapaConcluidaId,
+                ...posVendaStageTiming(new Date(), null),
+              }
+            : {}),
         },
       });
       await tx.vendaUsadoHistorico.create({
@@ -345,6 +619,14 @@ export class VendaUsadoPosVendaService {
       });
     });
     return this.get(vendaId, user);
+  }
+
+  private assertPodeEncaminhar(user: AuthenticatedUser) {
+    if (!canEncaminharPosVenda(user.role)) {
+      throw new ForbiddenException(
+        'Apenas gerente ou administrador podem encaminhar ao funil de pós-venda.',
+      );
+    }
   }
 
   private async syncPosStatus(
@@ -397,7 +679,7 @@ export class VendaUsadoPosVendaService {
   private async requireVenda(id: string, tenantId: string) {
     const item = await this.prisma.vendaUsado.findFirst({
       where: { id, tenantId },
-      select: { id: true, status: true, imovelId: true },
+      select: { id: true, status: true, imovelId: true, responsavelId: true },
     });
     if (!item) throw new NotFoundException('Venda de usado não encontrada.');
     return item;
@@ -425,15 +707,50 @@ export class VendaUsadoPosVendaService {
 
   private expose(row: {
     id: string;
+    vendaUsadoId?: string;
     status: VendaUsadoPosVendaStatus;
     observacoes: string;
     concluidoAt: Date | null;
     canceladoAt: Date | null;
+    encaminhadoEm?: Date | null;
     createdAt: Date;
     updatedAt: Date;
-    interessado: { id: string; nome: string };
+    funilId?: string | null;
+    funilEtapaId?: string | null;
+    stageEnteredAt?: Date;
+    lastStageChangeAt?: Date;
+    interessado: { id: string; nome: string; telefone?: string | null; email?: string | null };
     proprietario: { id: string; nome: string };
     responsavel: { id: string; name: string };
+    encaminhadoPor?: { id: string; name: string } | null;
+    funil?: { id: string; name: string; tipo: string } | null;
+    funilEtapa?: {
+      id: string;
+      label: string;
+      slug: string;
+      color: string;
+      papel: string | null;
+    } | null;
+    vendaUsado?: {
+      id: string;
+      status: string;
+      precoVenda: unknown;
+      posVendaRecusadoEm?: Date | null;
+      responsavel?: { id: string; name: string } | null;
+      imovel?: {
+        id: string;
+        tipo?: string | null;
+        logradouro?: string | null;
+        numero?: string | null;
+        bairro?: string | null;
+        cidade?: string | null;
+        estado?: string | null;
+      } | null;
+      fechamento?: {
+        concluidoAt: Date | null;
+        proposta?: { valor: unknown } | null;
+      } | null;
+    } | null;
     pendencias: Array<{
       id: string;
       titulo: string;
@@ -456,24 +773,58 @@ export class VendaUsadoPosVendaService {
     const concluidas = row.pendencias.filter(
       (p) => p.status === VendaUsadoPosVendaPendenciaStatus.concluida,
     );
+    const valorVenda =
+      row.vendaUsado?.fechamento?.proposta?.valor ??
+      row.vendaUsado?.precoVenda ??
+      null;
     return {
       id: row.id,
+      vendaUsadoId: row.vendaUsadoId ?? row.vendaUsado?.id ?? null,
       status: row.status,
       observacoes: row.observacoes,
       concluidoAt: row.concluidoAt,
       canceladoAt: row.canceladoAt,
+      encaminhadoEm: row.encaminhadoEm ?? null,
+      encaminhadoPor: row.encaminhadoPor ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
-      interessado: row.interessado,
+      funilId: row.funilId ?? null,
+      funilEtapaId: row.funilEtapaId ?? null,
+      funil: row.funil ?? null,
+      funilEtapa: row.funilEtapa ?? null,
+      stageEnteredAt: row.stageEnteredAt ?? row.createdAt,
+      lastStageChangeAt: row.lastStageChangeAt ?? row.updatedAt,
+      /** Lead / comprador da venda de usados. */
+      lead: {
+        id: row.interessado.id,
+        nome: row.interessado.nome,
+        telefone: row.interessado.telefone ?? null,
+        email: row.interessado.email ?? null,
+      },
+      interessado: {
+        id: row.interessado.id,
+        nome: row.interessado.nome,
+      },
       proprietario: row.proprietario,
       responsavel: row.responsavel,
+      venda: row.vendaUsado
+        ? {
+            id: row.vendaUsado.id,
+            status: row.vendaUsado.status,
+            corretor: row.vendaUsado.responsavel ?? null,
+            dataVenda: row.vendaUsado.fechamento?.concluidoAt ?? null,
+            valor: valorVenda,
+            imovel: row.vendaUsado.imovel ?? null,
+          }
+        : null,
       pendencias: row.pendencias.map((p) => this.exposePendencia(p)),
       resumo: {
         total: row.pendencias.length,
         concluidas: concluidas.length,
         abertas: abertas.length,
-        atrasadas: abertas.filter((p) => p.prazo && p.prazo.getTime() < Date.now())
-          .length,
+        atrasadas: abertas.filter(
+          (p) => p.prazo && p.prazo.getTime() < Date.now(),
+        ).length,
       },
     };
   }

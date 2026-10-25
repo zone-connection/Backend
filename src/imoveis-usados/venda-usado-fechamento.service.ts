@@ -28,7 +28,7 @@ import {
   UpdateDocumentoUsadoDto,
   UpdateFechamentoUsadoDto,
 } from './dto/venda-usado-fechamento.dto';
-import { POS_VENDA_PENDENCIAS_PADRAO } from './venda-usado-pos.defaults';
+import { canEncaminharPosVenda } from './imoveis-usados.roles';
 import {
   CONTRATO_STATUS_LABEL,
   DOCUMENTO_STATUS_LABEL,
@@ -738,48 +738,13 @@ export class VendaUsadoFechamentoService {
           autorId: user.id,
         },
       });
-      const posExistente = await tx.vendaUsadoPosVenda.findFirst({
-        where: { vendaUsadoId: vendaId, tenantId },
-      });
-      if (!posExistente) {
-        const imovel = await tx.imovel.findFirst({
-          where: { id: venda.imovelId, tenantId },
-          select: { proprietarioId: true },
-        });
-        if (imovel) {
-          const pos = await tx.vendaUsadoPosVenda.create({
-            data: {
-              tenantId,
-              vendaUsadoId: vendaId,
-              imovelId: venda.imovelId,
-              interessadoId: fechamento.interessadoId,
-              proprietarioId: imovel.proprietarioId,
-              responsavelId: fechamento.responsavelId ?? user.id,
-            },
-          });
-          await tx.vendaUsadoPosVendaPendencia.createMany({
-            data: POS_VENDA_PENDENCIAS_PADRAO.map((item) => ({
-              tenantId,
-              posVendaId: pos.id,
-              titulo: item.titulo,
-              descricao: item.descricao,
-              obrigatoria: item.obrigatoria,
-            })),
-          });
-          await tx.vendaUsadoHistorico.create({
-            data: {
-              tenantId,
-              vendaUsadoId: vendaId,
-              tipo: VendaUsadoHistoricoTipo.pos_venda,
-              texto: `${user.name} iniciou o pós-venda automaticamente após a conclusão.`,
-              autorId: user.id,
-            },
-          });
-        }
-      }
     });
 
-    return this.get(vendaId, user);
+    const detalhe = await this.get(vendaId, user);
+    return {
+      ...detalhe,
+      oferecerPosVenda: canEncaminharPosVenda(user.role),
+    };
   }
 
   private async nextNumero(tenantId: string, reuse?: string) {

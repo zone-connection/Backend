@@ -1032,7 +1032,11 @@ export class TenantsService {
       });
     }
 
-    for (const tipo of [FunilTipo.captacao, FunilTipo.venda_usados] as const) {
+    for (const tipo of [
+      FunilTipo.captacao,
+      FunilTipo.venda_usados,
+      FunilTipo.pos_venda,
+    ] as const) {
       const exists = await tx.funil.findFirst({
         where: { tenantId, tipo },
         select: { id: true },
