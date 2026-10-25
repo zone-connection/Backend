@@ -3,12 +3,19 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export function isLembretesSchemaMissing(err: unknown): boolean {
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    return err.code === 'P2021' || err.code === 'P2010' || err.code === 'P2022';
+    return (
+      err.code === 'P2021' ||
+      err.code === 'P2010' ||
+      err.code === 'P2022' ||
+      err.code === 'P2011'
+    );
   }
   const message = err instanceof Error ? err.message : String(err);
   return (
-    /lembretes_pessoais/i.test(message) &&
-    /does not exist|não existe|Unknown table|relation/i.test(message)
+    /lembretes_pessoais|lembretePessoal|LembretePessoal/i.test(message) &&
+    /does not exist|não existe|Unknown table|relation|undefined|Cannot read/i.test(
+      message,
+    )
   );
 }
 

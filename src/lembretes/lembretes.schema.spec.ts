@@ -12,6 +12,15 @@ describe('isLembretesSchemaMissing', () => {
     assert.equal(isLembretesSchemaMissing(err), true);
   });
 
+  it('reconhece modelo Prisma ainda não gerado', () => {
+    assert.equal(
+      isLembretesSchemaMissing(
+        new TypeError("Cannot read properties of undefined (reading 'findMany')"),
+      ),
+      false,
+    );
+  });
+
   it('ignora conflito de unique', () => {
     const err = new Prisma.PrismaClientKnownRequestError('unique', {
       code: 'P2002',

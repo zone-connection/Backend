@@ -37,29 +37,46 @@ export class LembretesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(requester: AuthenticatedUser) {
-    const tenantId = requireTenantId(requester);
-    return this.withSchema(
-      () =>
-        this.prisma.lembretePessoal.findMany({
-          where: { tenantId, userId: requester.id },
-          select,
-          orderBy: [{ ativo: 'desc' }, { createdAt: 'desc' }],
-        }),
-      [],
-    );
+    try {
+      const tenantId = requireTenantId(requester);
+      return await this.withSchema(
+        () =>
+          this.prisma.lembretePessoal.findMany({
+            where: { tenantId, userId: requester.id },
+            select,
+            orderBy: [{ ativo: 'desc' }, { createdAt: 'desc' }],
+          }),
+        [],
+      );
+    } catch (err) {
+      this.logger.error(
+        'Falha ao listar lembretes.',
+        err instanceof Error ? err.stack : err,
+      );
+      return [];
+    }
   }
 
   async pendentes(requester: AuthenticatedUser) {
-    const tenantId = requireTenantId(requester);
-    const rows = await this.withSchema(
-      () =>
-        this.prisma.lembretePessoal.findMany({
-          where: { tenantId, userId: requester.id, ativo: true },
-          select,
-          orderBy: { createdAt: 'asc' },
-        }),
-      [],
-    );
+    let rows: Prisma.LembretePessoalGetPayload<{ select: typeof select }>[];
+    try {
+      const tenantId = requireTenantId(requester);
+      rows = await this.withSchema(
+        () =>
+          this.prisma.lembretePessoal.findMany({
+            where: { tenantId, userId: requester.id, ativo: true },
+            select,
+            orderBy: { createdAt: 'asc' },
+          }),
+        [],
+      );
+    } catch (err) {
+      this.logger.error(
+        'Falha ao listar lembretes pendentes.',
+        err instanceof Error ? err.stack : err,
+      );
+      return [];
+    }
     const agora = new Date();
     return rows.filter((row) =>
       lembreteEstaPendente(row.recorrencia, row.reconhecidoEm, agora),
