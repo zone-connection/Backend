@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { LembretePessoalRecorrencia, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
@@ -9,6 +11,10 @@ import { requireTenantId } from '../common/utils/tenant';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLembreteDto, UpdateLembreteDto } from './dto/lembrete.dto';
 import { lembreteEstaPendente } from './lembrete-recorrencia.util';
+import {
+  ensureLembretesPessoaisSchema,
+  isLembretesSchemaMissing,
+} from './lembretes.schema';
 
 const MAX_LEMBRETES = 30;
 
@@ -25,24 +31,35 @@ const select = {
 
 @Injectable()
 export class LembretesService {
+  private readonly logger = new Logger(LembretesService.name);
+  private schemaReady = false;
+
   constructor(private readonly prisma: PrismaService) {}
 
   async list(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    return this.prisma.lembretePessoal.findMany({
-      where: { tenantId, userId: requester.id },
-      select,
-      orderBy: [{ ativo: 'desc' }, { createdAt: 'desc' }],
-    });
+    return this.withSchema(
+      () =>
+        this.prisma.lembretePessoal.findMany({
+          where: { tenantId, userId: requester.id },
+          select,
+          orderBy: [{ ativo: 'desc' }, { createdAt: 'desc' }],
+        }),
+      [],
+    );
   }
 
   async pendentes(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    const rows = await this.prisma.lembretePessoal.findMany({
-      where: { tenantId, userId: requester.id, ativo: true },
-      select,
-      orderBy: { createdAt: 'asc' },
-    });
+    const rows = await this.withSchema(
+      () =>
+        this.prisma.lembretePessoal.findMany({
+          where: { tenantId, userId: requester.id, ativo: true },
+          select,
+          orderBy: { createdAt: 'asc' },
+        }),
+      [],
+    );
     const agora = new Date();
     return rows.filter((row) =>
       lembreteEstaPendente(row.recorrencia, row.reconhecidoEm, agora),
@@ -54,25 +71,29 @@ export class LembretesService {
     const titulo = dto.titulo.trim();
     if (!titulo) throw new BadRequestException('Informe o título do lembrete.');
 
-    const count = await this.prisma.lembretePessoal.count({
-      where: { tenantId, userId: requester.id },
-    });
+    const count = await this.withSchema(() =>
+      this.prisma.lembretePessoal.count({
+        where: { tenantId, userId: requester.id },
+      }),
+    );
     if (count >= MAX_LEMBRETES) {
       throw new BadRequestException(
         `Você pode ter no máximo ${MAX_LEMBRETES} lembretes.`,
       );
     }
 
-    return this.prisma.lembretePessoal.create({
-      data: {
-        tenantId,
-        userId: requester.id,
-        titulo,
-        descricao: dto.descricao?.trim() ?? '',
-        recorrencia: dto.recorrencia ?? LembretePessoalRecorrencia.sempre,
-      },
-      select,
-    });
+    return this.withSchema(() =>
+      this.prisma.lembretePessoal.create({
+        data: {
+          tenantId,
+          userId: requester.id,
+          titulo,
+          descricao: dto.descricao?.trim() ?? '',
+          recorrencia: dto.recorrencia ?? LembretePessoalRecorrencia.sempre,
+        },
+        select,
+      }),
+    );
   }
 
   async update(
@@ -93,31 +114,37 @@ export class LembretesService {
       data.ativo = dto.ativo;
       if (dto.ativo) data.reconhecidoEm = null;
     }
-    return this.prisma.lembretePessoal.update({
-      where: { id },
-      data,
-      select,
-    });
+    return this.withSchema(() =>
+      this.prisma.lembretePessoal.update({
+        where: { id },
+        data,
+        select,
+      }),
+    );
   }
 
   async remove(id: string, requester: AuthenticatedUser) {
     await this.ensureOwned(id, requester);
-    await this.prisma.lembretePessoal.delete({ where: { id } });
+    await this.withSchema(() =>
+      this.prisma.lembretePessoal.delete({ where: { id } }),
+    );
     return { ok: true };
   }
 
   async reconhecer(id: string, requester: AuthenticatedUser) {
     const owned = await this.ensureOwned(id, requester);
-    return this.prisma.lembretePessoal.update({
-      where: { id },
-      data: {
-        reconhecidoEm: new Date(),
-        ...(owned.recorrencia === LembretePessoalRecorrencia.uma_vez
-          ? { ativo: false }
-          : {}),
-      },
-      select,
-    });
+    return this.withSchema(() =>
+      this.prisma.lembretePessoal.update({
+        where: { id },
+        data: {
+          reconhecidoEm: new Date(),
+          ...(owned.recorrencia === LembretePessoalRecorrencia.uma_vez
+            ? { ativo: false }
+            : {}),
+        },
+        select,
+      }),
+    );
   }
 
   async reconhecerPendentes(requester: AuthenticatedUser) {
@@ -130,11 +157,35 @@ export class LembretesService {
 
   private async ensureOwned(id: string, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    const row = await this.prisma.lembretePessoal.findFirst({
-      where: { id, tenantId, userId: requester.id },
-      select: { id: true, recorrencia: true },
-    });
+    const row = await this.withSchema(() =>
+      this.prisma.lembretePessoal.findFirst({
+        where: { id, tenantId, userId: requester.id },
+        select: { id: true, recorrencia: true },
+      }),
+    );
     if (!row) throw new NotFoundException('Lembrete não encontrado.');
     return row;
+  }
+
+  private async withSchema<T>(run: () => Promise<T>, fallback?: T): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      if (!isLembretesSchemaMissing(err)) throw err;
+      try {
+        await ensureLembretesPessoaisSchema(this.prisma);
+        this.schemaReady = true;
+        return await run();
+      } catch (ensureErr) {
+        this.logger.error(
+          'Tabela de lembretes pessoais indisponível.',
+          ensureErr instanceof Error ? ensureErr.stack : ensureErr,
+        );
+        if (fallback !== undefined) return fallback;
+        throw new ServiceUnavailableException(
+          'Lembretes ainda não estão disponíveis neste ambiente. Tente de novo em instantes.',
+        );
+      }
+    }
   }
 }
