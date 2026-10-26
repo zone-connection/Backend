@@ -50,7 +50,6 @@ import { CsrfGuard } from './common/guards/csrf.guard';
 import { validateEnv } from './config/env.validation';
 import { THROTTLE } from './config/security.constants';
 import { PrismaSchemaExceptionFilter } from './common/filters/prisma-schema.filter';
-import { Seguranca2faModule } from './seguranca-2fa/seguranca-2fa.module';
 
 @Module({
   imports: [
@@ -60,7 +59,6 @@ import { Seguranca2faModule } from './seguranca-2fa/seguranca-2fa.module';
     }),
     PrismaModule,
     AuthModule,
-    Seguranca2faModule,
     UsersModule,
     LeadsModule,
     CatalogModule,

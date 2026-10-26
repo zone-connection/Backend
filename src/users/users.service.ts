@@ -11,7 +11,6 @@ import {
   Prisma,
   Role,
   TenantPlano,
-  TwoFactorStatus,
   UserStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -128,10 +127,6 @@ export class UsersService {
         cor: normalizeCor(dto.cor),
         role: dto.role,
         status: dto.status ?? UserStatus.ativo,
-        twoFactorStatus:
-          dto.role === Role.admin
-            ? TwoFactorStatus.pendente
-            : TwoFactorStatus.nao_aplica,
         avatar: dto.avatar,
         permissions:
           dto.permissions !== undefined
@@ -550,16 +545,6 @@ export class UsersService {
       }
     }
 
-    let promoteTwoFactor = false;
-    if (dto.role === Role.admin) {
-      const current = await this.prisma.user.findFirst({
-        where: { id, tenantId },
-        select: { twoFactorStatus: true },
-      });
-      promoteTwoFactor =
-        current?.twoFactorStatus === TwoFactorStatus.nao_aplica;
-    }
-
     const dataNascimento =
       dto.dataNascimento !== undefined
         ? parseDataNascimento(dto.dataNascimento)
@@ -614,9 +599,6 @@ export class UsersService {
         ...(creciStatus !== undefined ? { creciStatus } : {}),
         ...(dto.cor !== undefined ? { cor: normalizeCor(dto.cor) } : {}),
         ...(dto.role !== undefined ? { role: dto.role } : {}),
-        ...(promoteTwoFactor
-          ? { twoFactorStatus: TwoFactorStatus.pendente }
-          : {}),
         ...(dto.status !== undefined ? { status: dto.status } : {}),
         ...(dto.avatar !== undefined ? { avatar: dto.avatar } : {}),
         ...(dto.financeiroCanView !== undefined

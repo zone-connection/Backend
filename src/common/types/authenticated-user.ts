@@ -1,4 +1,4 @@
-import { Role, TwoFactorStatus } from '@prisma/client';
+import { Role } from '@prisma/client';
 import type { UserPermissions } from '../utils/user-permissions';
 
 export type FinanceiroPerms = {
@@ -20,5 +20,4 @@ export interface AuthenticatedUser {
   permissions?: UserPermissions | null;
   /** Módulos do tenant (plano + operações), para guards. */
   tenantModules?: Record<string, boolean> | null;
-  twoFactorStatus?: TwoFactorStatus;
 }
