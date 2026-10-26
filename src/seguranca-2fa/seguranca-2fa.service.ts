@@ -47,19 +47,10 @@ export class Seguranca2faService {
         twoFactorChangedAt: true,
         riskTermsVersion: true,
         riskAcceptedAt: true,
-        totpBackupHashes: true,
       },
     });
     if (!user) throw new NotFoundException('Usuário não encontrado.');
-    return {
-      role: user.role,
-      twoFactorStatus: user.twoFactorStatus,
-      twoFactorDecidedAt: user.twoFactorDecidedAt,
-      twoFactorChangedAt: user.twoFactorChangedAt,
-      riskTermsVersion: user.riskTermsVersion,
-      riskAcceptedAt: user.riskAcceptedAt,
-      codigoConfirmado: user.totpBackupHashes.length > 0,
-    };
+    return user;
   }
 
   async preparar(userId: string) {
@@ -91,19 +82,10 @@ export class Seguranca2faService {
       recovery.map((item) => bcrypt.hash(item, SALT_ROUNDS)),
     );
     const inicial = user.twoFactorStatus === TwoFactorStatus.pendente;
-    if (inicial) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { totpBackupHashes: hashes },
-      });
-      return {
-        recoveryCodes: recovery,
-        twoFactorStatus: TwoFactorStatus.pendente,
-        codigoConfirmado: true,
-      };
-    }
     const now = new Date();
-    const acao = TwoFactorAuditAcao.ativar;
+    const acao = inicial
+      ? TwoFactorAuditAcao.decisao_ativar
+      : TwoFactorAuditAcao.ativar;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const saved = await tx.user.update({
@@ -134,44 +116,6 @@ export class Seguranca2faService {
     };
   }
 
-  async manter(userId: string) {
-    const user = await this.requireAdmin(userId);
-    if (user.totpBackupHashes.length === 0 || !user.totpSecretEnc) {
-      throw new BadRequestException(
-        'Confirme o código do autenticador antes de manter o 2FA.',
-      );
-    }
-    if (user.twoFactorStatus === TwoFactorStatus.ativo) {
-      return { twoFactorStatus: user.twoFactorStatus };
-    }
-    const now = new Date();
-    const inicial = user.twoFactorStatus === TwoFactorStatus.pendente;
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const saved = await tx.user.update({
-        where: { id: user.id },
-        data: {
-          twoFactorStatus: TwoFactorStatus.ativo,
-          twoFactorDecidedAt: user.twoFactorDecidedAt ?? now,
-          twoFactorChangedAt: now,
-          riskTermsVersion: null,
-          riskAcceptedAt: null,
-        },
-      });
-      const event = await tx.twoFactorAuditEvent.create({
-        data: {
-          userId: user.id,
-          tenantId: user.tenantId,
-          acao: inicial
-            ? TwoFactorAuditAcao.decisao_ativar
-            : TwoFactorAuditAcao.ativar,
-        },
-      });
-      await this.notify(tx, event.id, saved.name, user.tenantId, 'ativar', now);
-      return saved;
-    });
-    return { twoFactorStatus: updated.twoFactorStatus };
-  }
-
   async aceitarRisco(userId: string, aceito: boolean) {
     if (!aceito) {
       throw new BadRequestException('Confirme a leitura dos termos para continuar.');
@@ -179,14 +123,6 @@ export class Seguranca2faService {
     const user = await this.requireAdmin(userId);
     if (user.twoFactorStatus === TwoFactorStatus.desativado) {
       throw new BadRequestException('A autenticação de dois fatores já está desativada.');
-    }
-    if (
-      user.twoFactorStatus === TwoFactorStatus.pendente &&
-      user.totpBackupHashes.length === 0
-    ) {
-      throw new BadRequestException(
-        'Confirme o código do autenticador antes de desativar o 2FA.',
-      );
     }
     const inicial = user.twoFactorStatus === TwoFactorStatus.pendente;
     const now = new Date();
