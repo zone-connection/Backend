@@ -103,7 +103,42 @@ export async function ensurePosVendaSchema(prisma: PrismaService) {
   }
 }
 
+const ROLETA_STATEMENTS = [
+  `ALTER TYPE "LeadFilaEventoTipo" ADD VALUE IF NOT EXISTS 'redistribuicao'`,
+  `
+    ALTER TABLE "leads"
+      ADD COLUMN IF NOT EXISTS "roletaAtribuidoAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "roletaPrazoAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "roletaRedistribuido" BOOLEAN NOT NULL DEFAULT false
+  `,
+  `CREATE INDEX IF NOT EXISTS "leads_roletaPrazoAt_idx" ON "leads"("roletaPrazoAt")`,
+  `
+    ALTER TABLE "lead_fila_configs"
+      ADD COLUMN IF NOT EXISTS "redistribuirMinutos" INTEGER NOT NULL DEFAULT 0
+  `,
+];
+
+export async function ensureRoletaSchema(prisma: PrismaService) {
+  for (const sql of ROLETA_STATEMENTS) {
+    try {
+      await prisma.$executeRawUnsafe(sql);
+    } catch (err) {
+      logger.warn(
+        `Trecho da roleta não aplicado: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+}
+
 export async function ensureRuntimeSchema(prisma: PrismaService) {
+  try {
+    await ensureRoletaSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar o schema da roleta.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
   try {
     await ensurePosVendaSchema(prisma);
   } catch (err) {
