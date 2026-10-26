@@ -8,9 +8,16 @@ import { AuthService } from './auth.service';
 import { BootstrapAdminService } from './bootstrap-admin.service';
 import { TurnstileService } from './turnstile.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { Seguranca2faModule } from '../seguranca-2fa/seguranca-2fa.module';
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), PresenceModule, MediaModule],
+  imports: [
+    PassportModule,
+    JwtModule.register({}),
+    PresenceModule,
+    MediaModule,
+    Seguranca2faModule,
+  ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, BootstrapAdminService, TurnstileService],
   exports: [AuthService],

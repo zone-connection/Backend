@@ -32,4 +32,10 @@ export class LoginDto {
   @IsString()
   @MaxLength(2048)
   captchaToken?: string;
+
+  /** Código TOTP ou de recuperação, quando o 2FA já está ativo. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  totpCode?: string;
 }

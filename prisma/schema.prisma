@@ -32,6 +32,22 @@ enum UserStatus {
   inativo
 }
 
+/// Decisão de 2FA do administrador da imobiliária.
+enum TwoFactorStatus {
+  nao_aplica
+  pendente
+  ativo
+  desativado
+}
+
+/// Evento append-only. Nunca guarda segredo TOTP nem código de recuperação.
+enum TwoFactorAuditAcao {
+  decisao_ativar
+  decisao_desativar
+  ativar
+  desativar
+}
+
 /// Andamento da obtenção do CRECI do usuário.
 enum CreciProcessoStatus {
   nao_iniciado
@@ -172,6 +188,7 @@ model Tenant {
   tarefasEnabled Boolean @default(false)
 
   users             User[]
+  twoFactorAuditEvents TwoFactorAuditEvent[]
   equipes           Equipe[]
   leads             Lead[]
   interessesEmpreendimento LeadEmpreendimentoInteresse[]
@@ -544,6 +561,20 @@ model User {
   arquivoEventos                  ArquivoEvento[]
   arquivoShareLinks               ArquivoShareLink[]
 
+  /// Estado da política de 2FA. Administradores entram como pendente.
+  twoFactorStatus    TwoFactorStatus @default(nao_aplica)
+  /// Segredo TOTP cifrado (AES-GCM). Nunca vai para auditoria nem para a API.
+  totpSecretEnc      String?
+  /// Hashes dos códigos de recuperação. O texto puro só aparece uma vez na confirmação.
+  totpBackupHashes   String[]        @default([])
+  twoFactorDecidedAt DateTime?
+  twoFactorChangedAt DateTime?
+  riskTermsVersion   String?
+  riskAcceptedAt     DateTime?
+
+  twoFactorAuditEvents TwoFactorAuditEvent[]
+  platformNotificacoes PlatformNotificacao[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -553,6 +584,39 @@ model User {
   @@index([equipeId])
   @@index([tenantId])
   @@map("users")
+}
+
+/// Histórico imutável de ativações e desativações de 2FA.
+model TwoFactorAuditEvent {
+  id            String             @id @default(uuid())
+  userId        String
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId      String?
+  tenant        Tenant?            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  acao          TwoFactorAuditAcao
+  termsVersion  String?
+  createdAt     DateTime           @default(now())
+
+  @@index([userId, createdAt])
+  @@index([tenantId])
+  @@index([createdAt])
+  @@map("two_factor_audit_events")
+}
+
+/// Aviso in-app do administrador supremo (sem tenant).
+model PlatformNotificacao {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tipo      String
+  titulo    String
+  corpo     String
+  lida      Boolean  @default(false)
+  eventoId  String?  @unique
+  createdAt DateTime @default(now())
+
+  @@index([userId, lida])
+  @@map("platform_notificacoes")
 }
 
 /// Trecho contínuo de atividade no sistema (heartbeat).

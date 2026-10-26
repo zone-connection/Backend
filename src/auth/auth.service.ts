@@ -18,6 +18,7 @@ import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
+import { Seguranca2faService } from '../seguranca-2fa/seguranca-2fa.service';
 import { MediaService } from '../media/media.service';
 import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import {
@@ -95,6 +96,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly presence: PresenceService,
     private readonly media: MediaService,
+    private readonly twoFactor: Seguranca2faService,
   ) {}
 
   async login(
@@ -102,6 +104,7 @@ export class AuthService {
     password: string,
     context: RequestContext = {},
     tenantSlug?: string,
+    totpCode?: string,
   ): Promise<AuthResult> {
     const normalizedEmail = email.toLowerCase().trim();
 
@@ -146,6 +149,25 @@ export class AuthService {
     await this.assertTenantAllowsAccess(user.tenantId, async () => {
       await this.recordAttempt(normalizedEmail, false, context, 'usuario_inativo');
     });
+
+    if (
+      user.role === Role.admin &&
+      user.twoFactorStatus === 'ativo'
+    ) {
+      if (!totpCode?.trim()) {
+        throw new UnauthorizedException('TWO_FACTOR_REQUIRED');
+      }
+      const ok = await this.twoFactor.verifyLoginCode(user, totpCode);
+      if (!ok) {
+        await this.registerFailure(
+          user,
+          normalizedEmail,
+          context,
+          'senha_incorreta',
+        );
+        throw new UnauthorizedException('Código de autenticação inválido.');
+      }
+    }
 
     return this.finishLogin(user, context);
   }
@@ -682,6 +704,7 @@ export class AuthService {
       status: user.status,
       avatar: user.avatar,
       lastLoginAt: user.lastLoginAt,
+      twoFactorStatus: user.twoFactorStatus,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       temVendaVinculada: await this.resolveTemVendaVinculada(user),

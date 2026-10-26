@@ -78,6 +78,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         financeiroCanEdit: true,
         financeiroCanDelete: true,
         permissions: true,
+        twoFactorStatus: true,
         tenant: { select: { plano: true, modules: true, status: true } },
       },
     });
@@ -109,6 +110,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       tenantModules: row.tenant
         ? applyPlanoModules(row.tenant.plano, row.tenant.modules)
         : null,
+      twoFactorStatus: row.twoFactorStatus,
     };
   }
 }

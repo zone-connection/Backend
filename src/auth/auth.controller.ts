@@ -62,6 +62,7 @@ export class AuthController {
       dto.password,
       context,
       dto.tenantSlug,
+      dto.totpCode,
     );
 
     return this.sessionResponse(res, result);
