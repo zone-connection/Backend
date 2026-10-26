@@ -99,6 +99,12 @@ export class ImoveisUsadosController {
     return this.fluxo.listTodasPropostas(user);
   }
 
+  @Get('pos-vendas')
+  @Roles(...IMOVEIS_USADOS_ROLES)
+  listPosVendas(@CurrentUser() user: AuthenticatedUser) {
+    return this.posVenda.list(user);
+  }
+
   @Get()
   @Roles(...IMOVEIS_USADOS_ROLES)
   list(
@@ -476,12 +482,6 @@ export class ImoveisUsadosController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.chaves.historico(id, chaveId, user);
-  }
-
-  @Get('pos-vendas')
-  @Roles(...IMOVEIS_USADOS_ROLES)
-  listPosVendas(@CurrentUser() user: AuthenticatedUser) {
-    return this.posVenda.list(user);
   }
 
   @Get(':id/pos-venda')
