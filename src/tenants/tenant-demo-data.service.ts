@@ -51,7 +51,11 @@ import {
   VendaUsadoNegociacaoOrigem,
   VendaUsadoNegociacaoStatus,
   VendaUsadoPropostaStatus,
+  VendaUsadoPosVendaStatus,
   VendaUsadoStatus,
+  ProcessoEtapa,
+  ProcessoStatus,
+  ContratoDocumentoStatus,
   VendaUsadoVisitaInteresse,
   VendaUsadoVisitaStatus,
   TarefaEtiqueta,
@@ -145,6 +149,11 @@ export type DemoDataCounts = {
   corretoresParceiros: number;
   parcerias: number;
   tarefas: number;
+  posVendas: number;
+  funcionarios: number;
+  lembretes: number;
+  processos: number;
+  cadastroVendas: number;
 };
 
 type DemoDocumentacaoResumo = {
@@ -265,6 +274,11 @@ export class TenantDemoDataService {
       corretoresParceiros: 0,
       parcerias: 0,
       tarefas: 0,
+      posVendas: 0,
+      funcionarios: 0,
+      lembretes: 0,
+      processos: 0,
+      cadastroVendas: 0,
     };
 
     counts.catalogItems = await this.seedCatalogAndFunil(tenantId);
@@ -377,6 +391,15 @@ export class TenantDemoDataService {
       leadIdByKey,
       adminId,
     });
+    counts.posVendas = await this.seedPosVendas(tenantId, userIdByKey);
+    const cobertura = await this.seedModulosRestantes(tenantId, {
+      userIdByKey,
+      adminId,
+    });
+    counts.funcionarios = cobertura.funcionarios;
+    counts.lembretes = cobertura.lembretes;
+    counts.processos = cobertura.processos;
+    counts.cadastroVendas = cobertura.cadastroVendas;
 
     return {
       tenantId,
@@ -434,6 +457,28 @@ export class TenantDemoDataService {
         await tx.financeiroDespesaTipo.deleteMany({ where: { tenantId } });
         await tx.financeiroParceiro.deleteMany({ where: { tenantId } });
 
+        await tx.lembretePessoal.deleteMany({ where: { tenantId } });
+        await tx.contracheque.deleteMany({ where: { tenantId } });
+        await tx.funcionario.deleteMany({ where: { tenantId } });
+        await tx.contratoDocumento.deleteMany({ where: { tenantId } });
+        await tx.listaDocumentoItem.deleteMany({
+          where: { lista: { tenantId } },
+        });
+        await tx.listaDocumento.deleteMany({ where: { tenantId } });
+        await tx.processoPendenciaCorrecao.deleteMany({
+          where: { pendencia: { processo: { tenantId } } },
+        });
+        await tx.processoPendencia.deleteMany({
+          where: { processo: { tenantId } },
+        });
+        await tx.processoMovimento.deleteMany({
+          where: { processo: { tenantId } },
+        });
+        await tx.processoRetorno.deleteMany({
+          where: { processo: { tenantId } },
+        });
+        await tx.processo.deleteMany({ where: { tenantId } });
+        await tx.cadastroVenda.deleteMany({ where: { tenantId } });
         await tx.presencaLancamento.deleteMany({ where: { tenantId } });
         await tx.presencaTipo.deleteMany({ where: { tenantId } });
         await tx.propostaVinculoNotificacao.deleteMany({
@@ -1237,6 +1282,307 @@ export class TenantDemoDataService {
     return counts;
   }
 
+  /** Conclui algumas vendas de usados e coloca parte delas no funil de pós-venda. */
+  private async seedPosVendas(
+    tenantId: string,
+    userIdByKey: Map<DemoUserKey, string>,
+  ) {
+    const funil = await this.loadFunilComEtapas(tenantId, FunilTipo.pos_venda);
+    const etapas = (funil?.etapas ?? [])
+      .filter((etapa) => etapa.active)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    if (!funil || etapas.length === 0) return 0;
+
+    const vendas = await this.prisma.vendaUsado.findMany({
+      where: { tenantId },
+      select: {
+        id: true,
+        imovelId: true,
+        responsavelId: true,
+        imovel: { select: { proprietarioId: true } },
+        vinculos: { select: { interessadoId: true }, take: 1 },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 4,
+    });
+    const autorId =
+      userIdByKey.get('gerente') ?? vendas[0]?.responsavelId;
+    if (!autorId) return 0;
+
+    let criados = 0;
+    for (let i = 0; i < vendas.length; i += 1) {
+      const venda = vendas[i]!;
+      const interessadoId = venda.vinculos[0]?.interessadoId;
+      if (!interessadoId || !venda.imovel.proprietarioId) continue;
+
+      await this.prisma.vendaUsado.update({
+        where: { id: venda.id },
+        data: { status: VendaUsadoStatus.vendido },
+      });
+
+      let proposta = await this.prisma.vendaUsadoProposta.findFirst({
+        where: { vendaUsadoId: venda.id },
+        select: { id: true },
+      });
+      if (!proposta) {
+        proposta = await this.prisma.vendaUsadoProposta.create({
+          data: {
+            tenantId,
+            vendaUsadoId: venda.id,
+            interessadoId,
+            responsavelId: venda.responsavelId,
+            valor: 400000,
+            status: VendaUsadoPropostaStatus.aceita,
+            observacoes: 'Proposta aceita na carga de demonstração.',
+          },
+          select: { id: true },
+        });
+      }
+      const fechamento = await this.prisma.vendaUsadoFechamento.findUnique({
+        where: { vendaUsadoId: venda.id },
+        select: { id: true },
+      });
+      if (fechamento) {
+        await this.prisma.vendaUsadoFechamento.update({
+          where: { id: fechamento.id },
+          data: {
+            status: VendaUsadoFechamentoStatus.concluido,
+            concluidoAt: new Date(),
+            interessadoId,
+          },
+        });
+      } else {
+        await this.prisma.vendaUsadoFechamento.create({
+          data: {
+            tenantId,
+            vendaUsadoId: venda.id,
+            propostaId: proposta.id,
+            interessadoId,
+            responsavelId: venda.responsavelId,
+            status: VendaUsadoFechamentoStatus.concluido,
+            observacoes: 'Fechamento concluído na carga de demonstração.',
+            concluidoAt: new Date(),
+          },
+        });
+      }
+
+      if (i >= 2) continue;
+
+      const jaTem = await this.prisma.vendaUsadoPosVenda.findFirst({
+        where: { vendaUsadoId: venda.id },
+        select: { id: true },
+      });
+      if (jaTem) continue;
+
+      const etapa = etapas[i % etapas.length]!;
+      const tags = i === 0 ? ['Documentação', 'Prioridade'] : ['Chaves'];
+      const pos = await this.prisma.vendaUsadoPosVenda.create({
+        data: {
+          tenantId,
+          vendaUsadoId: venda.id,
+          imovelId: venda.imovelId,
+          interessadoId,
+          proprietarioId: venda.imovel.proprietarioId,
+          responsavelId: venda.responsavelId,
+          funilId: funil.id,
+          funilEtapaId: etapa.id,
+          status:
+            i === 0
+              ? VendaUsadoPosVendaStatus.em_andamento
+              : VendaUsadoPosVendaStatus.pendente,
+          observacoes: 'Acompanhamento de demonstração após a venda.',
+          tags,
+          encaminhadoEm: new Date(),
+          encaminhadoPorId: autorId,
+        },
+      });
+      await this.prisma.vendaUsadoPosVendaPendencia.create({
+        data: {
+          tenantId,
+          posVendaId: pos.id,
+          titulo: 'Entregar chaves',
+          descricao: 'Pendência gerada na carga de demonstração.',
+          obrigatoria: true,
+        },
+      });
+      criados += 1;
+    }
+    return criados;
+  }
+
+  /** Funcionários, lembretes, processos, vendas cadastradas, listas e contratos. */
+  private async seedModulosRestantes(
+    tenantId: string,
+    ctx: { userIdByKey: Map<DemoUserKey, string>; adminId: string },
+  ) {
+    const counts = {
+      funcionarios: 0,
+      lembretes: 0,
+      processos: 0,
+      cadastroVendas: 0,
+    };
+    const adminId = ctx.adminId;
+    const corretorId = ctx.userIdByKey.get('corretor1') ?? adminId;
+
+    const jaFuncionario = await this.prisma.funcionario.findFirst({
+      where: { tenantId, nome: 'Marina Duarte' },
+      select: { id: true },
+    });
+    if (!jaFuncionario) {
+      const funcionario = await this.prisma.funcionario.create({
+        data: {
+          tenantId,
+          nome: 'Marina Duarte',
+          cargo: 'Assistente administrativo',
+          empresa: 'Imobiliária',
+          codigo: 'DEMO-01',
+          salarioBruto: 3200,
+          beneficios: [{ descricao: 'Vale alimentação', valor: 400 }],
+          descontos: [{ descricao: 'INSS', valor: 280 }],
+        },
+      });
+      const agora = new Date();
+      await this.prisma.contracheque.create({
+        data: {
+          tenantId,
+          funcionarioId: funcionario.id,
+          competenciaMes: agora.getMonth() + 1,
+          competenciaAno: agora.getFullYear(),
+          nomeSnapshot: 'Marina Duarte',
+          cargoSnapshot: 'Assistente administrativo',
+          empresaSnapshot: 'Imobiliária',
+          salarioBruto: 3200,
+          beneficios: [{ descricao: 'Vale alimentação', valor: 400 }],
+          descontos: [{ descricao: 'INSS', valor: 280 }],
+          salarioLiquido: 3320,
+          dataPagamento: agora,
+        },
+      });
+      counts.funcionarios = 1;
+    }
+
+    const jaLembrete = await this.prisma.lembretePessoal.findFirst({
+      where: { tenantId, titulo: 'Revisar funil de pós-venda' },
+      select: { id: true },
+    });
+    if (!jaLembrete) {
+      await this.prisma.lembretePessoal.createMany({
+        data: [
+          {
+            tenantId,
+            userId: adminId,
+            titulo: 'Revisar funil de pós-venda',
+            descricao: 'Conferir documentos das vendas concluídas.',
+          },
+          {
+            tenantId,
+            userId: corretorId,
+            titulo: 'Ligar para interessados da semana',
+            descricao: 'Retorno das visitas de demonstração.',
+          },
+        ],
+      });
+      counts.lembretes = 2;
+    }
+
+    const leads = await this.prisma.lead.findMany({
+      where: { tenantId },
+      select: { id: true, nome: true, telefone: true, email: true },
+      take: 3,
+      orderBy: { createdAt: 'asc' },
+    });
+    const empreendimento = await this.prisma.empreendimento.findFirst({
+      where: { tenantId },
+      select: { id: true, construtoraId: true },
+    });
+    for (const lead of leads) {
+      const existe = await this.prisma.processo.findFirst({
+        where: { tenantId, leadId: lead.id, nome: lead.nome },
+        select: { id: true },
+      });
+      if (existe) continue;
+      await this.prisma.processo.create({
+        data: {
+          tenantId,
+          leadId: lead.id,
+          autorId: adminId,
+          nome: lead.nome,
+          telefone: lead.telefone ?? '',
+          email: lead.email ?? '',
+          empreendimentoId: empreendimento?.id,
+          corretorId,
+          status: ProcessoStatus.enviado,
+          etapa: ProcessoEtapa.analise,
+        },
+      });
+      counts.processos += 1;
+    }
+
+    if (empreendimento) {
+      const jaVenda = await this.prisma.cadastroVenda.findFirst({
+        where: { tenantId, clienteNome: 'Cliente demonstração' },
+        select: { id: true },
+      });
+      if (!jaVenda) {
+        await this.prisma.cadastroVenda.create({
+          data: {
+            tenantId,
+            autorId: adminId,
+            clienteNome: 'Cliente demonstração',
+            telefone: '11999990000',
+            construtoraId: empreendimento.construtoraId,
+            empreendimentoId: empreendimento.id,
+            corretorId,
+            dataVenda: new Date(),
+            vgv: 450000,
+            obs: 'Venda lançada na carga de demonstração.',
+          },
+        });
+        counts.cadastroVendas = 1;
+      }
+    }
+
+    const jaLista = await this.prisma.listaDocumento.findFirst({
+      where: { tenantId, nome: 'Documentos do comprador' },
+      select: { id: true },
+    });
+    if (!jaLista) {
+      await this.prisma.listaDocumento.create({
+        data: {
+          tenantId,
+          nome: 'Documentos do comprador',
+          intro: 'Lista usada na carga de demonstração.',
+          itens: {
+            create: [
+              { titulo: 'RG e CPF', sortOrder: 0 },
+              { titulo: 'Comprovante de renda', sortOrder: 1 },
+              { titulo: 'Comprovante de residência', sortOrder: 2 },
+            ],
+          },
+        },
+      });
+    }
+
+    const jaContrato = await this.prisma.contratoDocumento.findFirst({
+      where: { tenantId, titulo: 'Contrato de demonstração' },
+      select: { id: true },
+    });
+    if (!jaContrato) {
+      await this.prisma.contratoDocumento.create({
+        data: {
+          tenantId,
+          autorId: adminId,
+          templateId: 'compra-e-venda',
+          titulo: 'Contrato de demonstração',
+          values: { comprador: 'Cliente demonstração', valor: '450000' },
+          status: ContratoDocumentoStatus.rascunho,
+        },
+      });
+    }
+
+    return counts;
+  }
+
   private async seedCorretoresParceiros(
     tenantId: string,
     slug: string,
@@ -1415,14 +1761,47 @@ export class TenantDemoDataService {
       modules && typeof modules === 'object' && !Array.isArray(modules)
         ? { ...(modules as Record<string, boolean>) }
         : {};
-    raw.captacao = true;
-    raw.imoveisUsados = true;
-    raw.parcerias = true;
+    for (const key of [
+      'dashboard',
+      'leads',
+      'funil',
+      'triagem',
+      'agenda',
+      'imoveis',
+      'clientes',
+      'clientesPerdidos',
+      'construtoras',
+      'leadsPerdidos',
+      'usuarios',
+      'equipes',
+      'corretores',
+      'presenca',
+      'muralChaves',
+      'documentacao',
+      'analise',
+      'metas',
+      'propostas',
+      'contratos',
+      'taxaConversao',
+      'configuracoes',
+      'financeiro',
+      'comercial',
+      'captacao',
+      'imoveisUsados',
+      'locacao',
+      'parcerias',
+      'vendas',
+    ]) {
+      raw[key] = true;
+    }
     raw[MURAL_CHAVES_OPT_IN_KEY] = true;
     const next = applyPlanoModules(plano, raw);
     await this.prisma.tenant.update({
       where: { id: tenantId },
-      data: { modules: next as Prisma.InputJsonValue },
+      data: {
+        modules: next as Prisma.InputJsonValue,
+        tarefasEnabled: true,
+      },
     });
   }
 
