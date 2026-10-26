@@ -10,7 +10,7 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { IsArray, IsBoolean, IsUUID } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, Max, Min, IsUUID } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { LeadFilaService } from './lead-fila.service';
@@ -18,6 +18,13 @@ import { LeadFilaService } from './lead-fila.service';
 class SetAtivaDto {
   @IsBoolean()
   ativa!: boolean;
+}
+
+class SetPrazoDto {
+  @IsInt()
+  @Min(0)
+  @Max(1440)
+  minutos!: number;
 }
 
 class AddMembroDto {
@@ -62,6 +69,11 @@ export class LeadFilaController {
   @Patch()
   setAtiva(@CurrentUser() user: AuthenticatedUser, @Body() dto: SetAtivaDto) {
     return this.fila.setAtiva(user, dto.ativa);
+  }
+
+  @Patch('prazo')
+  setPrazo(@CurrentUser() user: AuthenticatedUser, @Body() dto: SetPrazoDto) {
+    return this.fila.setRedistribuirMinutos(user, dto.minutos);
   }
 
   @Post('membros')

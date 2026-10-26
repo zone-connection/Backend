@@ -107,6 +107,7 @@ export const leadSelect = {
   prazoDueAt: true,
   alertaProximoAt: true,
   prazoAdiado: true,
+  roletaRedistribuido: true,
   origemAtrasoLiberacao: true,
   atrasoLiberadoAt: true,
   triagemOrigemHerdada: true,

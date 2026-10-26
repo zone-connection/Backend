@@ -658,6 +658,12 @@ model Lead {
   corretorId String?
   /// Preenchido quando a fila rotativa já processou este lead.
   filaDistribuidoAt DateTime?
+  /// Última entrega desta roleta (inicial ou por tempo esgotado).
+  roletaAtribuidoAt DateTime?
+  /// Se passou deste instante sem etapa nova nem atividade, vai ao próximo da fila.
+  roletaPrazoAt DateTime?
+  /// Já passou de um integrante da roleta por tempo esgotado.
+  roletaRedistribuido Boolean @default(false)
 
   /// Pool da equipe (admin distribuiu à equipe; gerente ainda não atribuiu corretor).
   equipeId String?
@@ -738,6 +744,7 @@ model Lead {
   @@index([createdAt])
   @@index([perdidoAt])
   @@index([tenantId, origemAtrasoLiberacao])
+  @@index([roletaPrazoAt])
   @@map("leads")
 }
 
@@ -2054,6 +2061,7 @@ enum LeadFilaEventoTipo {
   membro_ativar
   membro_desativar
   reordenar
+  redistribuicao
 }
 
 /// Fila Round Robin de distribuição de leads, uma por imobiliária.
@@ -2062,6 +2070,8 @@ model LeadFilaConfig {
   tenantId String   @unique
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   ativa    Boolean  @default(false)
+  /// Minutos parado na primeira etapa, sem atividade, até ir ao próximo. 0 desliga.
+  redistribuirMinutos Int @default(0)
   membros  LeadFilaMembro[]
   eventos  LeadFilaEvento[]
 
