@@ -19,6 +19,7 @@ const PENDING_ALLOWED = [
   '/seguranca/2fa/termos',
   '/seguranca/2fa/preparar',
   '/seguranca/2fa/confirmar',
+  '/seguranca/2fa/manter',
   '/seguranca/2fa/aceitar-risco',
 ];
 

@@ -57,6 +57,12 @@ export class Seguranca2faController {
     return this.service.confirmar(user.id, dto.code);
   }
 
+  @Post('manter')
+  @Roles(Role.admin)
+  manter(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.manter(user.id);
+  }
+
   @Post('aceitar-risco')
   @Roles(Role.admin)
   aceitar(@CurrentUser() user: AuthenticatedUser, @Body() dto: AceiteDto) {
