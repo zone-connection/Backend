@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { Prisma } from '@prisma/client';
 import {
   ensurePosVendaSchema,
+  ensureTwoFactorSchema,
   isMissingDatabaseObject,
 } from './schema-repair';
 
@@ -34,5 +35,17 @@ describe('schema-repair', () => {
     assert.ok(sqls.some((sql) => sql.includes('"vendas_usado"')));
     assert.ok(sqls.some((sql) => sql.includes('posVendaRecusadoEm')));
     assert.ok(sqls.every((sql) => !sql.includes('"venda_usados"')));
+  });
+
+  it('cria as colunas de 2FA em users', async () => {
+    const sqls: string[] = [];
+    await ensureTwoFactorSchema({
+      $executeRawUnsafe: async (sql: string) => {
+        sqls.push(sql);
+        return 0;
+      },
+    } as never);
+    assert.ok(sqls.some((sql) => sql.includes('"twoFactorStatus"')));
+    assert.ok(sqls.some((sql) => sql.includes('two_factor_audit_events')));
   });
 });

@@ -130,6 +130,136 @@ export async function ensureRoletaSchema(prisma: PrismaService) {
   }
 }
 
+const TWO_FACTOR_STATEMENTS = [
+  `
+    DO $$ BEGIN
+      CREATE TYPE "TwoFactorStatus" AS ENUM ('nao_aplica', 'pendente', 'ativo', 'desativado');
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+  `,
+  `
+    DO $$ BEGIN
+      CREATE TYPE "TwoFactorAuditAcao" AS ENUM ('decisao_ativar', 'decisao_desativar', 'ativar', 'desativar');
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+  `,
+  `
+    ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "twoFactorStatus" "TwoFactorStatus" NOT NULL DEFAULT 'nao_aplica',
+      ADD COLUMN IF NOT EXISTS "totpSecretEnc" TEXT,
+      ADD COLUMN IF NOT EXISTS "totpBackupHashes" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      ADD COLUMN IF NOT EXISTS "twoFactorDecidedAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "twoFactorChangedAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "riskTermsVersion" TEXT,
+      ADD COLUMN IF NOT EXISTS "riskAcceptedAt" TIMESTAMP(3)
+  `,
+  `
+    UPDATE "users"
+    SET "twoFactorStatus" = 'pendente'
+    WHERE "role" = 'admin' AND "twoFactorStatus" = 'nao_aplica'
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS "two_factor_audit_events" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL,
+      "tenantId" TEXT,
+      "acao" "TwoFactorAuditAcao" NOT NULL,
+      "termsVersion" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "two_factor_audit_events_pkey" PRIMARY KEY ("id")
+    )
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS "platform_notificacoes" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL,
+      "tipo" TEXT NOT NULL,
+      "titulo" TEXT NOT NULL,
+      "corpo" TEXT NOT NULL,
+      "lida" BOOLEAN NOT NULL DEFAULT false,
+      "eventoId" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "platform_notificacoes_pkey" PRIMARY KEY ("id")
+    )
+  `,
+  `CREATE INDEX IF NOT EXISTS "two_factor_audit_events_userId_createdAt_idx" ON "two_factor_audit_events"("userId", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "two_factor_audit_events_tenantId_idx" ON "two_factor_audit_events"("tenantId")`,
+  `CREATE INDEX IF NOT EXISTS "two_factor_audit_events_createdAt_idx" ON "two_factor_audit_events"("createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "platform_notificacoes_userId_lida_idx" ON "platform_notificacoes"("userId", "lida")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "platform_notificacoes_eventoId_key" ON "platform_notificacoes"("eventoId")`,
+  `
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'two_factor_audit_events_userId_fkey'
+      ) THEN
+        ALTER TABLE "two_factor_audit_events"
+          ADD CONSTRAINT "two_factor_audit_events_userId_fkey"
+          FOREIGN KEY ("userId") REFERENCES "users"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `,
+  `
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'two_factor_audit_events_tenantId_fkey'
+      ) THEN
+        ALTER TABLE "two_factor_audit_events"
+          ADD CONSTRAINT "two_factor_audit_events_tenantId_fkey"
+          FOREIGN KEY ("tenantId") REFERENCES "tenants"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `,
+  `
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'platform_notificacoes_userId_fkey'
+      ) THEN
+        ALTER TABLE "platform_notificacoes"
+          ADD CONSTRAINT "platform_notificacoes_userId_fkey"
+          FOREIGN KEY ("userId") REFERENCES "users"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `,
+  `
+    CREATE OR REPLACE FUNCTION prevent_two_factor_audit_mutation()
+    RETURNS trigger AS $fn$
+    BEGIN
+      RAISE EXCEPTION 'two_factor_audit_events é imutável';
+    END;
+    $fn$ LANGUAGE plpgsql
+  `,
+  `
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'two_factor_audit_no_update'
+      ) THEN
+        CREATE TRIGGER two_factor_audit_no_update
+        BEFORE UPDATE OR DELETE ON "two_factor_audit_events"
+        FOR EACH ROW EXECUTE FUNCTION prevent_two_factor_audit_mutation();
+      END IF;
+    END $$
+  `,
+];
+
+export async function ensureTwoFactorSchema(prisma: PrismaService) {
+  for (const sql of TWO_FACTOR_STATEMENTS) {
+    try {
+      await prisma.$executeRawUnsafe(sql);
+    } catch (err) {
+      logger.warn(
+        `Trecho do 2FA não aplicado: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+}
+
 export async function ensureRuntimeSchema(prisma: PrismaService) {
   try {
     await ensureRoletaSchema(prisma);
@@ -144,6 +274,14 @@ export async function ensureRuntimeSchema(prisma: PrismaService) {
   } catch (err) {
     logger.error(
       'Não foi possível alinhar o schema de pós-venda.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
+  try {
+    await ensureTwoFactorSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar o schema de 2FA.',
       err instanceof Error ? err.stack : err,
     );
   }
