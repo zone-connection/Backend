@@ -347,6 +347,17 @@ export class VendaUsadoPosVendaService {
           ...(dto.observacoes != null
             ? { observacoes: dto.observacoes.trim() }
             : {}),
+          ...(dto.tags
+            ? {
+                tags: [
+                  ...new Set(
+                    dto.tags
+                      .map((tag) => tag.trim())
+                      .filter((tag) => tag.length > 0),
+                  ),
+                ].slice(0, 20),
+              }
+            : {}),
           ...(dto.status === VendaUsadoPosVendaStatus.cancelado
             ? {
                 status: VendaUsadoPosVendaStatus.cancelado,
@@ -710,6 +721,7 @@ export class VendaUsadoPosVendaService {
     vendaUsadoId?: string;
     status: VendaUsadoPosVendaStatus;
     observacoes: string;
+    tags?: string[];
     concluidoAt: Date | null;
     canceladoAt: Date | null;
     encaminhadoEm?: Date | null;
@@ -782,6 +794,7 @@ export class VendaUsadoPosVendaService {
       vendaUsadoId: row.vendaUsadoId ?? row.vendaUsado?.id ?? null,
       status: row.status,
       observacoes: row.observacoes,
+      tags: row.tags ?? [],
       concluidoAt: row.concluidoAt,
       canceladoAt: row.canceladoAt,
       encaminhadoEm: row.encaminhadoEm ?? null,

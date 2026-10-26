@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -130,6 +131,12 @@ export class UpdatePosVendaDto {
   @IsString()
   @MaxLength(2000)
   observacoes?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  tags?: string[];
 }
 
 export class MoverPosVendaEtapaDto {

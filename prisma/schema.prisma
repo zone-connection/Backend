@@ -3250,6 +3250,7 @@ model VendaUsadoPosVenda {
   funilEtapa     FunilEtapa?              @relation(fields: [funilEtapaId], references: [id], onDelete: Restrict)
   status         VendaUsadoPosVendaStatus @default(pendente)
   observacoes    String                   @default("")
+  tags           String[]                 @default([])
   concluidoAt    DateTime?
   canceladoAt    DateTime?
   encaminhadoEm  DateTime?
