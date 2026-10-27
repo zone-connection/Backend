@@ -47,6 +47,7 @@ export type OzapInboxChat = {
   chatId: string;
   name: string;
   phone: string | null;
+  avatarUrl: string | null;
   lastMessage: string | null;
   lastMessageAt: string | null;
   unread: number;
@@ -681,6 +682,7 @@ export class OzapApiClient {
         this.asString(rec.phone_number) ??
         this.asString(rec.phone) ??
         (this.phoneDigits(chatId) || null),
+      avatarUrl: this.avatarUrl(rec),
       lastMessage: last,
       lastMessageAt:
         this.asString(rec.last_message_timestamp) ??
@@ -694,6 +696,45 @@ export class OzapApiClient {
         this.asString(rec.paused_until),
       leadStatus: this.asString(rec.lead_status) ?? this.asString(rec.leadStatus),
     };
+  }
+
+  private loggedMissingAvatar = false;
+
+  private avatarUrl(rec: Record<string, unknown>): string | null {
+    const nested = [
+      this.asRecord(rec.profile),
+      this.asRecord(rec.contact),
+      this.asRecord(rec.chat),
+    ];
+    const keys = [
+      'profile_picture_url',
+      'profilePictureUrl',
+      'profile_pic_url',
+      'profilePicUrl',
+      'profile_pic',
+      'profilePic',
+      'avatar_url',
+      'avatarUrl',
+      'avatar',
+      'photo_url',
+      'photoUrl',
+      'picture',
+      'image',
+    ];
+    const sources = [rec, ...nested.filter((item): item is Record<string, unknown> => Boolean(item))];
+    for (const source of sources) {
+      for (const key of keys) {
+        const value = this.asString(source[key]);
+        if (value) return this.clientMediaUrl(value);
+      }
+    }
+    if (!this.loggedMissingAvatar) {
+      this.loggedMissingAvatar = true;
+      this.logger.debug(
+        `Chat OZap sem foto de perfil. Campos: ${Object.keys(rec).join(', ')}`,
+      );
+    }
+    return null;
   }
 
   private extractList(payload: unknown): unknown[] {

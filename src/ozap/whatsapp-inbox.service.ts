@@ -425,6 +425,7 @@ export class WhatsappInboxService {
             chatId: row.chatId,
             name: row.lead.nome,
             phone: row.lead.telefone || ozap?.phone || null,
+            avatarUrl: ozap?.avatarUrl ?? null,
             lastMessage: ozap?.lastMessage ?? null,
             lastMessageAt:
               ozap?.lastMessageAt ?? row.lastMessageAt?.toISOString() ?? null,
