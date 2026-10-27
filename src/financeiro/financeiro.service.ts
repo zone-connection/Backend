@@ -2075,6 +2075,7 @@ export class FinanceiroService {
             data: { gte: bounds.gte, lt: bounds.lt },
             status: { not: FinanceiroTituloStatus.cancelado },
           },
+          include: { titulo: { select: { comissaoId: true } } },
         }),
         this.prisma.financeiroMovimento.findMany({
           where: {
@@ -2082,6 +2083,7 @@ export class FinanceiroService {
             data: { gte: boundsAnt.gte, lt: boundsAnt.lt },
             status: { not: FinanceiroTituloStatus.cancelado },
           },
+          include: { titulo: { select: { comissaoId: true } } },
         }),
         this.prisma.financeiroTitulo.findMany({
           where: {
@@ -2161,10 +2163,19 @@ export class FinanceiroService {
       tipo: FinanceiroMovimentoTipo,
     ) => rows.filter((r) => r.tipo === tipo).reduce((s, r) => s + r.valor, 0);
 
+    const semComissao = <T extends { descricao: string; categoria: string; centro: string; titulo?: { comissaoId: string | null } | null }>(
+      rows: T[],
+    ) => rows.filter((r) => !this.isMovimentoComissao(r));
     const receitasMes = sumTipo(movMes, FinanceiroMovimentoTipo.entrada);
-    const despesasMes = sumTipo(movMes, FinanceiroMovimentoTipo.saida);
+    const despesasMes = sumTipo(
+      semComissao(movMes),
+      FinanceiroMovimentoTipo.saida,
+    );
     const receitasAnt = sumTipo(movAnt, FinanceiroMovimentoTipo.entrada);
-    const despesasAnt = sumTipo(movAnt, FinanceiroMovimentoTipo.saida);
+    const despesasAnt = sumTipo(
+      semComissao(movAnt),
+      FinanceiroMovimentoTipo.saida,
+    );
     const resultadoMes = receitasMes - despesasMes;
     const resultadoAnt = receitasAnt - despesasAnt;
     const resolvedNatureza = await this.despesaNaturezaResolver(tenantId);
@@ -2180,6 +2191,7 @@ export class FinanceiroService {
     ) =>
       rows
         .filter((r) => r.tipo === FinanceiroMovimentoTipo.saida)
+        .filter((r) => !this.isMovimentoComissao(r))
         .filter(
           (r) => this.classifyDespesaBucket(resolvedNatureza(r)) === bucket,
         )
@@ -2198,7 +2210,14 @@ export class FinanceiroService {
       status: row.status,
     });
     const saidasMes = movMes.filter(
-      (r) => r.tipo === FinanceiroMovimentoTipo.saida,
+      (r) =>
+        r.tipo === FinanceiroMovimentoTipo.saida &&
+        !this.isMovimentoComissao(r),
+    );
+    const comissoesPagasMes = movMes.filter(
+      (r) =>
+        r.tipo === FinanceiroMovimentoTipo.saida &&
+        this.isMovimentoComissao(r),
     );
     const comissoesAReceberMesValor = comissoesAReceberMes.reduce(
       (s, t) => s + t.valor,
@@ -2224,16 +2243,30 @@ export class FinanceiroService {
         .sort((a, b) => b.valor - a.valor)
         .slice(0, 40)
         .map(mapPipelineItem),
-      comissoes: comissoesAReceberMes.slice(0, 40).map((row) => ({
-        id: row.id,
-        descricao: row.descricao,
-        valor: row.valor,
-        data: isoDateOnly(row.vencimento),
-        centro: row.centro || row.categoria || "",
-        parceiro: row.parceiroNome,
-        status: row.status,
-        comissaoId: row.comissaoId,
-      })),
+      comissoes: [
+        ...comissoesAReceberMes.map((row) => ({
+          id: row.id,
+          descricao: row.descricao,
+          valor: row.valor,
+          data: isoDateOnly(row.vencimento),
+          centro: row.centro || row.categoria || "",
+          parceiro: row.parceiroNome,
+          status: row.status,
+          comissaoId: row.comissaoId,
+        })),
+        ...comissoesPagasMes.map((row) => ({
+          id: row.id,
+          descricao: row.descricao,
+          valor: row.valor,
+          data: isoDateOnly(row.data),
+          centro: row.centro || row.categoria || "",
+          parceiro: row.parceiroNome,
+          status: row.status,
+          comissaoId: row.titulo?.comissaoId ?? null,
+        })),
+      ]
+        .sort((a, b) => b.valor - a.valor)
+        .slice(0, 40),
     };
 
     const evolucao = (atual: number, anterior: number): number | null => {
@@ -3098,6 +3131,21 @@ export class FinanceiroService {
     return "outros";
   }
 
+  /** Comissão (corretor, gerente, caixa, sócios) não é despesa. */
+  private isMovimentoComissao(row: {
+    descricao: string;
+    categoria: string;
+    centro: string;
+    titulo?: { comissaoId: string | null } | null;
+  }) {
+    if (row.titulo?.comissaoId) return true;
+    const texto = `${row.categoria} ${row.centro} ${row.descricao}`
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .toLowerCase();
+    return texto.includes("comissao");
+  }
+
   private async buildMesesResumo(tenantId: string, ano: number) {
     const resolvedNatureza = await this.despesaNaturezaResolver(tenantId);
     const inicioJanela = new Date(Date.UTC(ano, 0, 1) - BRASIL_UTC_OFFSET_MS);
@@ -3142,6 +3190,7 @@ export class FinanceiroService {
           status: { not: FinanceiroTituloStatus.cancelado },
           data: { gte: inicioJanela, lt: fimJanela },
         },
+        include: { titulo: { select: { comissaoId: true } } },
       }),
     ]);
     const somarPorMes = (
@@ -3182,7 +3231,9 @@ export class FinanceiroService {
       const key = `${ano}-${String(m + 1).padStart(2, "0")}`;
       const rows = movPorMes.get(key) ?? [];
       const saidas = rows.filter(
-        (r) => r.tipo === FinanceiroMovimentoTipo.saida,
+        (r) =>
+          r.tipo === FinanceiroMovimentoTipo.saida &&
+          !this.isMovimentoComissao(r),
       );
       return {
         mes,
