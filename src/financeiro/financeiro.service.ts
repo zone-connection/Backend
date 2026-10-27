@@ -3133,13 +3133,13 @@ export class FinanceiroService {
 
   /** Comissão (corretor, gerente, caixa, sócios) não é despesa. */
   private isMovimentoComissao(row: {
-    descricao: string;
+    descricao?: string;
     categoria: string;
     centro: string;
     titulo?: { comissaoId: string | null } | null;
   }) {
     if (row.titulo?.comissaoId) return true;
-    const texto = `${row.categoria} ${row.centro} ${row.descricao}`
+    const texto = `${row.categoria} ${row.centro} ${row.descricao ?? ""}`
       .normalize("NFD")
       .replace(/\p{M}/gu, "")
       .toLowerCase();
