@@ -131,6 +131,67 @@ export async function ensureRoletaSchema(prisma: PrismaService) {
   }
 }
 
+const OPERACAO_STATEMENTS = [
+  `ALTER TYPE "TriagemOrigem" ADD VALUE IF NOT EXISTS 'retrabalho'`,
+  `ALTER TYPE "TriagemOrigem" ADD VALUE IF NOT EXISTS 'caca_lead'`,
+  `
+    ALTER TABLE "triagem_events"
+      ADD COLUMN IF NOT EXISTS "textoAnterior" TEXT,
+      ADD COLUMN IF NOT EXISTS "editedAt" TIMESTAMP(3)
+  `,
+  `
+    DO $$ BEGIN
+      CREATE TYPE "AgendamentoRecurrenceFreq" AS ENUM ('unica', 'semanal', 'mensal');
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$
+  `,
+  `
+    ALTER TABLE "agendamentos"
+      ADD COLUMN IF NOT EXISTS "atribuidoParaId" TEXT,
+      ADD COLUMN IF NOT EXISTS "seriesId" TEXT,
+      ADD COLUMN IF NOT EXISTS "recurrenceFreq" "AgendamentoRecurrenceFreq" NOT NULL DEFAULT 'unica',
+      ADD COLUMN IF NOT EXISTS "recurrenceDays" INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+      ADD COLUMN IF NOT EXISTS "recurrenceUntil" TIMESTAMP(3)
+  `,
+  `ALTER TYPE "AgendamentoTipo" ADD VALUE IF NOT EXISTS 'bloqueio'`,
+  `ALTER TYPE "AgendamentoTipo" ADD VALUE IF NOT EXISTS 'retirada_chave'`,
+  `
+    ALTER TABLE "agendamentos"
+      ADD COLUMN IF NOT EXISTS "funilStage" TEXT,
+      ADD COLUMN IF NOT EXISTS "contaAtraso" BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "origemTarefa" BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "empreendimentoId" TEXT,
+      ADD COLUMN IF NOT EXISTS "muralChaveId" TEXT,
+      ADD COLUMN IF NOT EXISTS "chaveRetiradaEm" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "imovelId" TEXT,
+      ADD COLUMN IF NOT EXISTS "toleranciaAtiva" BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "bloqueadoAte" TIMESTAMP(3)
+  `,
+  `
+    ALTER TABLE "leads"
+      ADD COLUMN IF NOT EXISTS "lastTriagemAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "lastTarefaAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "lastAtividadeAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "lastMovementAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS "prazoDueAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "alertaProximoAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "prazoAdiado" BOOLEAN NOT NULL DEFAULT false
+  `,
+];
+
+export async function ensureOperacaoSchema(prisma: PrismaService) {
+  for (const sql of OPERACAO_STATEMENTS) {
+    try {
+      await prisma.$executeRawUnsafe(sql);
+    } catch (err) {
+      logger.warn(
+        `Trecho de histórico/atividade não aplicado: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+}
+
 export async function ensureRuntimeSchema(prisma: PrismaService) {
   try {
     await ensureRoletaSchema(prisma);
@@ -145,6 +206,14 @@ export async function ensureRuntimeSchema(prisma: PrismaService) {
   } catch (err) {
     logger.error(
       'Não foi possível alinhar o schema de pós-venda.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
+  try {
+    await ensureOperacaoSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar o schema de histórico e atividade.',
       err instanceof Error ? err.stack : err,
     );
   }

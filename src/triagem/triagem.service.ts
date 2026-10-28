@@ -245,54 +245,38 @@ export class TriagemService {
         ? await this.monitoramento.stageChangeData(tenantId, targetStage, now)
         : await this.monitoramento.followUpData(tenantId, lead.stage, now);
 
-    const events = await this.prisma.$transaction(async (tx) => {
-      await tx.lead.update({
-        where: { id: lead.id },
-        data: {
-          ...(shouldUpdateStage && targetStage ? { stage: targetStage } : {}),
-          ...timing,
-          lastTriagemAt: now,
-        },
-      });
+    await this.prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        ...(shouldUpdateStage && targetStage ? { stage: targetStage } : {}),
+        ...timing,
+        lastTriagemAt: now,
+      },
+    });
 
-      if (hops.length > 1) {
-        const useAutoForAll = isAutoAvancoTexto(texto);
-        const created = [];
-        for (let i = 0; i < hops.length; i++) {
-          const hop = hops[i];
-          const isLast = i === hops.length - 1;
-          created.push(
-            await tx.triagemEvent.create({
-              data: {
-                leadId: lead.id,
-                autorId: requester.id,
-                texto: isLast && !useAutoForAll ? texto : hopAutoTexto(hop),
-                stageAnterior: hop.fromSlug,
-                stageNovo: hop.toSlug,
-                origem,
-                createdAt: new Date(now.getTime() + i),
-              },
-              select: eventSelect,
-            }),
-          );
-        }
-        return created;
-      }
-
-      return [
-        await tx.triagemEvent.create({
-          data: {
+    const events =
+      hops.length > 1
+        ? await this.createHopEvents({
             leadId: lead.id,
             autorId: requester.id,
             texto,
-            stageAnterior,
-            stageNovo,
             origem,
-          },
-          select: eventSelect,
-        }),
-      ];
-    });
+            hops,
+            now,
+          })
+        : [
+            await this.prisma.triagemEvent.create({
+              data: {
+                leadId: lead.id,
+                autorId: requester.id,
+                texto,
+                stageAnterior,
+                stageNovo,
+                origem,
+              },
+              select: eventSelect,
+            }),
+          ];
 
     if (targetStage) {
       const papel = await this.funis.getPapelBySlug(tenantId, targetStage);
@@ -543,6 +527,37 @@ export class TriagemService {
     }
 
     return lead;
+  }
+
+  private async createHopEvents(input: {
+    leadId: string;
+    autorId: string;
+    texto: string;
+    origem: TriagemOrigem;
+    hops: StageHop[];
+    now: Date;
+  }) {
+    const useAutoForAll = isAutoAvancoTexto(input.texto);
+    const created = [];
+    for (let i = 0; i < input.hops.length; i++) {
+      const hop = input.hops[i];
+      const isLast = i === input.hops.length - 1;
+      created.push(
+        await this.prisma.triagemEvent.create({
+          data: {
+            leadId: input.leadId,
+            autorId: input.autorId,
+            texto: isLast && !useAutoForAll ? input.texto : hopAutoTexto(hop),
+            stageAnterior: hop.fromSlug,
+            stageNovo: hop.toSlug,
+            origem: input.origem,
+            createdAt: new Date(input.now.getTime() + i),
+          },
+          select: eventSelect,
+        }),
+      );
+    }
+    return created;
   }
 
   private async ensureStageIsValid(

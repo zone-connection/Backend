@@ -17,18 +17,34 @@ export class PrismaSchemaExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    if (
-      request?.method === 'GET' &&
-      isMissingDatabaseObject(exception) &&
-      !response.headersSent
-    ) {
-      this.logger.error(
-        `Schema incompleto em ${request.originalUrl}: ${exception.message}`,
-      );
+    this.logger.error(
+      `Prisma ${exception.code} em ${request?.method ?? '?'} ${request?.originalUrl ?? '?'}: ${exception.message}`,
+    );
+
+    if (response.headersSent) return;
+
+    if (request?.method === 'GET' && isMissingDatabaseObject(exception)) {
       response.status(200).json([]);
       return;
     }
 
-    throw exception;
+    const message = prismaErrorMessage(exception);
+    response.status(500).json({ statusCode: 500, message });
   }
+}
+
+function prismaErrorMessage(exception: Prisma.PrismaClientKnownRequestError) {
+  if (exception.code === 'P2021' || exception.code === 'P2022') {
+    return 'O banco está desatualizado para esta ação. Atualize o schema e tente de novo.';
+  }
+  if (exception.code === 'P2028') {
+    return 'Não foi possível gravar no banco (transação). Tente de novo.';
+  }
+  if (exception.code === 'P2002') {
+    return 'Já existe um registro com esses dados.';
+  }
+  if (exception.code === 'P2003') {
+    return 'Não foi possível vincular o registro. Atualize a página e tente de novo.';
+  }
+  return 'Não foi possível concluir a operação.';
 }
