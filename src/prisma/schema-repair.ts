@@ -215,6 +215,11 @@ const OPERACAO_STATEMENTS = [
   `,
   `
     ALTER TABLE "leads"
+      ADD COLUMN IF NOT EXISTS "convertedTenantId" TEXT,
+      ADD COLUMN IF NOT EXISTS "convertedAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "conversionSlug" TEXT,
+      ADD COLUMN IF NOT EXISTS "conversionLock" TEXT,
+      ADD COLUMN IF NOT EXISTS "conversionLockedAt" TIMESTAMP(3),
       ADD COLUMN IF NOT EXISTS "lastTriagemAt" TIMESTAMP(3),
       ADD COLUMN IF NOT EXISTS "lastTarefaAt" TIMESTAMP(3),
       ADD COLUMN IF NOT EXISTS "lastAtividadeAt" TIMESTAMP(3),
@@ -222,6 +227,17 @@ const OPERACAO_STATEMENTS = [
       ADD COLUMN IF NOT EXISTS "prazoDueAt" TIMESTAMP(3),
       ADD COLUMN IF NOT EXISTS "alertaProximoAt" TIMESTAMP(3),
       ADD COLUMN IF NOT EXISTS "prazoAdiado" BOOLEAN NOT NULL DEFAULT false
+  `,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "leads_convertedTenantId_key" ON "leads"("convertedTenantId")`,
+  `
+    DO $$ BEGIN
+      ALTER TABLE "leads"
+        ADD CONSTRAINT "leads_convertedTenantId_fkey"
+        FOREIGN KEY ("convertedTenantId") REFERENCES "tenants"("id")
+        ON DELETE SET NULL ON UPDATE CASCADE;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$
   `,
 ];
 
