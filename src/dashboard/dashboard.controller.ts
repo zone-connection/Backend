@@ -12,12 +12,26 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { DashboardService } from './dashboard.service';
+import { PlatformDashboardService } from './platform-dashboard.service';
+import { QueryPlatformDashboardDto } from './dto/query-platform-dashboard.dto';
 import { QueryDashboardDto } from './dto/query-dashboard.dto';
 
 @Controller('dashboard')
 @UseGuards(RolesGuard)
 export class DashboardController {
-  constructor(private readonly dashboardService: DashboardService) {}
+  constructor(
+    private readonly dashboardService: DashboardService,
+    private readonly platformDashboard: PlatformDashboardService,
+  ) {}
+
+  @Get('plataforma')
+  @Roles(Role.super_admin)
+  resumoPlataforma(
+    @CurrentUser() requester: AuthenticatedUser,
+    @Query() query: QueryPlatformDashboardDto,
+  ) {
+    return this.platformDashboard.resumo(requester, query.mes, query.ano);
+  }
 
   @Get('corretor/:id/vendas')
   @Roles(

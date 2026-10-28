@@ -18,6 +18,8 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { LeadsService } from './leads.service';
+import { LeadConversaoService } from './lead-conversao.service';
+import { ConverterLeadClienteDto } from './dto/converter-lead-cliente.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
 import { UpdateLeadStageDto } from './dto/update-lead-stage.dto';
@@ -45,7 +47,10 @@ import {
  */
 @Controller('leads')
 export class LeadsController {
-  constructor(private readonly leadsService: LeadsService) {}
+  constructor(
+    private readonly leadsService: LeadsService,
+    private readonly leadConversao: LeadConversaoService,
+  ) {}
 
   @Post()
   create(
@@ -244,6 +249,17 @@ export class LeadsController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.leadsService.updateStage(id, dto, requester);
+  }
+
+  @Post(':id/converter-cliente')
+  @UseGuards(RolesGuard)
+  @Roles(Role.super_admin)
+  converterCliente(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ConverterLeadClienteDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadConversao.converter(id, dto, requester);
   }
 
   @Post(':id/interesses')

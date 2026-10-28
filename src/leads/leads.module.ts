@@ -12,6 +12,9 @@ import { LeadFilaModule } from './lead-fila.module';
 import { LeadNotifyModule } from '../lead-notify/lead-notify.module';
 import { PresenceModule } from '../presence/presence.module';
 import { OzapApiModule } from '../ozap/ozap-api.module';
+import { PlatformContratosModule } from '../platform-contratos/platform-contratos.module';
+import { TenantsModule } from '../tenants/tenants.module';
+import { LeadConversaoService } from './lead-conversao.service';
 
 @Module({
   imports: [
@@ -24,12 +27,15 @@ import { OzapApiModule } from '../ozap/ozap-api.module';
     PresenceModule,
     OzapApiModule,
     LeadFilaModule,
+    TenantsModule,
+    PlatformContratosModule,
   ],
   controllers: [LeadsController],
   providers: [
     LeadsService,
     LeadAtrasoLiberacaoService,
     LeadDistribuicaoAutoService,
+    LeadConversaoService,
   ],
   exports: [LeadsService],
 })

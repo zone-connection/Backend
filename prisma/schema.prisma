@@ -252,6 +252,7 @@ model Tenant {
   arquivoEventos                 ArquivoEvento[]
   arquivoShareLinks              ArquivoShareLink[]
   processos                      Processo[]
+  leadConvertido                 Lead? @relation("LeadConvertidoTenant")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -723,6 +724,18 @@ model Lead {
   participacoesParceria ParceriaParticipacao[]
   interessesEmpreendimento LeadEmpreendimentoInteresse[]
   tarefas Tarefa[]
+
+  /// Imobiliária criada a partir deste lead comercial. Único: uma conversão por lead.
+  convertedTenantId String? @unique
+  /// Momento em que o vínculo com o cliente foi gravado. Não usa updatedAt.
+  convertedAt DateTime?
+  convertedTenant   Tenant? @relation("LeadConvertidoTenant", fields: [convertedTenantId], references: [id], onDelete: SetNull)
+  /// Slug estável usado na conversão, para retomar se o cliente foi criado e o vínculo falhou.
+  conversionSlug String?
+  /// Trava de concorrência. Null quando ninguém está convertendo este lead.
+  conversionLock String?
+  /// Momento em que a trava foi adquirida. Trava antiga é considerada abandonada.
+  conversionLockedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
