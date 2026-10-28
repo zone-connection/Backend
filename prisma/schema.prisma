@@ -253,6 +253,9 @@ model Tenant {
   arquivoShareLinks              ArquivoShareLink[]
   processos                      Processo[]
   leadConvertido                 Lead? @relation("LeadConvertidoTenant")
+  onboardings                    Onboarding[]
+  suporteChamados                SuporteChamado[]
+  melhorias                      MelhoriaSolicitacao[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -544,6 +547,14 @@ model User {
   arquivosEnviados                ArquivoDocumento[]
   arquivoEventos                  ArquivoEvento[]
   arquivoShareLinks               ArquivoShareLink[]
+  onboardingsResponsavel          Onboarding[] @relation("OnboardingResponsavel")
+  onboardingHistoricos            OnboardingHistorico[] @relation("OnboardingHistoricoAutor")
+  suporteResponsavel              SuporteChamado[] @relation("SuporteResponsavel")
+  suporteMensagens                SuporteMensagem[] @relation("SuporteMensagemAutor")
+  suporteHistoricos               SuporteHistorico[] @relation("SuporteHistoricoAutor")
+  melhoriasResponsavel            MelhoriaSolicitacao[] @relation("MelhoriaResponsavel")
+  melhoriaComentarios             MelhoriaComentario[] @relation("MelhoriaComentarioAutor")
+  melhoriaHistoricos              MelhoriaHistorico[] @relation("MelhoriaHistoricoAutor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3747,6 +3758,7 @@ model PlatformContrato {
 
   parcelas PlatformContratoParcela[]
   titulos  FinanceiroTitulo[]
+  onboardings Onboarding[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4371,4 +4383,228 @@ model ArquivoShareLinkItem {
 
   @@id([linkId, arquivoId])
   @@map("arquivo_share_link_itens")
+}
+
+enum OnboardingStatus {
+  nao_iniciado
+  em_andamento
+  aguardando_cliente
+  aguardando_equipe
+  concluido
+  cancelado
+}
+
+enum OnboardingEtapaStatus {
+  pendente
+  concluida
+}
+
+/// Implantação de uma imobiliária já cadastrada. Não duplica o Tenant.
+model Onboarding {
+  id                 String            @id @default(uuid())
+  tenantId           String
+  tenant             Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  platformContratoId String?
+  platformContrato   PlatformContrato? @relation(fields: [platformContratoId], references: [id], onDelete: SetNull)
+  responsavelId      String?
+  responsavel        User?             @relation("OnboardingResponsavel", fields: [responsavelId], references: [id], onDelete: SetNull)
+  inicio             DateTime
+  prazoPrevisto      DateTime
+  status             OnboardingStatus  @default(nao_iniciado)
+  observacao         String            @default("")
+  justificativa      String            @default("")
+  concluidoEm        DateTime?
+  etapas             OnboardingEtapa[]
+  historico          OnboardingHistorico[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([responsavelId])
+  @@index([prazoPrevisto])
+  @@map("onboardings")
+}
+
+model OnboardingEtapa {
+  id           String                @id @default(uuid())
+  onboardingId String
+  onboarding   Onboarding            @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+  ordem        Int
+  titulo       String
+  obrigatoria  Boolean               @default(true)
+  status       OnboardingEtapaStatus @default(pendente)
+  pendencia    String                @default("")
+  observacao   String                @default("")
+  concluidaEm  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([onboardingId, ordem])
+  @@index([onboardingId])
+  @@map("onboarding_etapas")
+}
+
+model OnboardingHistorico {
+  id           String     @id @default(uuid())
+  onboardingId String
+  onboarding   Onboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+  autorId      String?
+  autor        User?      @relation("OnboardingHistoricoAutor", fields: [autorId], references: [id], onDelete: SetNull)
+  acao         String
+  detalhe      String     @default("")
+  createdAt    DateTime   @default(now())
+
+  @@index([onboardingId, createdAt])
+  @@map("onboarding_historicos")
+}
+
+enum SuportePrioridade {
+  baixa
+  normal
+  alta
+  urgente
+}
+
+enum SuporteStatus {
+  aberto
+  em_atendimento
+  aguardando_cliente
+  aguardando_equipe
+  resolvido
+  fechado
+}
+
+model SuporteChamado {
+  id            String            @id @default(uuid())
+  codigo        String            @unique
+  tenantId      String
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  titulo        String
+  descricao     String
+  categoria     String
+  prioridade    SuportePrioridade @default(normal)
+  status        SuporteStatus     @default(aberto)
+  responsavelId String?
+  responsavel   User?             @relation("SuporteResponsavel", fields: [responsavelId], references: [id], onDelete: SetNull)
+  prazoEm       DateTime?
+  resolvidoEm   DateTime?
+  fechadoEm     DateTime?
+  mensagens     SuporteMensagem[]
+  historico     SuporteHistorico[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([tenantId, status])
+  @@index([responsavelId])
+  @@index([prazoEm])
+  @@map("suporte_chamados")
+}
+
+model SuporteMensagem {
+  id         String         @id @default(uuid())
+  chamadoId  String
+  chamado    SuporteChamado @relation(fields: [chamadoId], references: [id], onDelete: Cascade)
+  autorId    String?
+  autor      User?          @relation("SuporteMensagemAutor", fields: [autorId], references: [id], onDelete: SetNull)
+  texto      String
+  /// Nota interna: nunca pode ser devolvida a um usuário de imobiliária.
+  interna    Boolean        @default(false)
+  createdAt  DateTime       @default(now())
+
+  @@index([chamadoId, createdAt])
+  @@map("suporte_mensagens")
+}
+
+model SuporteHistorico {
+  id        String         @id @default(uuid())
+  chamadoId String
+  chamado   SuporteChamado @relation(fields: [chamadoId], references: [id], onDelete: Cascade)
+  autorId   String?
+  autor     User?          @relation("SuporteHistoricoAutor", fields: [autorId], references: [id], onDelete: SetNull)
+  acao      String
+  detalhe   String         @default("")
+  createdAt DateTime       @default(now())
+
+  @@index([chamadoId, createdAt])
+  @@map("suporte_historicos")
+}
+
+enum MelhoriaCategoria {
+  funcionalidade_nova
+  melhoria_existente
+  usabilidade
+  integracao
+}
+
+enum MelhoriaPrioridade {
+  baixa
+  normal
+  alta
+  urgente
+}
+
+enum MelhoriaStatus {
+  recebida
+  em_avaliacao
+  aprovada
+  planejada
+  em_desenvolvimento
+  entregue
+  recusada
+  arquivada
+}
+
+model MelhoriaSolicitacao {
+  id                    String             @id @default(uuid())
+  codigo                String             @unique
+  tenantId              String
+  tenant                Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  titulo                String
+  descricao             String
+  categoria             MelhoriaCategoria
+  prioridade            MelhoriaPrioridade @default(normal)
+  status                MelhoriaStatus     @default(recebida)
+  responsavelId         String?
+  responsavel           User?              @relation("MelhoriaResponsavel", fields: [responsavelId], references: [id], onDelete: SetNull)
+  justificativaDecisao  String             @default("")
+  comentarios           MelhoriaComentario[]
+  historico             MelhoriaHistorico[]
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  @@index([tenantId, status])
+  @@index([responsavelId])
+  @@index([updatedAt])
+  @@map("melhoria_solicitacoes")
+}
+
+model MelhoriaComentario {
+  id            String              @id @default(uuid())
+  solicitacaoId String
+  solicitacao   MelhoriaSolicitacao @relation(fields: [solicitacaoId], references: [id], onDelete: Cascade)
+  autorId       String?
+  autor         User?               @relation("MelhoriaComentarioAutor", fields: [autorId], references: [id], onDelete: SetNull)
+  texto         String
+  /// Nota interna: nunca pode ser devolvida a um usuário de imobiliária.
+  interna       Boolean             @default(false)
+  createdAt     DateTime            @default(now())
+
+  @@index([solicitacaoId, createdAt])
+  @@map("melhoria_comentarios")
+}
+
+model MelhoriaHistorico {
+  id            String              @id @default(uuid())
+  solicitacaoId String
+  solicitacao   MelhoriaSolicitacao @relation(fields: [solicitacaoId], references: [id], onDelete: Cascade)
+  autorId       String?
+  autor         User?               @relation("MelhoriaHistoricoAutor", fields: [autorId], references: [id], onDelete: SetNull)
+  acao          String
+  detalhe       String              @default("")
+  createdAt     DateTime            @default(now())
+
+  @@index([solicitacaoId, createdAt])
+  @@map("melhoria_historicos")
 }

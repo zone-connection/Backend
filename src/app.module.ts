@@ -44,6 +44,9 @@ import { PresencaModule } from './presenca/presenca.module';
 import { MuralChavesModule } from './mural-chaves/mural-chaves.module';
 import { CadastroVendasModule } from './cadastro-vendas/cadastro-vendas.module';
 import { PlatformContratosModule } from './platform-contratos/platform-contratos.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
+import { SuporteModule } from './suporte/suporte.module';
+import { MelhoriasModule } from './melhorias/melhorias.module';
 import { PlatformFornecedorContratosModule } from './platform-fornecedor-contratos/platform-fornecedor-contratos.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { CsrfGuard } from './common/guards/csrf.guard';
@@ -84,6 +87,9 @@ import { PrismaSchemaExceptionFilter } from './common/filters/prisma-schema.filt
     MuralChavesModule,
     CadastroVendasModule,
     PlatformContratosModule,
+    OnboardingModule,
+    SuporteModule,
+    MelhoriasModule,
     PlatformFornecedorContratosModule,
     EquipesModule,
     AnaliseModule,
