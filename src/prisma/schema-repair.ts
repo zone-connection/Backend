@@ -132,8 +132,53 @@ export async function ensureRoletaSchema(prisma: PrismaService) {
 }
 
 const OPERACAO_STATEMENTS = [
+  `
+    DO $$ BEGIN
+      CREATE TYPE "TriagemOrigem" AS ENUM ('funil', 'manual', 'retrabalho', 'caca_lead');
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$
+  `,
   `ALTER TYPE "TriagemOrigem" ADD VALUE IF NOT EXISTS 'retrabalho'`,
   `ALTER TYPE "TriagemOrigem" ADD VALUE IF NOT EXISTS 'caca_lead'`,
+  `
+    CREATE TABLE IF NOT EXISTS "triagem_events" (
+      "id" TEXT NOT NULL,
+      "leadId" TEXT NOT NULL,
+      "autorId" TEXT NOT NULL,
+      "texto" TEXT NOT NULL,
+      "textoAnterior" TEXT,
+      "stageAnterior" TEXT,
+      "stageNovo" TEXT,
+      "origem" "TriagemOrigem" NOT NULL,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "editedAt" TIMESTAMP(3),
+      CONSTRAINT "triagem_events_pkey" PRIMARY KEY ("id")
+    )
+  `,
+  `
+    DO $$ BEGIN
+      ALTER TABLE "triagem_events"
+        ADD CONSTRAINT "triagem_events_leadId_fkey"
+        FOREIGN KEY ("leadId") REFERENCES "leads"("id")
+        ON DELETE CASCADE ON UPDATE CASCADE;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$
+  `,
+  `
+    DO $$ BEGIN
+      ALTER TABLE "triagem_events"
+        ADD CONSTRAINT "triagem_events_autorId_fkey"
+        FOREIGN KEY ("autorId") REFERENCES "users"("id")
+        ON DELETE CASCADE ON UPDATE CASCADE;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$
+  `,
+  `CREATE INDEX IF NOT EXISTS "triagem_events_leadId_idx" ON "triagem_events"("leadId")`,
+  `CREATE INDEX IF NOT EXISTS "triagem_events_autorId_idx" ON "triagem_events"("autorId")`,
+  `CREATE INDEX IF NOT EXISTS "triagem_events_createdAt_idx" ON "triagem_events"("createdAt")`,
   `
     ALTER TABLE "triagem_events"
       ADD COLUMN IF NOT EXISTS "textoAnterior" TEXT,
