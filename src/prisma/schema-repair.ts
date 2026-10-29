@@ -253,6 +253,75 @@ export async function ensureOperacaoSchema(prisma: PrismaService) {
   }
 }
 
+const CENTRAIS_STATEMENTS = [
+  `DO $$ BEGIN CREATE TYPE "OnboardingStatus" AS ENUM ('nao_iniciado', 'em_andamento', 'aguardando_cliente', 'aguardando_equipe', 'concluido', 'cancelado'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `DO $$ BEGIN CREATE TYPE "OnboardingEtapaStatus" AS ENUM ('pendente', 'concluida'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `CREATE TABLE IF NOT EXISTS "onboardings" (
+    "id" TEXT NOT NULL, "tenantId" TEXT NOT NULL, "platformContratoId" TEXT, "responsavelId" TEXT,
+    "inicio" TIMESTAMP(3) NOT NULL, "prazoPrevisto" TIMESTAMP(3) NOT NULL,
+    "status" "OnboardingStatus" NOT NULL DEFAULT 'nao_iniciado',
+    "observacao" TEXT NOT NULL DEFAULT '', "justificativa" TEXT NOT NULL DEFAULT '',
+    "concluidoEm" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "onboardings_pkey" PRIMARY KEY ("id"))`,
+  `CREATE TABLE IF NOT EXISTS "onboarding_etapas" (
+    "id" TEXT NOT NULL, "onboardingId" TEXT NOT NULL, "ordem" INTEGER NOT NULL, "titulo" TEXT NOT NULL,
+    "obrigatoria" BOOLEAN NOT NULL DEFAULT true, "status" "OnboardingEtapaStatus" NOT NULL DEFAULT 'pendente',
+    "pendencia" TEXT NOT NULL DEFAULT '', "observacao" TEXT NOT NULL DEFAULT '', "concluidaEm" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "onboarding_etapas_pkey" PRIMARY KEY ("id"))`,
+  `CREATE TABLE IF NOT EXISTS "onboarding_historicos" (
+    "id" TEXT NOT NULL, "onboardingId" TEXT NOT NULL, "autorId" TEXT, "acao" TEXT NOT NULL,
+    "detalhe" TEXT NOT NULL DEFAULT '', "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "onboarding_historicos_pkey" PRIMARY KEY ("id"))`,
+  `DO $$ BEGIN CREATE TYPE "SuportePrioridade" AS ENUM ('baixa', 'normal', 'alta', 'urgente'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `DO $$ BEGIN CREATE TYPE "SuporteStatus" AS ENUM ('aberto', 'em_atendimento', 'aguardando_cliente', 'aguardando_equipe', 'resolvido', 'fechado'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `CREATE TABLE IF NOT EXISTS "suporte_chamados" (
+    "id" TEXT NOT NULL, "codigo" TEXT NOT NULL, "tenantId" TEXT NOT NULL, "titulo" TEXT NOT NULL, "descricao" TEXT NOT NULL,
+    "categoria" TEXT NOT NULL, "prioridade" "SuportePrioridade" NOT NULL DEFAULT 'normal',
+    "status" "SuporteStatus" NOT NULL DEFAULT 'aberto', "responsavelId" TEXT, "prazoEm" TIMESTAMP(3),
+    "resolvidoEm" TIMESTAMP(3), "fechadoEm" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "suporte_chamados_pkey" PRIMARY KEY ("id"))`,
+  `CREATE TABLE IF NOT EXISTS "suporte_mensagens" (
+    "id" TEXT NOT NULL, "chamadoId" TEXT NOT NULL, "autorId" TEXT, "texto" TEXT NOT NULL,
+    "interna" BOOLEAN NOT NULL DEFAULT false, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "suporte_mensagens_pkey" PRIMARY KEY ("id"))`,
+  `CREATE TABLE IF NOT EXISTS "suporte_historicos" (
+    "id" TEXT NOT NULL, "chamadoId" TEXT NOT NULL, "autorId" TEXT, "acao" TEXT NOT NULL,
+    "detalhe" TEXT NOT NULL DEFAULT '', "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "suporte_historicos_pkey" PRIMARY KEY ("id"))`,
+  `DO $$ BEGIN CREATE TYPE "MelhoriaCategoria" AS ENUM ('funcionalidade_nova', 'melhoria_existente', 'usabilidade', 'integracao'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `DO $$ BEGIN CREATE TYPE "MelhoriaPrioridade" AS ENUM ('baixa', 'normal', 'alta', 'urgente'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `DO $$ BEGIN CREATE TYPE "MelhoriaStatus" AS ENUM ('recebida', 'em_avaliacao', 'aprovada', 'planejada', 'em_desenvolvimento', 'entregue', 'recusada', 'arquivada'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+  `CREATE TABLE IF NOT EXISTS "melhoria_solicitacoes" (
+    "id" TEXT NOT NULL, "codigo" TEXT NOT NULL, "tenantId" TEXT NOT NULL, "titulo" TEXT NOT NULL, "descricao" TEXT NOT NULL,
+    "categoria" "MelhoriaCategoria" NOT NULL, "prioridade" "MelhoriaPrioridade" NOT NULL DEFAULT 'normal',
+    "status" "MelhoriaStatus" NOT NULL DEFAULT 'recebida', "responsavelId" TEXT,
+    "justificativaDecisao" TEXT NOT NULL DEFAULT '',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "melhoria_solicitacoes_pkey" PRIMARY KEY ("id"))`,
+  `CREATE TABLE IF NOT EXISTS "melhoria_comentarios" (
+    "id" TEXT NOT NULL, "solicitacaoId" TEXT NOT NULL, "autorId" TEXT, "texto" TEXT NOT NULL,
+    "interna" BOOLEAN NOT NULL DEFAULT false, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "melhoria_comentarios_pkey" PRIMARY KEY ("id"))`,
+  `CREATE TABLE IF NOT EXISTS "melhoria_historicos" (
+    "id" TEXT NOT NULL, "solicitacaoId" TEXT NOT NULL, "autorId" TEXT, "acao" TEXT NOT NULL,
+    "detalhe" TEXT NOT NULL DEFAULT '', "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "melhoria_historicos_pkey" PRIMARY KEY ("id"))`,
+];
+
+export async function ensureCentraisSchema(prisma: PrismaService) {
+  for (const sql of CENTRAIS_STATEMENTS) {
+    try {
+      await prisma.$executeRawUnsafe(sql);
+    } catch (err) {
+      logger.warn(
+        `Trecho de implantação/suporte/melhorias não aplicado: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+}
+
 export async function ensureRuntimeSchema(prisma: PrismaService) {
   try {
     await ensureRoletaSchema(prisma);
@@ -275,6 +344,14 @@ export async function ensureRuntimeSchema(prisma: PrismaService) {
   } catch (err) {
     logger.error(
       'Não foi possível alinhar o schema de histórico e atividade.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
+  try {
+    await ensureCentraisSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar implantação, suporte e melhorias.',
       err instanceof Error ? err.stack : err,
     );
   }

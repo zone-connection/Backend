@@ -1,11 +1,11 @@
 ALTER TYPE "LeadFilaEventoTipo" ADD VALUE IF NOT EXISTS 'redistribuicao';
 
 ALTER TABLE "lead_fila_configs"
-  ADD COLUMN "redistribuirMinutos" INTEGER NOT NULL DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS "redistribuirMinutos" INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE "leads"
-  ADD COLUMN "roletaAtribuidoAt" TIMESTAMP(3),
-  ADD COLUMN "roletaPrazoAt" TIMESTAMP(3),
-  ADD COLUMN "roletaRedistribuido" BOOLEAN NOT NULL DEFAULT false;
+  ADD COLUMN IF NOT EXISTS "roletaAtribuidoAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "roletaPrazoAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "roletaRedistribuido" BOOLEAN NOT NULL DEFAULT false;
 
-CREATE INDEX "leads_roletaPrazoAt_idx" ON "leads"("roletaPrazoAt");
+CREATE INDEX IF NOT EXISTS "leads_roletaPrazoAt_idx" ON "leads"("roletaPrazoAt");

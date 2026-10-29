@@ -1,14 +1,18 @@
-CREATE TYPE "TwoFactorStatus" AS ENUM ('nao_aplica', 'pendente', 'ativo', 'desativado');
-CREATE TYPE "TwoFactorAuditAcao" AS ENUM ('decisao_ativar', 'decisao_desativar', 'ativar', 'desativar');
+DO $$ BEGIN
+  CREATE TYPE "TwoFactorStatus" AS ENUM ('nao_aplica', 'pendente', 'ativo', 'desativado');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE TYPE "TwoFactorAuditAcao" AS ENUM ('decisao_ativar', 'decisao_desativar', 'ativar', 'desativar');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 ALTER TABLE "users"
-  ADD COLUMN "twoFactorStatus" "TwoFactorStatus" NOT NULL DEFAULT 'nao_aplica',
-  ADD COLUMN "totpSecretEnc" TEXT,
-  ADD COLUMN "totpBackupHashes" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-  ADD COLUMN "twoFactorDecidedAt" TIMESTAMP(3),
-  ADD COLUMN "twoFactorChangedAt" TIMESTAMP(3),
-  ADD COLUMN "riskTermsVersion" TEXT,
-  ADD COLUMN "riskAcceptedAt" TIMESTAMP(3);
+  ADD COLUMN IF NOT EXISTS "twoFactorStatus" "TwoFactorStatus" NOT NULL DEFAULT 'nao_aplica',
+  ADD COLUMN IF NOT EXISTS "totpSecretEnc" TEXT,
+  ADD COLUMN IF NOT EXISTS "totpBackupHashes" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  ADD COLUMN IF NOT EXISTS "twoFactorDecidedAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "twoFactorChangedAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "riskTermsVersion" TEXT,
+  ADD COLUMN IF NOT EXISTS "riskAcceptedAt" TIMESTAMP(3);
 
 UPDATE "users"
 SET "twoFactorStatus" = 'pendente'

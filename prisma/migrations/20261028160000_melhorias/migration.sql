@@ -1,8 +1,8 @@
-CREATE TYPE "MelhoriaCategoria" AS ENUM ('funcionalidade_nova', 'melhoria_existente', 'usabilidade', 'integracao');
-CREATE TYPE "MelhoriaPrioridade" AS ENUM ('baixa', 'normal', 'alta', 'urgente');
-CREATE TYPE "MelhoriaStatus" AS ENUM ('recebida', 'em_avaliacao', 'aprovada', 'planejada', 'em_desenvolvimento', 'entregue', 'recusada', 'arquivada');
+DO $$ BEGIN CREATE TYPE "MelhoriaCategoria" AS ENUM ('funcionalidade_nova', 'melhoria_existente', 'usabilidade', 'integracao'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE "MelhoriaPrioridade" AS ENUM ('baixa', 'normal', 'alta', 'urgente'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE "MelhoriaStatus" AS ENUM ('recebida', 'em_avaliacao', 'aprovada', 'planejada', 'em_desenvolvimento', 'entregue', 'recusada', 'arquivada'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE TABLE "melhoria_solicitacoes" (
+CREATE TABLE IF NOT EXISTS "melhoria_solicitacoes" (
   "id" TEXT NOT NULL,
   "codigo" TEXT NOT NULL,
   "tenantId" TEXT NOT NULL,
@@ -18,7 +18,7 @@ CREATE TABLE "melhoria_solicitacoes" (
   CONSTRAINT "melhoria_solicitacoes_pkey" PRIMARY KEY ("id")
 );
 
-CREATE TABLE "melhoria_comentarios" (
+CREATE TABLE IF NOT EXISTS "melhoria_comentarios" (
   "id" TEXT NOT NULL,
   "solicitacaoId" TEXT NOT NULL,
   "autorId" TEXT,
@@ -28,7 +28,7 @@ CREATE TABLE "melhoria_comentarios" (
   CONSTRAINT "melhoria_comentarios_pkey" PRIMARY KEY ("id")
 );
 
-CREATE TABLE "melhoria_historicos" (
+CREATE TABLE IF NOT EXISTS "melhoria_historicos" (
   "id" TEXT NOT NULL,
   "solicitacaoId" TEXT NOT NULL,
   "autorId" TEXT,
@@ -38,16 +38,16 @@ CREATE TABLE "melhoria_historicos" (
   CONSTRAINT "melhoria_historicos_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "melhoria_solicitacoes_codigo_key" ON "melhoria_solicitacoes"("codigo");
-CREATE INDEX "melhoria_solicitacoes_tenantId_status_idx" ON "melhoria_solicitacoes"("tenantId", "status");
-CREATE INDEX "melhoria_solicitacoes_responsavelId_idx" ON "melhoria_solicitacoes"("responsavelId");
-CREATE INDEX "melhoria_solicitacoes_updatedAt_idx" ON "melhoria_solicitacoes"("updatedAt");
-CREATE INDEX "melhoria_comentarios_solicitacaoId_createdAt_idx" ON "melhoria_comentarios"("solicitacaoId", "createdAt");
-CREATE INDEX "melhoria_historicos_solicitacaoId_createdAt_idx" ON "melhoria_historicos"("solicitacaoId", "createdAt");
+CREATE UNIQUE INDEX IF NOT EXISTS "melhoria_solicitacoes_codigo_key" ON "melhoria_solicitacoes"("codigo");
+CREATE INDEX IF NOT EXISTS "melhoria_solicitacoes_tenantId_status_idx" ON "melhoria_solicitacoes"("tenantId", "status");
+CREATE INDEX IF NOT EXISTS "melhoria_solicitacoes_responsavelId_idx" ON "melhoria_solicitacoes"("responsavelId");
+CREATE INDEX IF NOT EXISTS "melhoria_solicitacoes_updatedAt_idx" ON "melhoria_solicitacoes"("updatedAt");
+CREATE INDEX IF NOT EXISTS "melhoria_comentarios_solicitacaoId_createdAt_idx" ON "melhoria_comentarios"("solicitacaoId", "createdAt");
+CREATE INDEX IF NOT EXISTS "melhoria_historicos_solicitacaoId_createdAt_idx" ON "melhoria_historicos"("solicitacaoId", "createdAt");
 
-ALTER TABLE "melhoria_solicitacoes" ADD CONSTRAINT "melhoria_solicitacoes_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "melhoria_solicitacoes" ADD CONSTRAINT "melhoria_solicitacoes_responsavelId_fkey" FOREIGN KEY ("responsavelId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-ALTER TABLE "melhoria_comentarios" ADD CONSTRAINT "melhoria_comentarios_solicitacaoId_fkey" FOREIGN KEY ("solicitacaoId") REFERENCES "melhoria_solicitacoes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "melhoria_comentarios" ADD CONSTRAINT "melhoria_comentarios_autorId_fkey" FOREIGN KEY ("autorId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-ALTER TABLE "melhoria_historicos" ADD CONSTRAINT "melhoria_historicos_solicitacaoId_fkey" FOREIGN KEY ("solicitacaoId") REFERENCES "melhoria_solicitacoes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "melhoria_historicos" ADD CONSTRAINT "melhoria_historicos_autorId_fkey" FOREIGN KEY ("autorId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN ALTER TABLE "melhoria_solicitacoes" ADD CONSTRAINT "melhoria_solicitacoes_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "melhoria_solicitacoes" ADD CONSTRAINT "melhoria_solicitacoes_responsavelId_fkey" FOREIGN KEY ("responsavelId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "melhoria_comentarios" ADD CONSTRAINT "melhoria_comentarios_solicitacaoId_fkey" FOREIGN KEY ("solicitacaoId") REFERENCES "melhoria_solicitacoes"("id") ON DELETE CASCADE ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "melhoria_comentarios" ADD CONSTRAINT "melhoria_comentarios_autorId_fkey" FOREIGN KEY ("autorId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "melhoria_historicos" ADD CONSTRAINT "melhoria_historicos_solicitacaoId_fkey" FOREIGN KEY ("solicitacaoId") REFERENCES "melhoria_solicitacoes"("id") ON DELETE CASCADE ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "melhoria_historicos" ADD CONSTRAINT "melhoria_historicos_autorId_fkey" FOREIGN KEY ("autorId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;

@@ -1,7 +1,11 @@
-CREATE TYPE "SuportePrioridade" AS ENUM ('baixa', 'normal', 'alta', 'urgente');
-CREATE TYPE "SuporteStatus" AS ENUM ('aberto', 'em_atendimento', 'aguardando_cliente', 'aguardando_equipe', 'resolvido', 'fechado');
+DO $$ BEGIN
+  CREATE TYPE "SuportePrioridade" AS ENUM ('baixa', 'normal', 'alta', 'urgente');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE TYPE "SuporteStatus" AS ENUM ('aberto', 'em_atendimento', 'aguardando_cliente', 'aguardando_equipe', 'resolvido', 'fechado');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE TABLE "suporte_chamados" (
+CREATE TABLE IF NOT EXISTS "suporte_chamados" (
   "id" TEXT NOT NULL,
   "codigo" TEXT NOT NULL,
   "tenantId" TEXT NOT NULL,
@@ -19,7 +23,7 @@ CREATE TABLE "suporte_chamados" (
   CONSTRAINT "suporte_chamados_pkey" PRIMARY KEY ("id")
 );
 
-CREATE TABLE "suporte_mensagens" (
+CREATE TABLE IF NOT EXISTS "suporte_mensagens" (
   "id" TEXT NOT NULL,
   "chamadoId" TEXT NOT NULL,
   "autorId" TEXT,
@@ -29,7 +33,7 @@ CREATE TABLE "suporte_mensagens" (
   CONSTRAINT "suporte_mensagens_pkey" PRIMARY KEY ("id")
 );
 
-CREATE TABLE "suporte_historicos" (
+CREATE TABLE IF NOT EXISTS "suporte_historicos" (
   "id" TEXT NOT NULL,
   "chamadoId" TEXT NOT NULL,
   "autorId" TEXT,
@@ -39,16 +43,16 @@ CREATE TABLE "suporte_historicos" (
   CONSTRAINT "suporte_historicos_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "suporte_chamados_codigo_key" ON "suporte_chamados"("codigo");
-CREATE INDEX "suporte_chamados_tenantId_status_idx" ON "suporte_chamados"("tenantId", "status");
-CREATE INDEX "suporte_chamados_responsavelId_idx" ON "suporte_chamados"("responsavelId");
-CREATE INDEX "suporte_chamados_prazoEm_idx" ON "suporte_chamados"("prazoEm");
-CREATE INDEX "suporte_mensagens_chamadoId_createdAt_idx" ON "suporte_mensagens"("chamadoId", "createdAt");
-CREATE INDEX "suporte_historicos_chamadoId_createdAt_idx" ON "suporte_historicos"("chamadoId", "createdAt");
+CREATE UNIQUE INDEX IF NOT EXISTS "suporte_chamados_codigo_key" ON "suporte_chamados"("codigo");
+CREATE INDEX IF NOT EXISTS "suporte_chamados_tenantId_status_idx" ON "suporte_chamados"("tenantId", "status");
+CREATE INDEX IF NOT EXISTS "suporte_chamados_responsavelId_idx" ON "suporte_chamados"("responsavelId");
+CREATE INDEX IF NOT EXISTS "suporte_chamados_prazoEm_idx" ON "suporte_chamados"("prazoEm");
+CREATE INDEX IF NOT EXISTS "suporte_mensagens_chamadoId_createdAt_idx" ON "suporte_mensagens"("chamadoId", "createdAt");
+CREATE INDEX IF NOT EXISTS "suporte_historicos_chamadoId_createdAt_idx" ON "suporte_historicos"("chamadoId", "createdAt");
 
-ALTER TABLE "suporte_chamados" ADD CONSTRAINT "suporte_chamados_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "suporte_chamados" ADD CONSTRAINT "suporte_chamados_responsavelId_fkey" FOREIGN KEY ("responsavelId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-ALTER TABLE "suporte_mensagens" ADD CONSTRAINT "suporte_mensagens_chamadoId_fkey" FOREIGN KEY ("chamadoId") REFERENCES "suporte_chamados"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "suporte_mensagens" ADD CONSTRAINT "suporte_mensagens_autorId_fkey" FOREIGN KEY ("autorId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-ALTER TABLE "suporte_historicos" ADD CONSTRAINT "suporte_historicos_chamadoId_fkey" FOREIGN KEY ("chamadoId") REFERENCES "suporte_chamados"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "suporte_historicos" ADD CONSTRAINT "suporte_historicos_autorId_fkey" FOREIGN KEY ("autorId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN ALTER TABLE "suporte_chamados" ADD CONSTRAINT "suporte_chamados_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "suporte_chamados" ADD CONSTRAINT "suporte_chamados_responsavelId_fkey" FOREIGN KEY ("responsavelId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "suporte_mensagens" ADD CONSTRAINT "suporte_mensagens_chamadoId_fkey" FOREIGN KEY ("chamadoId") REFERENCES "suporte_chamados"("id") ON DELETE CASCADE ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "suporte_mensagens" ADD CONSTRAINT "suporte_mensagens_autorId_fkey" FOREIGN KEY ("autorId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "suporte_historicos" ADD CONSTRAINT "suporte_historicos_chamadoId_fkey" FOREIGN KEY ("chamadoId") REFERENCES "suporte_chamados"("id") ON DELETE CASCADE ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE "suporte_historicos" ADD CONSTRAINT "suporte_historicos_autorId_fkey" FOREIGN KEY ("autorId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
