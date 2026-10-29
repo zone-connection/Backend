@@ -113,6 +113,26 @@ export const leadSelect = {
   triagemOrigemHerdada: true,
   createdAt: true,
   updatedAt: true,
+  metaLink: {
+    select: {
+      campaignId: true,
+      campaignName: true,
+      adId: true,
+      adName: true,
+      formId: true,
+      formName: true,
+      costPerLead: true,
+      costCurrency: true,
+    },
+  },
+  grupoZapLink: {
+    select: {
+      leadOrigin: true,
+      originListingId: true,
+      clientListingId: true,
+      leadType: true,
+    },
+  },
 } satisfies Prisma.LeadSelect;
 
 export type LeadEntity = Prisma.LeadGetPayload<{ select: typeof leadSelect }>;

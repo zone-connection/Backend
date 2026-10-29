@@ -89,6 +89,7 @@ describe('extractLeadgenEvents', () => {
     assert.equal(result.events.length, 1);
     assert.equal(result.events[0].pageId, REAL_PAGE_ID);
     assert.equal(result.events[0].leadgenId, '999000111222');
+    assert.equal(result.events[0].campaignId, '888');
   });
 
   it('usa entry.id quando value.page_id está ausente', () => {

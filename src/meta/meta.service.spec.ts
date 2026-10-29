@@ -134,6 +134,16 @@ function createService(opts: {
     listLeadgenForms: async () => opts.graphForms ?? [{ id: 'form-1' }],
     listFormLeads: async () => opts.graphFormLeads ?? [],
     subscribePageLeadgen: async () => undefined,
+    fetchAdAttribution: async () => ({
+      campaignId: 'camp-1',
+      campaignName: 'Campanha Lançamento',
+      adId: opts.graphLead?.ad_id ?? null,
+      adName: 'Anúncio principal',
+      formId: 'form-1',
+      formName: 'Formulário site',
+      costPerLead: 18.5,
+      costCurrency: 'BRL',
+    }),
   };
 
   const service = new MetaService(

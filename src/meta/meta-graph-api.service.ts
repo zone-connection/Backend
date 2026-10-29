@@ -30,6 +30,17 @@ export type MetaLeadgenForm = {
   status?: string;
 };
 
+export type MetaAdAttribution = {
+  campaignId: string | null;
+  campaignName: string | null;
+  adId: string | null;
+  adName: string | null;
+  formId: string | null;
+  formName: string | null;
+  costPerLead: number | null;
+  costCurrency: string;
+};
+
 const GRAPH_TIMEOUT_MS = 15_000;
 const MAX_PAGES = 25;
 const PAGE_SIZE = 100;
@@ -113,6 +124,158 @@ export class MetaGraphApiService {
       `Lead encontrado na Meta leadgen_id=${leadgenId} fields=${body.field_data?.length ?? 0}`,
     );
     return body;
+  }
+
+  async fetchAdAttribution(input: {
+    pageAccessToken: string;
+    adId?: string | null;
+    campaignId?: string | null;
+    formId?: string | null;
+  }): Promise<MetaAdAttribution> {
+    const result: MetaAdAttribution = {
+      campaignId: input.campaignId?.trim() || null,
+      campaignName: null,
+      adId: input.adId?.trim() || null,
+      adName: null,
+      formId: input.formId?.trim() || null,
+      formName: null,
+      costPerLead: null,
+      costCurrency: 'BRL',
+    };
+    const token = input.pageAccessToken;
+    if (!token) return result;
+
+    if (result.adId) {
+      try {
+        const version = this.graphVersion();
+        const url = new URL(
+          `https://graph.facebook.com/${version}/${encodeURIComponent(result.adId)}`,
+        );
+        url.searchParams.set(
+          'fields',
+          'id,name,campaign{id,name},adset{id,name}',
+        );
+        url.searchParams.set('access_token', token);
+        const body = await this.graphGet<{
+          id?: string;
+          name?: string;
+          campaign?: { id?: string; name?: string };
+          error?: { message?: string; code?: number };
+        }>(url);
+        result.adName = body.name?.trim() || null;
+        result.campaignId = body.campaign?.id?.trim() || result.campaignId;
+        result.campaignName = body.campaign?.name?.trim() || null;
+      } catch (err) {
+        this.logger.warn(
+          `Atribuição do anúncio falhou ad_id=${result.adId}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    if (result.campaignId && !result.campaignName) {
+      try {
+        const version = this.graphVersion();
+        const url = new URL(
+          `https://graph.facebook.com/${version}/${encodeURIComponent(result.campaignId)}`,
+        );
+        url.searchParams.set('fields', 'id,name');
+        url.searchParams.set('access_token', token);
+        const body = await this.graphGet<{
+          name?: string;
+          error?: { message?: string; code?: number };
+        }>(url);
+        result.campaignName = body.name?.trim() || null;
+      } catch (err) {
+        this.logger.warn(
+          `Nome da campanha falhou campaign_id=${result.campaignId}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    if (result.formId) {
+      try {
+        const version = this.graphVersion();
+        const url = new URL(
+          `https://graph.facebook.com/${version}/${encodeURIComponent(result.formId)}`,
+        );
+        url.searchParams.set('fields', 'id,name');
+        url.searchParams.set('access_token', token);
+        const body = await this.graphGet<{
+          name?: string;
+          error?: { message?: string; code?: number };
+        }>(url);
+        result.formName = body.name?.trim() || null;
+      } catch (err) {
+        this.logger.warn(
+          `Nome do formulário falhou form_id=${result.formId}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    const insightId = result.campaignId || result.adId;
+    if (insightId) {
+      try {
+        result.costPerLead = await this.fetchCostPerLead(insightId, token);
+      } catch (err) {
+        this.logger.warn(
+          `Custo por lead falhou id=${insightId}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    return result;
+  }
+
+  private async fetchCostPerLead(
+    objectId: string,
+    accessToken: string,
+  ): Promise<number | null> {
+    const version = this.graphVersion();
+    const url = new URL(
+      `https://graph.facebook.com/${version}/${encodeURIComponent(objectId)}/insights`,
+    );
+    url.searchParams.set(
+      'fields',
+      'spend,actions,cost_per_action_type,cost_per_lead',
+    );
+    url.searchParams.set('date_preset', 'maximum');
+    url.searchParams.set('access_token', accessToken);
+    const body = await this.graphGet<{
+      data?: Array<{
+        spend?: string;
+        cost_per_lead?: string;
+        actions?: Array<{ action_type?: string; value?: string }>;
+        cost_per_action_type?: Array<{ action_type?: string; value?: string }>;
+      }>;
+      error?: { message?: string; code?: number };
+    }>(url);
+    const row = body.data?.[0];
+    if (!row) return null;
+    const preferred = [
+      'lead',
+      'onsite_conversion.lead_grouped',
+      'offsite_conversion.fb_pixel_lead',
+    ];
+    for (const type of preferred) {
+      const hit = row.cost_per_action_type?.find(
+        (item) => item.action_type === type,
+      );
+      const value = Number(hit?.value);
+      if (Number.isFinite(value) && value > 0) return Math.round(value * 100) / 100;
+    }
+    const direct = Number(row.cost_per_lead);
+    if (Number.isFinite(direct) && direct > 0) {
+      return Math.round(direct * 100) / 100;
+    }
+    const spend = Number(row.spend);
+    const leads = Number(
+      row.actions?.find((item) => preferred.includes(item.action_type ?? ''))
+        ?.value,
+    );
+    if (Number.isFinite(spend) && spend > 0 && Number.isFinite(leads) && leads > 0) {
+      return Math.round((spend / leads) * 100) / 100;
+    }
+    return null;
   }
 
   async listLeadgenForms(

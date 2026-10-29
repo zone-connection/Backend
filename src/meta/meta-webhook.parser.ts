@@ -13,6 +13,7 @@ export type LeadgenEvent = {
   formId: string | null;
   adId: string | null;
   adgroupId: string | null;
+  campaignId: string | null;
   platform: string | null;
   pageIdSource: 'value' | 'entry';
 };
@@ -118,6 +119,7 @@ export function extractLeadgenEvents(payload: unknown): ExtractLeadgenResult {
         formId: asMetaId(value.form_id),
         adId: asMetaId(value.ad_id),
         adgroupId: asMetaId(value.adgroup_id),
+        campaignId: asMetaId(value.campaign_id),
         platform: asMetaId(value.platform),
         pageIdSource: valuePageId ? 'value' : 'entry',
       });

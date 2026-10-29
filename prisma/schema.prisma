@@ -920,8 +920,15 @@ model LeadMetaLink {
   leadgenId String  @unique
   pageId    String
   formId    String?
+  formName  String?
   adId      String?
+  adName    String?
   adgroupId String?
+  campaignId   String?
+  campaignName String?
+  /// Custo médio por lead na campanha (Insights da Meta), não o valor exato deste cadastro.
+  costPerLead  Decimal? @db.Decimal(12, 2)
+  costCurrency String?  @default("BRL")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

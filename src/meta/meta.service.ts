@@ -6,6 +6,7 @@ import {
   MetaGraphApiService,
   MetaLeadField,
   MetaLeadPayload,
+  type MetaAdAttribution,
 } from './meta-graph-api.service';
 import {
   extractLeadgenEvents,
@@ -235,6 +236,7 @@ export class MetaService {
       formId: metaLead.form_id ?? formId,
       adId: metaLead.ad_id ?? null,
       adgroupId: null,
+      campaignId: null,
       platform: metaLead.platform ?? null,
       pageIdSource: 'value',
     };
@@ -245,24 +247,25 @@ export class MetaService {
       `Importando lead da Graph leadgen_id=${leadgenId} tenantId=${connection.tenantId} campos=${metaFieldKeys(fields)} telefone=${mapped.telefone ?? 'vazio'} email=${mapped.email ?? 'vazio'}`,
     );
 
+    const attribution = await this.loadAttribution(
+      connection.pageAccessToken,
+      event,
+    );
     const { lead, created } = await this.findOrCreateLead(
       mapped,
       event,
       metaLead,
       connection.tenantId,
+      attribution,
     );
 
-    await this.prisma.leadMetaLink.upsert({
-      where: { leadgenId },
-      create: {
-        leadId: lead.id,
-        leadgenId,
-        pageId: connection.pageId,
-        formId: event.formId ?? null,
-        adId: event.adId ?? null,
-      },
-      update: {},
-    });
+    await this.upsertMetaLink(
+      lead.id,
+      leadgenId,
+      connection.pageId,
+      event,
+      attribution,
+    );
 
     this.logger.log(
       `Lead importado leadgen_id=${leadgenId} crmLeadId=${lead.id} tenantId=${connection.tenantId}`,
@@ -400,25 +403,32 @@ export class MetaService {
         `Criando lead no CRM leadgen_id=${event.leadgenId} tenantId=${connection.tenantId} campos=${metaFieldKeys(metaLead.field_data ?? [])} telefone=${mapped.telefone ?? 'vazio'} email=${mapped.email ?? 'vazio'}`,
       );
 
+      const attribution = dummy
+        ? null
+        : await this.loadAttribution(connection.pageAccessToken, {
+            ...event,
+            formId: event.formId ?? metaLead.form_id ?? null,
+            adId: event.adId ?? metaLead.ad_id ?? null,
+          });
       const { lead, created } = await this.findOrCreateLead(
         mapped,
         event,
         metaLead,
         connection.tenantId,
+        attribution,
       );
 
-      await this.prisma.leadMetaLink.upsert({
-        where: { leadgenId: event.leadgenId },
-        create: {
-          leadId: lead.id,
-          leadgenId: event.leadgenId,
-          pageId: event.pageId,
+      await this.upsertMetaLink(
+        lead.id,
+        event.leadgenId,
+        event.pageId,
+        {
+          ...event,
           formId: event.formId ?? metaLead.form_id ?? null,
           adId: event.adId ?? metaLead.ad_id ?? null,
-          adgroupId: event.adgroupId,
         },
-        update: {},
-      });
+        attribution,
+      );
 
       this.logger.log(
         `Lead criado leadgen_id=${event.leadgenId} crmLeadId=${lead.id} tenantId=${connection.tenantId}`,
@@ -436,11 +446,69 @@ export class MetaService {
     }
   }
 
+  private async loadAttribution(
+    pageAccessToken: string,
+    event: LeadgenEvent,
+  ): Promise<MetaAdAttribution | null> {
+    try {
+      return await this.graphApi.fetchAdAttribution({
+        pageAccessToken,
+        adId: event.adId,
+        campaignId: event.campaignId,
+        formId: event.formId,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Atribuição Meta falhou leadgen_id=${event.leadgenId}: ${err instanceof Error ? err.message : err}`,
+      );
+      return null;
+    }
+  }
+
+  private async upsertMetaLink(
+    leadId: string,
+    leadgenId: string,
+    pageId: string,
+    event: LeadgenEvent,
+    attribution: MetaAdAttribution | null,
+  ) {
+    const data = {
+      leadId,
+      leadgenId,
+      pageId,
+      formId: attribution?.formId ?? event.formId ?? null,
+      formName: attribution?.formName ?? null,
+      adId: attribution?.adId ?? event.adId ?? null,
+      adName: attribution?.adName ?? null,
+      adgroupId: event.adgroupId,
+      campaignId: attribution?.campaignId ?? event.campaignId ?? null,
+      campaignName: attribution?.campaignName ?? null,
+      costPerLead: attribution?.costPerLead ?? null,
+      costCurrency: attribution?.costCurrency ?? 'BRL',
+    };
+    await this.prisma.leadMetaLink.upsert({
+      where: { leadgenId },
+      create: data,
+      update: {
+        formId: data.formId,
+        formName: data.formName,
+        adId: data.adId,
+        adName: data.adName,
+        adgroupId: data.adgroupId,
+        campaignId: data.campaignId,
+        campaignName: data.campaignName,
+        costPerLead: data.costPerLead,
+        costCurrency: data.costCurrency,
+      },
+    });
+  }
+
   private async findOrCreateLead(
     mapped: MappedMetaLead,
     event: LeadgenEvent,
     metaLead: MetaLeadPayload,
     tenantId: string,
+    attribution?: MetaAdAttribution | null,
   ) {
     const reusable = await this.findReusableLead(mapped, tenantId);
     if (reusable) {
@@ -456,10 +524,19 @@ export class MetaService {
       canal,
       'Lead Ads',
       ...mapped.extraTags,
-      ...(event.formId ? [`Form: ${event.formId}`] : []),
-      ...(event.adId || metaLead.ad_id
-        ? [`Ad: ${event.adId ?? metaLead.ad_id}`]
+      ...(attribution?.campaignName
+        ? [`Campanha: ${attribution.campaignName}`]
         : []),
+      ...(attribution?.formName
+        ? [`Form: ${attribution.formName}`]
+        : event.formId
+          ? [`Form: ${event.formId}`]
+          : []),
+      ...(attribution?.adName
+        ? [`Ad: ${attribution.adName}`]
+        : event.adId || metaLead.ad_id
+          ? [`Ad: ${event.adId ?? metaLead.ad_id}`]
+          : []),
     ];
 
     const placement = await this.funis.comercialPlacement(tenantId);
