@@ -150,7 +150,7 @@ export class MetaService {
       );
     }
 
-    let forms: { id: string }[];
+    let forms: { id: string; name?: string }[];
     try {
       forms = await this.graphApi.listLeadgenForms(
         connection.pageId,
@@ -195,6 +195,7 @@ export class MetaService {
             connection,
             form.id,
             metaLead,
+            form.name,
           );
           if (outcome === 'created') result.created += 1;
           else result.skipped += 1;
@@ -219,6 +220,7 @@ export class MetaService {
     connection: TenantMetaConn & { pageId: string },
     formId: string,
     metaLead: MetaLeadPayload,
+    formName?: string | null,
   ): Promise<'created' | 'skipped'> {
     const leadgenId = String(metaLead.id ?? '').trim();
     if (!leadgenId || leadgenId === META_DUMMY_ID) return 'skipped';
@@ -228,7 +230,6 @@ export class MetaService {
       where: { leadgenId },
       select: { leadId: true },
     });
-    if (existingLink) return 'skipped';
 
     const event: LeadgenEvent = {
       leadgenId,
@@ -243,13 +244,30 @@ export class MetaService {
     const fields = metaLead.field_data ?? [];
     const mapped = mapMetaLeadFields(fields);
 
+    if (existingLink) {
+      const known = this.withFormName(null, formName);
+      await this.upsertMetaLink(
+        existingLink.leadId,
+        leadgenId,
+        connection.pageId,
+        event,
+        known,
+      ).catch((err) => {
+        this.logger.warn(
+          `Não atualizou campanha leadgen_id=${leadgenId}: ${err instanceof Error ? err.message : err}`,
+        );
+      });
+      await this.syncLeadOrigemCampanha(existingLink.leadId, known);
+      return 'skipped';
+    }
+
     this.logger.log(
       `Importando lead da Graph leadgen_id=${leadgenId} tenantId=${connection.tenantId} campos=${metaFieldKeys(fields)} telefone=${mapped.telefone ?? 'vazio'} email=${mapped.email ?? 'vazio'}`,
     );
 
-    const attribution = await this.loadAttribution(
-      connection.pageAccessToken,
-      event,
+    const attribution = this.withFormName(
+      await this.loadAttribution(connection.pageAccessToken, event),
+      formName,
     );
     const { lead, created } = await this.findOrCreateLead(
       mapped,
@@ -405,11 +423,14 @@ export class MetaService {
 
       const attribution = dummy
         ? null
-        : await this.loadAttribution(connection.pageAccessToken, {
-            ...event,
-            formId: event.formId ?? metaLead.form_id ?? null,
-            adId: event.adId ?? metaLead.ad_id ?? null,
-          });
+        : this.withFormName(
+            await this.loadAttribution(connection.pageAccessToken, {
+              ...event,
+              formId: event.formId ?? metaLead.form_id ?? null,
+              adId: event.adId ?? metaLead.ad_id ?? null,
+            }),
+            null,
+          );
       const { lead, created } = await this.findOrCreateLead(
         mapped,
         event,
@@ -444,6 +465,51 @@ export class MetaService {
         .catch(() => undefined);
       throw error;
     }
+  }
+
+  private withFormName(
+    attribution: MetaAdAttribution | null,
+    formName?: string | null,
+  ): MetaAdAttribution | null {
+    const name = formName?.trim() || null;
+    if (!attribution && !name) return null;
+    return {
+      campaignId: attribution?.campaignId ?? null,
+      campaignName: attribution?.campaignName ?? null,
+      adId: attribution?.adId ?? null,
+      adName: attribution?.adName ?? null,
+      formId: attribution?.formId ?? null,
+      formName: attribution?.formName ?? name,
+      costPerLead: attribution?.costPerLead ?? null,
+      costCurrency: attribution?.costCurrency ?? 'BRL',
+    };
+  }
+
+  private origemCampanha(
+    attribution: MetaAdAttribution | null | undefined,
+    fallback: string,
+  ): string {
+    const name =
+      attribution?.campaignName?.trim() || attribution?.formName?.trim();
+    return (name || fallback).slice(0, 120);
+  }
+
+  private async syncLeadOrigemCampanha(
+    leadId: string,
+    attribution: MetaAdAttribution | null,
+  ) {
+    const name =
+      attribution?.campaignName?.trim() || attribution?.formName?.trim();
+    if (!name) return;
+    await this.prisma.lead
+      .updateMany({
+        where: {
+          id: leadId,
+          origem: { in: ['Instagram', 'Facebook Ads', 'Facebook'] },
+        },
+        data: { origem: name.slice(0, 120) },
+      })
+      .catch(() => undefined);
   }
 
   private async loadAttribution(
@@ -490,15 +556,15 @@ export class MetaService {
       where: { leadgenId },
       create: data,
       update: {
-        formId: data.formId,
-        formName: data.formName,
-        adId: data.adId,
-        adName: data.adName,
-        adgroupId: data.adgroupId,
-        campaignId: data.campaignId,
-        campaignName: data.campaignName,
-        costPerLead: data.costPerLead,
-        costCurrency: data.costCurrency,
+        ...(data.formId ? { formId: data.formId } : {}),
+        ...(data.formName ? { formName: data.formName } : {}),
+        ...(data.adId ? { adId: data.adId } : {}),
+        ...(data.adName ? { adName: data.adName } : {}),
+        ...(data.adgroupId ? { adgroupId: data.adgroupId } : {}),
+        ...(data.campaignId ? { campaignId: data.campaignId } : {}),
+        ...(data.campaignName ? { campaignName: data.campaignName } : {}),
+        ...(data.costPerLead != null ? { costPerLead: data.costPerLead } : {}),
+        ...(data.costCurrency ? { costCurrency: data.costCurrency } : {}),
       },
     });
   }
@@ -544,7 +610,10 @@ export class MetaService {
       tenantId,
       mapped.empreendimentoNome,
     );
-    const origem = canal === 'Instagram' ? 'Instagram' : 'Facebook Ads';
+    const origem = this.origemCampanha(
+      attribution,
+      canal === 'Instagram' ? 'Instagram' : 'Facebook Ads',
+    );
     const lead = await this.prisma.lead.create({
       data: {
         tenantId,

@@ -3145,11 +3145,12 @@ export class LeadsService {
     requester: AuthenticatedUser,
   ): Promise<LeadWithMonitoramento> {
     const tenantId = requireTenantId(requester);
-    const fresh =
+    const loaded =
       (await this.prisma.lead.findFirst({
         where: { id: lead.id, tenantId },
         select: leadSelect,
       })) ?? lead;
+    const [fresh] = await hydrateLeadAquisicao(this.prisma, [loaded]);
     const ctx = await this.monitoramento.loadFunilContext(tenantId);
     const decorated = await this.monitoramento.decorateLeadWithTarefas(
       fresh,
