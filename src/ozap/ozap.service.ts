@@ -6,18 +6,20 @@ import { LeadNotifyService } from '../lead-notify/lead-notify.service';
 import { FunisService } from '../funis/funis.service';
 import { LeadFilaService } from '../leads/lead-fila.service';
 import { nationalPhoneDigits, phonesMatch } from '../common/utils/phone';
+import { phonesOwnedByOtherTenants } from './ozap-other-tenant';
 
 type OzapTransaction = Prisma.TransactionClient;
 type OzapWebhookResult = {
   ok: true;
   leadId?: string;
   ignored?: true;
-  reason?: 'instance_not_mapped' | 'staff';
+  reason?: 'instance_not_mapped' | 'staff' | 'other_tenant';
   duplicate?: true;
 };
 
 type OzapReceivedResult =
   | { staff: true }
+  | { otherTenant: true }
   | {
       leadId: string;
       created: boolean;
@@ -134,11 +136,13 @@ export class OzapService {
             payload.timestamp,
             connection.tenantId,
           );
-          if ('staff' in received) {
+          if ('staff' in received || 'otherTenant' in received) {
             return {
               ok: true as const,
               ignored: true as const,
-              reason: 'staff' as const,
+              reason: ('staff' in received ? 'staff' : 'other_tenant') as
+                | 'staff'
+                | 'other_tenant',
             };
           }
           return {
@@ -251,9 +255,18 @@ export class OzapService {
     if (lead && lead.tenantId !== tenantId) {
       await tx.leadOzapLink.delete({ where: { id: existingLink!.id } });
       this.logger.warn(
-        `Chat OZap ${chatId} desvinculado do lead ${lead.id}: pertence a outra imobiliária. Novo lead fica no tenant ${tenantId}.`,
+        `Chat OZap ${chatId} ignorado: lead ${lead.id} pertence a outra imobiliária.`,
       );
-      lead = undefined;
+      return { otherTenant: true };
+    }
+    if (
+      !lead &&
+      (await phonesOwnedByOtherTenants(tx, tenantId, [phone])).size > 0
+    ) {
+      this.logger.warn(
+        `Webhook OZap ignorado: telefone ${phone} já é lead ou colaborador de outra imobiliária.`,
+      );
+      return { otherTenant: true };
     }
     if (!lead) {
       lead =

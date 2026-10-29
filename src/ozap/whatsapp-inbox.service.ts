@@ -16,6 +16,8 @@ import {
 } from '../common/utils/roles';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { isCrmWhatsappLeadNotifyText } from '../lead-notify/lead-notify.messages';
+import { phonesOwnedByOtherTenants } from './ozap-other-tenant';
+import { nationalPhoneDigits } from '../common/utils/phone';
 import { decryptPageAccessToken, metaTokenKey } from '../meta/meta-token.crypto';
 import {
   OzapApiClient,
@@ -406,6 +408,11 @@ export class WhatsappInboxService {
       }),
     ]);
     const ozapByChat = await this.indexOzapChats(instanceId);
+    const foreignPhones = await phonesOwnedByOtherTenants(
+      this.prisma,
+      requireTenantId(requester),
+      rows.map((row) => row.lead.telefone),
+    );
     return {
       available: true as const,
       instanceId,
@@ -438,7 +445,11 @@ export class WhatsappInboxService {
             leadNome: row.lead.nome,
           };
         })
-        .filter((chat) => !this.isLeadNotifyChat(chat)),
+        .filter(
+          (chat) =>
+            !this.isLeadNotifyChat(chat) &&
+            !foreignPhones.has(nationalPhoneDigits(chat.phone ?? '')),
+        ),
     };
   }
 
