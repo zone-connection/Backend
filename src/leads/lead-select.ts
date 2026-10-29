@@ -115,14 +115,11 @@ export const leadSelect = {
   updatedAt: true,
   metaLink: {
     select: {
-      campaignId: true,
-      campaignName: true,
-      adId: true,
-      adName: true,
+      leadgenId: true,
+      pageId: true,
       formId: true,
-      formName: true,
-      costPerLead: true,
-      costCurrency: true,
+      adId: true,
+      adgroupId: true,
     },
   },
   grupoZapLink: {
@@ -136,3 +133,68 @@ export const leadSelect = {
 } satisfies Prisma.LeadSelect;
 
 export type LeadEntity = Prisma.LeadGetPayload<{ select: typeof leadSelect }>;
+
+/** Completa campanha/custo sem derrubar a lista se a migration ainda não rodou. */
+export async function hydrateLeadAquisicao<
+  T extends { id: string; metaLink: LeadEntity['metaLink'] },
+>(
+  prisma: {
+    leadMetaLink: {
+      findMany: (args: unknown) => Promise<
+        Array<{
+          leadId: string;
+          campaignId: string | null;
+          campaignName: string | null;
+          adName: string | null;
+          formName: string | null;
+          costPerLead: unknown;
+          costCurrency: string | null;
+          adId: string | null;
+          formId: string | null;
+        }>
+      >;
+    };
+  },
+  leads: T[],
+): Promise<T[]> {
+  const ids = leads.map((lead) => lead.id);
+  if (!ids.length) return leads;
+  try {
+    const rows = await prisma.leadMetaLink.findMany({
+      where: { leadId: { in: ids } },
+      select: {
+        leadId: true,
+        campaignId: true,
+        campaignName: true,
+        adName: true,
+        formName: true,
+        costPerLead: true,
+        costCurrency: true,
+        adId: true,
+        formId: true,
+      },
+    });
+    const byLead = new Map(rows.map((row) => [row.leadId, row]));
+    return leads.map((lead) => {
+      const extra = byLead.get(lead.id);
+      if (!extra || !lead.metaLink) return lead;
+      const cost = Number(extra.costPerLead);
+      return {
+        ...lead,
+        metaLink: {
+          ...lead.metaLink,
+          campaignId: extra.campaignId,
+          campaignName: extra.campaignName,
+          adName: extra.adName,
+          formName: extra.formName,
+          costPerLead: Number.isFinite(cost) ? cost : null,
+          costCurrency: extra.costCurrency,
+          adId: extra.adId ?? lead.metaLink.adId,
+          formId: extra.formId ?? lead.metaLink.formId,
+        },
+      };
+    });
+  } catch {
+    return leads;
+  }
+}

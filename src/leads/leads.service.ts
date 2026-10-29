@@ -37,7 +37,7 @@ import {
   hopAutoTexto,
 } from '../triagem/stage-hops';
 import { LeadMonitoramentoService } from './monitoramento/lead-monitoramento.service';
-import { leadSelect, LeadEntity } from './lead-select';
+import { hydrateLeadAquisicao, leadSelect, LeadEntity } from './lead-select';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
 import {
@@ -1086,7 +1086,7 @@ export class LeadsService {
     ]);
 
     const decorated = await this.monitoramento.decorateLeadsWithTarefas(
-      data,
+      await hydrateLeadAquisicao(this.prisma, data),
       monCtx,
       requester,
     );
@@ -1147,14 +1147,15 @@ export class LeadsService {
     requester: AuthenticatedUser,
   ): Promise<LeadEntity> {
     const tenantId = requireTenantId(requester);
-    const lead = await this.prisma.lead.findFirst({
+    const found = await this.prisma.lead.findFirst({
       where: { id, tenantId },
       select: leadSelect,
     });
 
-    if (!lead) {
+    if (!found) {
       throw new NotFoundException('Lead não encontrado.');
     }
+    const [lead] = await hydrateLeadAquisicao(this.prisma, [found]);
 
     // Perdidos: admin vê leads; corretor vê os próprios clientes.
     if (lead.perdidoAt) {
