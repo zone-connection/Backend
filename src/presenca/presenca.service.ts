@@ -44,6 +44,11 @@ function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Segunda a sábado. Domingo fica de fora da média diária. */
+function isDiaUtil(iso: string): boolean {
+  return new Date(`${iso}T12:00:00.000Z`).getUTCDay() !== 0;
+}
+
 function monthBounds(ano: number, mes: number) {
   const start = new Date(Date.UTC(ano, mes - 1, 1, 12, 0, 0));
   const end = new Date(Date.UTC(ano, mes, 0, 12, 0, 0));
@@ -382,9 +387,10 @@ export class PresencaService {
       }
       return { data: d, vieram, equivalente, faltas, justificadas };
     });
-    const n = days.length || 1;
-    const mediaVieram = porDia.reduce((s, x) => s + x.vieram, 0) / n;
-    const mediaEquivalente = porDia.reduce((s, x) => s + x.equivalente, 0) / n;
+    const uteis = porDia.filter((x) => isDiaUtil(x.data));
+    const n = uteis.length || 1;
+    const mediaVieram = uteis.reduce((s, x) => s + x.vieram, 0) / n;
+    const mediaEquivalente = uteis.reduce((s, x) => s + x.equivalente, 0) / n;
     return {
       porDia,
       mediaVieram: Math.round(mediaVieram * 100) / 100,
