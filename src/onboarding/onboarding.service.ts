@@ -40,7 +40,7 @@ const ABERTOS: OnboardingStatus[] = [
 ];
 
 const include = {
-  tenant: { select: { id: true, name: true, slug: true, plano: true, status: true } },
+  tenant: { select: { id: true, name: true, slug: true, plano: true, status: true, telefone: true, email: true, endereco: true, cidade: true } },
   platformContrato: {
     select: { id: true, codigo: true, tipo: true, status: true, plano: true, valorMensalidade: true },
   },
@@ -305,6 +305,9 @@ export class OnboardingService {
       tenantId: row.tenantId,
       tenantNome: row.tenant.name,
       tenantPlano: row.tenant.plano,
+      tenantTelefone: row.tenant.telefone,
+      tenantEmail: row.tenant.email,
+      tenantEndereco: row.tenant.endereco || row.tenant.cidade,
       platformContratoId: row.platformContratoId,
       contratoCodigo: row.platformContrato?.codigo ?? null,
       contratoStatus: row.platformContrato?.status ?? null,
