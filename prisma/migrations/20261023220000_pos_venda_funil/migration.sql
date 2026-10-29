@@ -3,7 +3,7 @@
 ALTER TYPE "FunilEtapaPapel" ADD VALUE IF NOT EXISTS 'concluido';
 ALTER TYPE "FunilTipo" ADD VALUE IF NOT EXISTS 'pos_venda';
 
-ALTER TABLE "venda_usados"
+ALTER TABLE "vendas_usado"
   ADD COLUMN IF NOT EXISTS "posVendaRecusadoEm" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "posVendaRecusadoPorId" TEXT;
 
@@ -21,10 +21,10 @@ ALTER TABLE "venda_usado_pos_vendas"
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'venda_usados_posVendaRecusadoPorId_fkey'
+    SELECT 1 FROM pg_constraint WHERE conname = 'vendas_usado_posVendaRecusadoPorId_fkey'
   ) THEN
-    ALTER TABLE "venda_usados"
-      ADD CONSTRAINT "venda_usados_posVendaRecusadoPorId_fkey"
+    ALTER TABLE "vendas_usado"
+      ADD CONSTRAINT "vendas_usado_posVendaRecusadoPorId_fkey"
       FOREIGN KEY ("posVendaRecusadoPorId") REFERENCES "users"("id")
       ON DELETE SET NULL ON UPDATE CASCADE;
   END IF;
