@@ -370,7 +370,9 @@ export class DocumentacaoService {
 
     const data: Prisma.DocumentacaoUpdateInput = {};
     if (dto.leadId !== undefined) {
-      const linked = await this.resolveLinkedLead(tenantId, dto.leadId);
+      const linked = await this.resolveLinkedLead(tenantId, dto.leadId, {
+        optional: true,
+      });
       data.lead = linked ? { connect: { id: linked.id } } : { disconnect: true };
       if (linked) {
         data.tipoContato = linked.tipo;
@@ -666,6 +668,7 @@ export class DocumentacaoService {
   private async resolveLinkedLead(
     tenantId: string,
     leadId: string | null | undefined,
+    options?: { optional?: boolean },
   ) {
     if (leadId == null || leadId === '') return null;
     const lead = await this.prisma.lead.findFirst({
@@ -673,6 +676,7 @@ export class DocumentacaoService {
       select: { id: true, tipo: true, stage: true },
     });
     if (!lead) {
+      if (options?.optional) return null;
       throw new BadRequestException(
         'Lead ou cliente inválido. Selecione um cadastro existente.',
       );
