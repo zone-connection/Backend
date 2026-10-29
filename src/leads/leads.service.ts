@@ -2169,9 +2169,13 @@ export class LeadsService {
               : {}),
           },
           ...(includeCarteiraGestores
-            ? requester.role === Role.analista
+            ? requester.role === Role.analista ||
+              requester.role === Role.admin ||
+              requester.role === Role.super_admin
               ? [{ role: Role.admin }, { role: Role.gerente }]
-              : [{ id: requester.id }]
+              : requester.role === Role.gerente
+                ? [{ id: requester.id }, { role: Role.gerente }]
+                : [{ id: requester.id }]
             : []),
         ],
       },
@@ -2737,11 +2741,11 @@ export class LeadsService {
       return;
     }
 
-    // Gerente: qualquer corretor do tenant (própria ou outra equipe) ou a si.
+    // Gerente: corretores do tenant, outros gerentes ou a si.
     if (requester.role === Role.gerente) {
-      if (!isCorretorLike(target.role)) {
+      if (!isCorretorLike(target.role) && target.role !== Role.gerente) {
         throw new ForbiddenException(
-          'Você só pode atribuir leads a corretores, treinees ou a si mesmo.',
+          'Você só pode atribuir leads a corretores, treinees, gerentes ou a si mesmo.',
         );
       }
       return;
