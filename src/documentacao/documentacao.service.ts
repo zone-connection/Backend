@@ -408,6 +408,7 @@ export class DocumentacaoService {
         CatalogType.documentacao_fonte,
         dto.fonte,
         'Fonte',
+        { keepUnknown: true },
       );
     }
     if (dto.status1 !== undefined) {
@@ -416,6 +417,7 @@ export class DocumentacaoService {
         CatalogType.documentacao_status1,
         dto.status1,
         'Status 1',
+        { keepUnknown: true },
       );
     }
     if (dto.status2 !== undefined) {
@@ -424,6 +426,7 @@ export class DocumentacaoService {
         CatalogType.documentacao_status2,
         dto.status2,
         'Status 2',
+        { keepUnknown: true },
       );
     }
     if (dto.corretorId !== undefined) {
@@ -744,6 +747,7 @@ export class DocumentacaoService {
       | typeof CatalogType.documentacao_status2,
     raw: string,
     field: string,
+    options?: { keepUnknown?: boolean },
   ): Promise<string> {
     const label = raw.trim();
     if (!label) {
@@ -757,6 +761,7 @@ export class DocumentacaoService {
       (item) => item.label.trim().toLowerCase() === label.toLowerCase(),
     );
     if (!found) {
+      if (options?.keepUnknown) return label;
       throw new BadRequestException(
         `${field} “${label}” não está no catálogo. Cadastre em Configurações → Documentação.`,
       );
