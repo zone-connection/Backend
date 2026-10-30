@@ -682,7 +682,12 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
 
     const prazo = new Date(params.now.getTime() + params.minutos * 60_000);
     const claimed = await tx.lead.updateMany({
-      where: { id: lead.id, corretorId: lead.corretorId, roletaPrazoAt: { lte: params.now } },
+      where: {
+        id: lead.id,
+        corretorId: lead.corretorId,
+        roletaPrazoAt: { lte: params.now },
+        perdidoAt: null,
+      },
       data: {
         corretorId: proximo.userId,
         equipeId: proximo.user.equipeId,
