@@ -21,6 +21,7 @@ import {
   type LeadNotifySnapshot,
 } from './lead-notify.messages';
 import { isPhoneOwnedByAnotherTenant } from './lead-notify-phone';
+import { phonesOwnedByOtherTenants } from '../ozap/ozap-other-tenant';
 
 @Injectable()
 export class LeadNotifyService {
@@ -82,6 +83,8 @@ export class LeadNotifyService {
     tenantId: string;
     userId: string;
     lead: LeadNotifySnapshot;
+    /** Roleta e saída de carteira avisam no sino/WhatsApp, sem e-mail. */
+    skipEmail?: boolean;
   }): Promise<void> {
     const copy = leadAtribuidoCopy(params.lead);
     await this.notificacoes.createLeadAtribuido({
@@ -100,11 +103,13 @@ export class LeadNotifyService {
         lead: params.lead,
         crmUrl: this.crmUrl(params.lead.id),
       }),
-      email: {
-        titulo: copy.whatsappTitulo,
-        lead: params.lead,
-        crmUrl: this.crmUrl(params.lead.id),
-      },
+      email: params.skipEmail
+        ? null
+        : {
+            titulo: copy.whatsappTitulo,
+            lead: params.lead,
+            crmUrl: this.crmUrl(params.lead.id),
+          },
     });
   }
 
@@ -228,7 +233,7 @@ export class LeadNotifyService {
       lead?: LeadNotifySnapshot | null;
       extra?: string;
       crmUrl?: string | null;
-    };
+    } | null;
   }) {
     void this.sendOutbound(params).catch((error) => {
       this.logger.warn(
@@ -253,11 +258,11 @@ export class LeadNotifyService {
       lead?: LeadNotifySnapshot | null;
       extra?: string;
       crmUrl?: string | null;
-    };
+    } | null;
   }) {
     await Promise.allSettled([
       this.tryWhatsApp(params),
-      this.tryEmail(params),
+      params.email ? this.tryEmail({ ...params, email: params.email }) : Promise.resolve(),
     ]);
   }
 
@@ -348,7 +353,13 @@ export class LeadNotifyService {
     await this.mailer.sendText({
       to,
       subject: params.subject,
-      text: params.text,
+      text: formatLeadWhatsApp({
+        titulo: params.email.titulo,
+        lead: params.email.lead,
+        extra: params.email.extra,
+        crmUrl: params.email.crmUrl,
+        includeTelefone: false,
+      }),
       html: formatLeadEmailHtml({
         ...params.email,
         brandName: tenant?.name,
@@ -358,26 +369,23 @@ export class LeadNotifyService {
     this.logger.log(`E-mail de lead enviado user=${params.userId} to=${to}`);
   }
 
-  /** Não manda aviso de lead no WhatsApp cadastrado em outra imobiliária. */
+  /**
+   * Não manda aviso de lead no WhatsApp de outra imobiliária
+   * (telefone da empresa, colaborador ou lead já cadastrado lá).
+   */
   private async phoneBelongsToAnotherTenant(tenantId: string, phone: string) {
-    const [tenants, users] = await Promise.all([
+    const [tenants, owned] = await Promise.all([
       this.prisma.tenant.findMany({
         where: { id: { not: tenantId } },
         select: { telefone: true },
       }),
-      this.prisma.user.findMany({
-        where: {
-          tenantId: { not: tenantId },
-          OR: [{ whatsapp: { not: null } }, { phone: { not: null } }],
-        },
-        select: { whatsapp: true, phone: true },
-      }),
+      phonesOwnedByOtherTenants(this.prisma, tenantId, [phone]),
     ]);
-    const otherPhones = [
-      ...tenants.map((tenant) => tenant.telefone),
-      ...users.flatMap((user) => [user.whatsapp, user.phone]),
-    ];
-    return isPhoneOwnedByAnotherTenant(phone, otherPhones);
+    if (owned.size > 0) return true;
+    return isPhoneOwnedByAnotherTenant(
+      phone,
+      tenants.map((tenant) => tenant.telefone),
+    );
   }
 
   private crmUrl(leadId?: string | null): string | null {

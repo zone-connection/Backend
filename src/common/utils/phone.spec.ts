@@ -21,5 +21,6 @@ describe('phone utils', () => {
   it('compara números equivalentes', () => {
     assert.equal(phonesMatch('5511999998888', '(11) 99999-8888'), true);
     assert.equal(phonesMatch('(11) 99999-8888', '(21) 99999-8888'), false);
+    assert.equal(phonesMatch('(81) 9999-1111', '(81) 99999-1111'), true);
   });
 });

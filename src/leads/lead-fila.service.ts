@@ -629,6 +629,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
             tenantId: config.tenantId,
             userId: result.userId,
             lead: result.lead,
+            skipEmail: true,
           });
         }
       }

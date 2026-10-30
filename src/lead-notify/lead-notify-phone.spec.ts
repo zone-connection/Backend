@@ -23,5 +23,9 @@ describe('isPhoneOwnedByAnotherTenant', () => {
       isPhoneOwnedByAnotherTenant('(81) 98888-2222', ['', null]),
       false,
     );
+    assert.equal(
+      isPhoneOwnedByAnotherTenant('(81) 9999-1111', ['81999991111']),
+      true,
+    );
   });
 });

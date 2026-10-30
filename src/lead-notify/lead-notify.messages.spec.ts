@@ -67,6 +67,8 @@ describe('lead-notify messages', () => {
     assert.match(html, /cdn\.exemplo.com\/logo\.png/);
     assert.match(html, /www\.zoneconnection\.com\.br\/funil\?lead=lead-1/);
     assert.match(html, /Imobiliária Campinas/);
+    assert.doesNotMatch(html, /Telefone/);
+    assert.doesNotMatch(html, /99999-8888/);
   });
 
   it('agrupa distribuição', () => {

@@ -64,11 +64,14 @@ export function formatLeadWhatsApp(params: {
   lead?: LeadNotifySnapshot | null;
   extra?: string;
   crmUrl?: string | null;
+  includeTelefone?: boolean;
 }): string {
   const lines = [params.titulo, ''];
   if (params.lead) {
     lines.push(`Nome: ${params.lead.nome}`);
-    lines.push(`Telefone: ${params.lead.telefone}`);
+    if (params.includeTelefone !== false) {
+      lines.push(`Telefone: ${params.lead.telefone}`);
+    }
     lines.push(`Origem: ${params.lead.origem}`);
     lines.push(`Cidade: ${params.lead.cidade}`);
   }
@@ -122,7 +125,6 @@ export function formatLeadEmailHtml(params: {
   if (params.lead) {
     rows.push(
       `<tr><td style="padding:6px 0;color:#64748b;width:88px;">Nome</td><td style="padding:6px 0;color:#0f172a;font-weight:600;">${escapeHtml(params.lead.nome)}</td></tr>`,
-      `<tr><td style="padding:6px 0;color:#64748b;">Telefone</td><td style="padding:6px 0;color:#0f172a;">${escapeHtml(params.lead.telefone)}</td></tr>`,
       `<tr><td style="padding:6px 0;color:#64748b;">Origem</td><td style="padding:6px 0;color:#0f172a;">${escapeHtml(params.lead.origem)}</td></tr>`,
       `<tr><td style="padding:6px 0;color:#64748b;">Cidade</td><td style="padding:6px 0;color:#0f172a;">${escapeHtml(params.lead.cidade || '—')}</td></tr>`,
     );
