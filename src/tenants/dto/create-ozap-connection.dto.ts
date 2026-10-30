@@ -13,4 +13,9 @@ export class CreateOzapConnectionDto {
   @IsString()
   @MaxLength(400)
   openaiApiKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(800)
+  ozapApiKey?: string;
 }

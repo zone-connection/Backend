@@ -66,7 +66,7 @@ export class WhatsappInboxService {
     limit = 50,
     filters?: { corretorId?: string; equipeId?: string; tagId?: string },
   ) {
-    const { instanceId } = await this.requireInstance(requester);
+    const { instanceId, ozapApiKey } = await this.requireInstance(requester);
     const leadFilters = this.parseLeadFilters(filters);
     const tagId = this.parseFilterId(filters?.tagId);
     const taggedChatIds =
@@ -88,6 +88,7 @@ export class WhatsappInboxService {
       await this.listScopedChats(
         requester,
         instanceId,
+        ozapApiKey,
         page,
         limit,
         leadFilters,
@@ -97,10 +98,14 @@ export class WhatsappInboxService {
   }
 
   async listMessages(chatId: string, requester: AuthenticatedUser) {
-    const { instanceId } = await this.requireInstance(requester);
+    const { instanceId, ozapApiKey } = await this.requireInstance(requester);
     await this.assertCanViewChat(requester, instanceId, chatId);
     try {
-      const messages = await this.ozapApi.listMessages({ instanceId, chatId });
+      const messages = await this.ozapApi.listMessages({
+        instanceId,
+        chatId,
+        apiKey: ozapApiKey,
+      });
       return {
         available: true as const,
         chatId,
@@ -115,9 +120,9 @@ export class WhatsappInboxService {
   }
 
   async streamMedia(url: string, hint: string | undefined, requester: AuthenticatedUser) {
-    await this.requireInstance(requester);
+    const { ozapApiKey } = await this.requireInstance(requester);
     try {
-      return await this.ozapApi.fetchMedia(url, hint);
+      return await this.ozapApi.fetchMedia(url, hint, ozapApiKey);
     } catch (error) {
       this.throwOzap(error);
     }
@@ -140,7 +145,7 @@ export class WhatsappInboxService {
     if (!url) {
       throw new BadRequestException('Informe o áudio.');
     }
-    const { openaiApiKey } = await this.requireInstance(requester);
+    const { openaiApiKey, ozapApiKey } = await this.requireInstance(requester);
     const apiKey = this.unlockOpenaiKey(openaiApiKey);
     if (!apiKey) {
       throw new ServiceUnavailableException(
@@ -148,7 +153,7 @@ export class WhatsappInboxService {
       );
     }
     try {
-      const file = await this.ozapApi.fetchMedia(url, 'audio');
+      const file = await this.ozapApi.fetchMedia(url, 'audio', ozapApiKey);
       const form = new FormData();
       form.append(
         'file',
@@ -191,7 +196,7 @@ export class WhatsappInboxService {
     requester: AuthenticatedUser,
   ) {
     this.assertCanSend(requester);
-    const { instanceId } = await this.requireInstance(requester);
+    const { instanceId, ozapApiKey } = await this.requireInstance(requester);
     await this.assertCanViewChat(requester, instanceId, chatId);
     const text = content.trim();
     if (!text) {
@@ -202,8 +207,9 @@ export class WhatsappInboxService {
         instanceId,
         chatId,
         pausedUntil: IA_PAUSED_UNTIL,
+        apiKey: ozapApiKey,
       });
-      await this.ozapApi.sendChatText({ instanceId, chatId, text });
+      await this.ozapApi.sendChatText({ instanceId, chatId, text, apiKey: ozapApiKey });
       return { ok: true as const, aiPaused: true as const };
     } catch (error) {
       this.throwOzap(error);
@@ -217,7 +223,7 @@ export class WhatsappInboxService {
     requester: AuthenticatedUser,
   ) {
     this.assertCanSend(requester);
-    const { instanceId } = await this.requireInstance(requester);
+    const { instanceId, ozapApiKey } = await this.requireInstance(requester);
     await this.assertCanViewChat(requester, instanceId, chatId);
     const text = content.trim();
     if (!text) {
@@ -227,6 +233,7 @@ export class WhatsappInboxService {
       await this.ozapApi.editMessage({
         instanceId,
         chatId,
+        apiKey: ozapApiKey,
         messageId,
         text,
       });
@@ -242,10 +249,15 @@ export class WhatsappInboxService {
     requester: AuthenticatedUser,
   ) {
     this.assertCanSend(requester);
-    const { instanceId } = await this.requireInstance(requester);
+    const { instanceId, ozapApiKey } = await this.requireInstance(requester);
     await this.assertCanViewChat(requester, instanceId, chatId);
     try {
-      await this.ozapApi.deleteMessage({ instanceId, chatId, messageId });
+      await this.ozapApi.deleteMessage({
+        instanceId,
+        chatId,
+        messageId,
+        apiKey: ozapApiKey,
+      });
       return { ok: true as const };
     } catch (error) {
       this.throwMessageMutation(error, 'excluir');
@@ -254,13 +266,14 @@ export class WhatsappInboxService {
 
   async assumeChat(chatId: string, requester: AuthenticatedUser) {
     this.assertCanSend(requester);
-    const { instanceId } = await this.requireInstance(requester);
+    const { instanceId, ozapApiKey } = await this.requireInstance(requester);
     await this.assertCanViewChat(requester, instanceId, chatId);
     try {
       await this.ozapApi.pauseChat({
         instanceId,
         chatId,
         pausedUntil: IA_PAUSED_UNTIL,
+        apiKey: ozapApiKey,
       });
       return { ok: true as const, aiPaused: true as const };
     } catch (error) {
@@ -270,13 +283,14 @@ export class WhatsappInboxService {
 
   async resumeChat(chatId: string, requester: AuthenticatedUser) {
     this.assertCanSend(requester);
-    const { instanceId } = await this.requireInstance(requester);
+    const { instanceId, ozapApiKey } = await this.requireInstance(requester);
     await this.assertCanViewChat(requester, instanceId, chatId);
     try {
       await this.ozapApi.pauseChat({
         instanceId,
         chatId,
         pausedUntil: null,
+        apiKey: ozapApiKey,
       });
       return { ok: true as const, aiPaused: false as const };
     } catch (error) {
@@ -378,6 +392,7 @@ export class WhatsappInboxService {
   private async listScopedChats(
     requester: AuthenticatedUser,
     instanceId: number,
+    ozapApiKey: string,
     page: number,
     limit: number,
     filters?: { corretorId?: string | null; equipeId?: string | null } | null,
@@ -407,7 +422,7 @@ export class WhatsappInboxService {
         },
       }),
     ]);
-    const ozapByChat = await this.indexOzapChats(instanceId);
+    const ozapByChat = await this.indexOzapChats(instanceId, ozapApiKey);
     const foreignPhones = await phonesOwnedByOtherTenants(
       this.prisma,
       requireTenantId(requester),
@@ -453,12 +468,12 @@ export class WhatsappInboxService {
     };
   }
 
-  private async indexOzapChats(instanceId: number) {
+  private async indexOzapChats(instanceId: number, ozapApiKey: string) {
     const map = new Map<string, OzapInboxChat>();
     try {
       let page = 1;
       for (let extra = 0; extra < 8; extra += 1) {
-        const listed = await this.ozapApi.listChats(instanceId, page, 50);
+        const listed = await this.ozapApi.listChats(instanceId, page, 50, ozapApiKey);
         for (const chat of listed.chats) {
           for (const id of this.expandChatIds([chat.chatId, chat.phone])) {
             if (!map.has(id)) map.set(id, chat);
@@ -516,21 +531,22 @@ export class WhatsappInboxService {
 
   private async requireInstance(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    if (!this.ozapApi.isConfigured()) {
-      throw new ServiceUnavailableException(
-        'Integração WhatsApp (OZap) não configurada.',
-      );
-    }
     const connection = await this.prisma.tenantOzapConnection.findFirst({
       where: { tenantId, ativo: true },
-      select: { instanceId: true, openaiApiKey: true },
+      select: { instanceId: true, openaiApiKey: true, ozapApiKey: true },
     });
     if (!connection) {
       throw new NotFoundException(
         'A imobiliária ainda não tem instância WhatsApp conectada.',
       );
     }
-    return connection;
+    const ozapApiKey = this.ozapApi.keyFromStored(connection.ozapApiKey);
+    if (!ozapApiKey) {
+      throw new ServiceUnavailableException(
+        'Cadastre a chave da API OZap nesta imobiliária.',
+      );
+    }
+    return { ...connection, ozapApiKey };
   }
 
   private unlockOpenaiKey(stored: string | null | undefined): string {

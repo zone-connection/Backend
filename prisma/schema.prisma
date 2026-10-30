@@ -311,6 +311,8 @@ model TenantOzapConnection {
   instanceId    Int     @unique
   /// Chave OpenAI do agente desta instância (cifrada). Usada para transcrever áudios no CRM.
   openaiApiKey  String?
+  /// Chave de API da OZap desta instância (cifrada). Se vazia, o CRM usa OZAP_API_KEY do servidor.
+  ozapApiKey    String?
   ativo         Boolean @default(true)
 
   createdAt DateTime @default(now())

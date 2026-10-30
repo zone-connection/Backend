@@ -266,12 +266,10 @@ export class LeadNotifyService {
     userId: string;
     text: string;
   }): Promise<boolean> {
-    if (!this.ozapApi.isConfigured()) return false;
-
     const [connection, user] = await Promise.all([
       this.prisma.tenantOzapConnection.findFirst({
         where: { tenantId: params.tenantId, ativo: true },
-        select: { instanceId: true },
+        select: { instanceId: true, ozapApiKey: true },
         orderBy: { createdAt: 'asc' },
       }),
       this.prisma.user.findFirst({
@@ -281,6 +279,8 @@ export class LeadNotifyService {
     ]);
 
     if (!connection) return false;
+    const apiKey = this.ozapApi.keyFromStored(connection.ozapApiKey);
+    if (!apiKey) return false;
     const to = user?.whatsapp?.trim() || user?.phone?.trim() || '';
     if (!to) return false;
     if (await this.phoneBelongsToAnotherTenant(params.tenantId, to)) {
@@ -295,6 +295,7 @@ export class LeadNotifyService {
         instanceId: connection.instanceId,
         to,
         text: params.text,
+        apiKey,
       });
       return true;
     } catch (error) {

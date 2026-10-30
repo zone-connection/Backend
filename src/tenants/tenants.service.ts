@@ -89,6 +89,7 @@ const ozapConnectionSelect = {
   tenantId: true,
   instanceId: true,
   openaiApiKey: true,
+  ozapApiKey: true,
   ativo: true,
   createdAt: true,
   updatedAt: true,
@@ -115,10 +116,11 @@ type OzapConnectionRow = Prisma.TenantOzapConnectionGetPayload<{
 }>;
 
 function publicOzapConnection(connection: OzapConnectionRow) {
-  const { openaiApiKey, ...rest } = connection;
+  const { openaiApiKey, ozapApiKey, ...rest } = connection;
   return {
     ...rest,
     hasOpenaiApiKey: Boolean(openaiApiKey?.trim()),
+    hasOzapApiKey: Boolean(ozapApiKey?.trim()),
   };
 }
 
@@ -936,6 +938,7 @@ export class TenantsService {
           instanceId: dto.instanceId,
           ativo: dto.ativo ?? true,
           openaiApiKey: this.encryptOzapOpenaiKey(dto.openaiApiKey) ?? null,
+          ozapApiKey: this.encryptOzapOpenaiKey(dto.ozapApiKey) ?? null,
         },
         select: ozapConnectionSelect,
       });
@@ -962,11 +965,13 @@ export class TenantsService {
     await this.ensureOzapConnectionExists(tenantId, connectionId);
 
     const encrypted = this.encryptOzapOpenaiKey(dto.openaiApiKey);
+    const ozapEncrypted = this.encryptOzapOpenaiKey(dto.ozapApiKey);
     const row = await this.prisma.tenantOzapConnection.update({
       where: { id: connectionId },
       data: {
         ...(dto.ativo !== undefined ? { ativo: dto.ativo } : {}),
         ...(encrypted !== undefined ? { openaiApiKey: encrypted } : {}),
+        ...(ozapEncrypted !== undefined ? { ozapApiKey: ozapEncrypted } : {}),
       },
       select: ozapConnectionSelect,
     });

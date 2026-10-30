@@ -3046,7 +3046,8 @@ export class LeadsService {
         messages: [],
       };
     }
-    if (!this.ozapApi.isConfigured()) {
+    const ozapKey = await this.ozapKeyForInstance(link.instanceId);
+    if (!ozapKey) {
       return {
         available: false,
         reason: 'not_configured',
@@ -3058,6 +3059,7 @@ export class LeadsService {
       const messages = await this.ozapApi.listMessages({
         instanceId: link.instanceId,
         chatId: link.chatId,
+        apiKey: ozapKey,
       });
       return {
         available: true,
@@ -3116,9 +3118,10 @@ export class LeadsService {
         'Este lead ainda não tem conversa da IA no WhatsApp.',
       );
     }
-    if (!this.ozapApi.isConfigured()) {
+    const ozapKey = await this.ozapKeyForInstance(link.instanceId);
+    if (!ozapKey) {
       throw new ServiceUnavailableException(
-        'Integração WhatsApp (OZap) não configurada.',
+        'Cadastre a chave da API OZap nesta imobiliária.',
       );
     }
     try {
@@ -3126,11 +3129,20 @@ export class LeadsService {
         instanceId: link.instanceId,
         chatId: link.chatId,
         text,
+        apiKey: ozapKey,
       });
       return { ok: true };
     } catch (error) {
       this.throwOzap(error);
     }
+  }
+
+  private async ozapKeyForInstance(instanceId: number) {
+    const connection = await this.prisma.tenantOzapConnection.findFirst({
+      where: { instanceId, ativo: true },
+      select: { ozapApiKey: true },
+    });
+    return this.ozapApi.keyFromStored(connection?.ozapApiKey);
   }
 
   private throwOzap(error: unknown): never {

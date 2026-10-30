@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { toWhatsAppChatId } from '../common/utils/phone';
+import { decryptPageAccessToken, metaTokenKey } from '../meta/meta-token.crypto';
 import {
   OZAP_API_BASE_DEFAULT,
   OZAP_LIST_TIMEOUT_MS,
@@ -72,6 +73,20 @@ export class OzapApiClient {
     return Boolean(this.apiKey());
   }
 
+  /** Chave da instância, se houver. Senão, a OZAP_API_KEY do servidor. */
+  keyFromStored(stored: string | null | undefined): string {
+    const raw = stored?.trim();
+    if (raw) {
+      try {
+        const plain = decryptPageAccessToken(raw, metaTokenKey(this.config)).trim();
+        if (plain) return plain;
+      } catch {
+        // Chave cifrada ilegível: cai na chave do servidor.
+      }
+    }
+    return this.apiKey();
+  }
+
   /**
    * Envia texto via API de entrada do OZap.
    * Docs: POST /api/v1/{instanceId}/messages/send  header X-API-Key
@@ -80,6 +95,7 @@ export class OzapApiClient {
     instanceId: number;
     to: string;
     text: string;
+    apiKey?: string;
   }): Promise<void> {
     const to = toWhatsAppChatId(params.to);
     if (!to) {
@@ -89,6 +105,7 @@ export class OzapApiClient {
       instanceId: params.instanceId,
       chatId: to,
       text: params.text,
+      apiKey: params.apiKey,
     });
   }
 
@@ -96,8 +113,9 @@ export class OzapApiClient {
     instanceId: number;
     chatId: string;
     text: string;
+    apiKey?: string;
   }): Promise<void> {
-    const apiKey = this.requireApiKey();
+    const apiKey = this.requireApiKey(params.apiKey);
     const to = this.phoneDigits(params.chatId);
     if (!to) {
       throw new OzapApiError(0, 'Chat do WhatsApp inválido.');
@@ -138,8 +156,9 @@ export class OzapApiClient {
   async listMessages(params: {
     instanceId: number;
     chatId: string;
+    apiKey?: string;
   }): Promise<OzapChatMessage[]> {
-    const apiKey = this.requireApiKey();
+    const apiKey = this.requireApiKey(params.apiKey);
     const chatId = params.chatId.trim();
     if (!chatId) {
       throw new OzapApiError(0, 'Chat do WhatsApp inválido.');
@@ -173,8 +192,9 @@ export class OzapApiClient {
     chatId: string;
     messageId: string;
     text: string;
+    apiKey?: string;
   }): Promise<void> {
-    const apiKey = this.requireApiKey();
+    const apiKey = this.requireApiKey(params.apiKey);
     const messageId = params.messageId.trim();
     const text = params.text.trim();
     const to = this.phoneDigits(params.chatId);
@@ -239,8 +259,9 @@ export class OzapApiClient {
     instanceId: number;
     chatId: string;
     messageId: string;
+    apiKey?: string;
   }): Promise<void> {
-    const apiKey = this.requireApiKey();
+    const apiKey = this.requireApiKey(params.apiKey);
     const messageId = params.messageId.trim();
     const to = this.phoneDigits(params.chatId);
     if (!messageId || !to) {
@@ -328,6 +349,7 @@ export class OzapApiClient {
   async fetchMedia(
     rawUrl: string,
     hint?: string | null,
+    apiKey?: string,
   ): Promise<{
     body: Buffer;
     contentType: string;
@@ -337,7 +359,7 @@ export class OzapApiClient {
       throw new OzapApiError(400, 'URL de mídia inválida.');
     }
     const headers = this.needsMediaProxy(url)
-      ? this.authHeaders(this.requireApiKey())
+      ? this.authHeaders(this.requireApiKey(apiKey))
       : { Accept: '*/*' };
     let response: Response;
     try {
@@ -378,6 +400,7 @@ export class OzapApiClient {
     instanceId: number,
     page = 1,
     limit = 50,
+    apiKeyOverride?: string,
   ): Promise<{
     chats: OzapInboxChat[];
     page: number;
@@ -385,7 +408,7 @@ export class OzapApiClient {
     total: number | null;
     hasMore: boolean;
   }> {
-    const apiKey = this.requireApiKey();
+    const apiKey = this.requireApiKey(apiKeyOverride);
     const safePage = Math.max(1, Math.floor(page) || 1);
     const safeLimit = Math.min(100, Math.max(10, Math.floor(limit) || 50));
     const payload = await this.getJson(
@@ -427,8 +450,9 @@ export class OzapApiClient {
     instanceId: number;
     chatId: string;
     pausedUntil: string | null;
+    apiKey?: string;
   }): Promise<void> {
-    const apiKey = this.requireApiKey();
+    const apiKey = this.requireApiKey(params.apiKey);
     let lastError: OzapApiError | null = null;
     for (const id of this.orderedChatIds(params.instanceId, params.chatId)) {
       const url = `${this.baseUrl()}/api/v1/${params.instanceId}/chats/${encodeURIComponent(id)}`;
@@ -499,8 +523,8 @@ export class OzapApiClient {
       .filter((item): item is OzapChatMessage => item !== null);
   }
 
-  private requireApiKey(): string {
-    const apiKey = this.apiKey();
+  private requireApiKey(override?: string): string {
+    const apiKey = override?.trim() || this.apiKey();
     if (!apiKey) {
       throw new OzapApiError(0, 'OZAP_API_KEY não configurada.');
     }
