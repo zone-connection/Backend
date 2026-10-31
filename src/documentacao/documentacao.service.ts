@@ -639,7 +639,13 @@ export class DocumentacaoService {
 
   /** Cria a ficha ao entrar na análise, com construtora e empreendimento obrigatórios. */
   async abrirFichaGuiada(
-    dto: { leadId: string; construtoraId: string; empreendimentoId: string; nome: string },
+    dto: {
+      leadId: string;
+      construtoraId: string;
+      empreendimentoId: string;
+      nome: string;
+      fonte: string;
+    },
     requester: AuthenticatedUser,
   ) {
     if (!(await this.fichaGuiadaAtiva(requester))) {
@@ -647,9 +653,9 @@ export class DocumentacaoService {
         'A ficha guiada na análise não está ativa nesta imobiliária.',
       );
     }
-    if (!dto.construtoraId || !dto.empreendimentoId) {
+    if (!dto.construtoraId || !dto.empreendimentoId || !dto.fonte?.trim()) {
       throw new BadRequestException(
-        'Informe a construtora e o empreendimento.',
+        'Informe a construtora, o empreendimento e a fonte.',
       );
     }
     const tenantId = requireTenantId(requester);
@@ -668,6 +674,7 @@ export class DocumentacaoService {
         {
           construtoraId: dto.construtoraId,
           empreendimentoId: dto.empreendimentoId,
+          fonte: dto.fonte.trim(),
         },
         requester,
       );
@@ -678,7 +685,7 @@ export class DocumentacaoService {
         nome: dto.nome,
         construtoraId: dto.construtoraId,
         empreendimentoId: dto.empreendimentoId,
-        fonte: 'Outro',
+        fonte: dto.fonte.trim(),
         status1: 'Em análise',
         status2: 'Andamento',
         corretorId:

@@ -21,6 +21,8 @@ export function isMissingDatabaseObject(err: unknown): boolean {
 
 const POS_VENDA_STATEMENTS = [
   `ALTER TYPE "FunilEtapaPapel" ADD VALUE IF NOT EXISTS 'concluido'`,
+  `ALTER TYPE "FunilEtapaPapel" ADD VALUE IF NOT EXISTS 'aprovado'`,
+  `ALTER TYPE "FunilEtapaPapel" ADD VALUE IF NOT EXISTS 'reprovado'`,
   `ALTER TYPE "FunilTipo" ADD VALUE IF NOT EXISTS 'pos_venda'`,
   `
     ALTER TABLE "vendas_usado"

@@ -105,6 +105,7 @@ const entrada = {
   nome: 'Mariana',
   construtoraId: 'construtora-1',
   empreendimentoId: 'empreendimento-1',
+  fonte: 'Outro',
 };
 
 describe('ficha guiada na análise', () => {
@@ -116,15 +117,15 @@ describe('ficha guiada na análise', () => {
     );
   });
 
-  it('exige construtora e empreendimento', async () => {
+  it('exige construtora, empreendimento e fonte', async () => {
     const { service } = memoria(true);
     await assert.rejects(
       () =>
         service.abrirFichaGuiada(
-          { ...entrada, construtoraId: '', empreendimentoId: '' },
+          { ...entrada, construtoraId: '', empreendimentoId: '', fonte: '' },
           pessoa({ id: 'corretor-1', role: Role.corretor }),
         ),
-      /construtora e o empreendimento/,
+      /fonte/,
     );
   });
 
@@ -140,6 +141,7 @@ describe('ficha guiada na análise', () => {
     assert.equal(created.status2, 'Andamento');
     assert.equal(created.construtoraId, 'construtora-1');
     assert.equal(created.empreendimentoId, 'empreendimento-1');
+    assert.equal(created.fonte, 'Outro');
     assert.equal(created.leadId, 'lead-1');
     assert.ok(created.dataAnalise instanceof Date);
   });

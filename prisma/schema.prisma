@@ -2036,6 +2036,8 @@ enum FunilEtapaPapel {
   captado
   perdido
   concluido
+  aprovado
+  reprovado
 }
 
 /// Tipo de operação do funil. Um funil ativo por (tenant, tipo).

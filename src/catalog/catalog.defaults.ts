@@ -11,7 +11,9 @@ export type DefaultFunnelPapel =
   | 'venda'
   | 'captado'
   | 'perdido'
-  | 'concluido';
+  | 'concluido'
+  | 'aprovado'
+  | 'reprovado';
 
 export interface DefaultFunnelStage {
   label: string;

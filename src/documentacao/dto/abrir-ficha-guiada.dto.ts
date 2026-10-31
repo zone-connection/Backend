@@ -13,4 +13,8 @@ export class AbrirFichaGuiadaDto {
 
   @IsUUID()
   empreendimentoId!: string;
+
+  @IsString()
+  @MinLength(1, { message: 'Informe a fonte.' })
+  fonte!: string;
 }
