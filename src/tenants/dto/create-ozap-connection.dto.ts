@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class CreateOzapConnectionDto {
   @IsInt({ message: 'O instanceId deve ser um número inteiro.' })
@@ -8,4 +8,14 @@ export class CreateOzapConnectionDto {
   @IsOptional()
   @IsBoolean()
   ativo?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  openaiApiKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(800)
+  ozapApiKey?: string;
 }

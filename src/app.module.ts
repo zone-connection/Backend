@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { PrismaModule } from './prisma/prisma.module';
@@ -15,20 +15,44 @@ import { EquipesModule } from './equipes/equipes.module';
 import { AnaliseModule } from './analise/analise.module';
 import { NotificacoesModule } from './notificacoes/notificacoes.module';
 import { AgendaModule } from './agenda/agenda.module';
+import { GoogleCalendarModule } from './google-calendar/google-calendar.module';
 import { TenantsModule } from './tenants/tenants.module';
+import { CaptacaoModule } from './captacao/captacao.module';
+import { ImoveisUsadosModule } from './imoveis-usados/imoveis-usados.module';
+import { PortalProprietarioModule } from './portal-proprietario/portal-proprietario.module';
+import { ParceriasModule } from './parcerias/parcerias.module';
+import { TarefasModule } from './tarefas/tarefas.module';
+import { LembretesModule } from './lembretes/lembretes.module';
+import { ArquivosModule } from './arquivos/arquivos.module';
+import { ProcessosModule } from './processos/processos.module';
 import { ConstrutorasModule } from './construtoras/construtoras.module';
+import { ContratosModule } from './contratos/contratos.module';
+import { ListasDocumentosModule } from './listas-documentos/listas-documentos.module';
+import { LocalidadesModule } from './localidades/localidades.module';
+import { TreinamentoModule } from './treinamento/treinamento.module';
 import { EmpreendimentosModule } from './empreendimentos/empreendimentos.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { MetasModule } from './metas/metas.module';
 import { OzapModule } from './ozap/ozap.module';
 import { MetaModule } from './meta/meta.module';
+import { OruloModule } from './orulo/orulo.module';
+import { GrupoZapModule } from './grupozap/grupozap.module';
 import { PropostasModule } from './propostas/propostas.module';
 import { FinanceiroModule } from './financeiro/financeiro.module';
+import { FuncionariosModule } from './funcionarios/funcionarios.module';
+import { PresencaModule } from './presenca/presenca.module';
+import { MuralChavesModule } from './mural-chaves/mural-chaves.module';
+import { CadastroVendasModule } from './cadastro-vendas/cadastro-vendas.module';
 import { PlatformContratosModule } from './platform-contratos/platform-contratos.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
+import { SuporteModule } from './suporte/suporte.module';
+import { MelhoriasModule } from './melhorias/melhorias.module';
+import { PlatformFornecedorContratosModule } from './platform-fornecedor-contratos/platform-fornecedor-contratos.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { CsrfGuard } from './common/guards/csrf.guard';
 import { validateEnv } from './config/env.validation';
 import { THROTTLE } from './config/security.constants';
+import { PrismaSchemaExceptionFilter } from './common/filters/prisma-schema.filter';
 
 @Module({
   imports: [
@@ -45,22 +69,49 @@ import { THROTTLE } from './config/security.constants';
     TriagemModule,
     DocumentacaoModule,
     ConstrutorasModule,
+    ContratosModule,
+    ListasDocumentosModule,
+    LocalidadesModule,
+    TreinamentoModule,
     EmpreendimentosModule,
     DashboardModule,
     MetasModule,
     OzapModule,
     MetaModule,
+    OruloModule,
+    GrupoZapModule,
     PropostasModule,
     FinanceiroModule,
+    FuncionariosModule,
+    PresencaModule,
+    MuralChavesModule,
+    CadastroVendasModule,
     PlatformContratosModule,
+    OnboardingModule,
+    SuporteModule,
+    MelhoriasModule,
+    PlatformFornecedorContratosModule,
     EquipesModule,
     AnaliseModule,
     NotificacoesModule,
     AgendaModule,
+    GoogleCalendarModule,
     TenantsModule,
+    CaptacaoModule,
+    ImoveisUsadosModule,
+    PortalProprietarioModule,
+    ParceriasModule,
+    TarefasModule,
+    LembretesModule,
+    ArquivosModule,
+    ProcessosModule,
   ],
   controllers: [AppController],
   providers: [
+    {
+      provide: APP_FILTER,
+      useClass: PrismaSchemaExceptionFilter,
+    },
     // A ordem importa: o rate limiting roda antes da autenticação, para que
     // uma enxurrada de requisições seja barrada sem tocar no banco.
     {

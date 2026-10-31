@@ -12,6 +12,15 @@ export const FAILED_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 /** Duração do bloqueio depois de estourar o limite. */
 export const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
+/** Falhas no dia (por e-mail) até o bloqueio longo. */
+export const DAILY_MAX_FAILED_LOGIN_ATTEMPTS = 15;
+
+/** Janela em que as falhas do bloqueio longo são contadas. */
+export const DAILY_FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Duração do bloqueio depois de estourar o limite diário. */
+export const DAILY_LOCKOUT_DURATION_MS = 12 * 60 * 60 * 1000;
+
 /** Validade do token de recuperação de senha. */
 export const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
 

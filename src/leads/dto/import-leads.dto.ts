@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -16,7 +16,12 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { LEAD_INTERESSES, LEAD_PRIORIDADES } from '../lead.constants';
+import {
+  CONTATO_TIPOS,
+  LEAD_INTERESSES,
+  LEAD_PRIORIDADES,
+} from '../lead.constants';
+import { LeadProspeccaoDto } from './lead-prospeccao.dto';
 
 export class ImportLeadItemDto {
   @IsString()
@@ -62,10 +67,19 @@ export class ImportLeadItemDto {
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
-  @Type(() => Number)
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return value;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.round(n) : value;
+  })
   @IsInt({ message: 'Renda inválida.' })
   @Min(0)
   renda?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  tipoRenda?: string | null;
 
   @IsOptional()
   @IsString()
@@ -75,13 +89,42 @@ export class ImportLeadItemDto {
   @IsOptional()
   @IsUUID('4', { message: 'Corretor inválido.' })
   corretorId?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LeadProspeccaoDto)
+  prospeccao?: LeadProspeccaoDto | null;
 }
 
 export class ImportLeadsDto {
+  /** lead (padrão) = captação; cliente = carteira. */
+  @IsOptional()
+  @IsIn(CONTATO_TIPOS, { message: 'Tipo inválido.' })
+  tipo?: (typeof CONTATO_TIPOS)[number];
+
   @IsArray()
-  @ArrayMinSize(1, { message: 'Envie ao menos 1 lead.' })
-  @ArrayMaxSize(300, { message: 'Máximo de 300 leads por importação.' })
+  @ArrayMinSize(1, { message: 'Envie ao menos 1 registro.' })
+  @ArrayMaxSize(600, { message: 'Máximo de 600 registros por importação.' })
   @ValidateNested({ each: true })
   @Type(() => ImportLeadItemDto)
   leads!: ImportLeadItemDto[];
+}
+
+/** Prévia da importação: telefones/e-mails já cadastrados no tenant. */
+export class CheckImportLeadsDto {
+  @IsOptional()
+  @IsIn(CONTATO_TIPOS, { message: 'Tipo inválido.' })
+  tipo?: (typeof CONTATO_TIPOS)[number];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(600)
+  @IsString({ each: true })
+  telefones?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(600)
+  @IsString({ each: true })
+  emails?: string[];
 }

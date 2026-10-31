@@ -2,12 +2,13 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request } from 'express';
+import { verifyMetaSignature256 } from '../meta-signature';
 
 type RawBodyRequest = Request & { rawBody?: Buffer };
 
@@ -17,6 +18,8 @@ type RawBodyRequest = Request & { rawBody?: Buffer };
  */
 @Injectable()
 export class MetaWebhookSignatureGuard implements CanActivate {
+  private readonly logger = new Logger(MetaWebhookSignatureGuard.name);
+
   constructor(private readonly config: ConfigService) {}
 
   canActivate(context: ExecutionContext) {
@@ -28,29 +31,26 @@ export class MetaWebhookSignatureGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<RawBodyRequest>();
-    const signatureHeader = request.get('X-Hub-Signature-256');
-    if (!signatureHeader?.startsWith('sha256=')) {
-      throw new UnauthorizedException('Assinatura Meta ausente.');
+    const result = verifyMetaSignature256(
+      request.rawBody,
+      request.get('X-Hub-Signature-256'),
+      appSecret,
+    );
+
+    if (result === 'ok') {
+      return true;
     }
 
-    const rawBody = request.rawBody;
-    if (!rawBody?.length) {
+    this.logger.warn(`Assinatura HMAC rejeitada (${result}).`);
+
+    if (result === 'missing_body') {
       throw new UnauthorizedException(
         'Corpo bruto da requisição Meta indisponível para validação.',
       );
     }
-
-    const expected = createHmac('sha256', appSecret)
-      .update(rawBody)
-      .digest('hex');
-    const received = signatureHeader.slice('sha256='.length);
-
-    const a = Buffer.from(received);
-    const b = Buffer.from(expected);
-    if (a.length !== b.length || !timingSafeEqual(a, b)) {
-      throw new UnauthorizedException('Assinatura Meta inválida.');
+    if (result === 'missing_header') {
+      throw new UnauthorizedException('Assinatura Meta ausente.');
     }
-
-    return true;
+    throw new UnauthorizedException('Assinatura Meta inválida.');
   }
 }
