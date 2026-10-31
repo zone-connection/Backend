@@ -16,6 +16,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { CreateDocumentacaoDto } from './dto/create-documentacao.dto';
+import { AbrirFichaGuiadaDto } from './dto/abrir-ficha-guiada.dto';
 import { UpdateDocumentacaoDto } from './dto/update-documentacao.dto';
 import { QueryDocumentacaoDto } from './dto/query-documentacao.dto';
 import { DocumentacaoService } from './documentacao.service';
@@ -61,6 +62,21 @@ export class DocumentacaoController {
     return this.documentacaoService.findOne(id, requester);
   }
 
+  @Post('ficha-guiada')
+  @Roles(
+    Role.admin,
+    Role.gerente,
+    Role.corretor,
+    Role.treinee,
+    Role.analista,
+  )
+  abrirFichaGuiada(
+    @Body() dto: AbrirFichaGuiadaDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.documentacaoService.abrirFichaGuiada(dto, requester);
+  }
+
   @Post()
   @Roles(Role.admin, Role.analista, Role.gerente, Role.treinee)
   create(
@@ -71,7 +87,7 @@ export class DocumentacaoController {
   }
 
   @Patch(':id')
-  @Roles(Role.admin, Role.analista, Role.gerente)
+  @Roles(Role.admin, Role.analista, Role.gerente, Role.corretor, Role.treinee)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateDocumentacaoDto,

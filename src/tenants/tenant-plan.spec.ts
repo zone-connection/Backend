@@ -65,6 +65,15 @@ describe('módulos de operação no plano', () => {
     assert.equal(next.gerenteVerLeadsGerais, true);
   });
 
+  it('preserva a ficha guiada na análise e deixa desligada se não foi escolhida', () => {
+    const off = normalizeModulesForPlano(TenantPlano.ouro, {});
+    assert.equal(off.fichaAnaliseGuiada, undefined);
+    const on = normalizeModulesForPlano(TenantPlano.ouro, {
+      fichaAnaliseGuiada: true,
+    });
+    assert.equal(on.fichaAnaliseGuiada, true);
+  });
+
   it('preserva corretores criam propostas ao normalizar', () => {
     const next = normalizeModulesForPlano(TenantPlano.ouro, {
       corretoresCriamPropostas: true,

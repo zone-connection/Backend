@@ -95,6 +95,9 @@ export const CORRETORES_CRIAM_PROPOSTAS_KEY = 'corretoresCriamPropostas';
 /** Mural de chaves nasce oculto. Só aparece depois que o admin ativa. */
 export const MURAL_CHAVES_OPT_IN_KEY = 'muralChavesOptIn';
 
+/** Ao entrar na análise, a ficha de documentação nasce obrigatória. */
+export const FICHA_ANALISE_GUIADA_KEY = 'fichaAnaliseGuiada';
+
 export function muralChavesTemOperacao(
   modules: Record<string, boolean> | null | undefined,
 ): boolean {
@@ -128,6 +131,9 @@ function withNavPrefs(
   }
   if (typeof raw[MURAL_CHAVES_OPT_IN_KEY] === 'boolean') {
     normalized[MURAL_CHAVES_OPT_IN_KEY] = raw[MURAL_CHAVES_OPT_IN_KEY];
+  }
+  if (typeof raw[FICHA_ANALISE_GUIADA_KEY] === 'boolean') {
+    normalized[FICHA_ANALISE_GUIADA_KEY] = raw[FICHA_ANALISE_GUIADA_KEY];
   }
   return normalized;
 }

@@ -1352,6 +1352,7 @@ export class TenantsService {
       whatsappStaffCanSend: modules.whatsappStaffCanSend === true,
       corretoresCriamPropostas: modules.corretoresCriamPropostas === true,
       muralChaves: modules.muralChaves === true,
+      fichaAnaliseGuiada: modules.fichaAnaliseGuiada === true,
     };
   }
 
@@ -1401,6 +1402,9 @@ export class TenantsService {
     if (typeof dto.muralChavesOptIn === 'boolean') {
       merged.muralChavesOptIn = dto.muralChavesOptIn;
     }
+    if (typeof dto.fichaAnaliseGuiada === 'boolean') {
+      merged.fichaAnaliseGuiada = dto.fichaAnaliseGuiada;
+    }
     const modules = applyPlanoModules(tenant.plano, merged);
 
     await this.prisma.tenant.update({
@@ -1417,6 +1421,7 @@ export class TenantsService {
       whatsappStaffCanSend: modules.whatsappStaffCanSend === true,
       corretoresCriamPropostas: modules.corretoresCriamPropostas === true,
       muralChaves: modules.muralChaves === true,
+      fichaAnaliseGuiada: modules.fichaAnaliseGuiada === true,
     };
   }
 

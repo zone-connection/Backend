@@ -246,11 +246,15 @@ export class CatalogService {
         readonly { label: string; color: string }[],
       ]
     >) {
-      const count = await this.prisma.catalogItem.count({
+      const existing = await this.prisma.catalogItem.findMany({
         where: { tenantId, type },
+        select: { label: true, sortOrder: true },
       });
-      if (count > 0) continue;
-      for (const [index, item] of defaults.entries()) {
+      const known = new Set(existing.map((item) => item.label.trim().toLowerCase()));
+      let sort = existing.reduce((max, item) => Math.max(max, item.sortOrder), -1);
+      for (const item of defaults) {
+        if (known.has(item.label.trim().toLowerCase())) continue;
+        sort += 1;
         await this.prisma.catalogItem.create({
           data: {
             tenantId,
@@ -258,7 +262,7 @@ export class CatalogService {
             label: item.label,
             slug: slugify(item.label),
             color: item.color,
-            sortOrder: index,
+            sortOrder: sort,
             active: true,
           },
         });

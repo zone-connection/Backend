@@ -301,15 +301,23 @@ export const DEFAULT_DOCUMENTACAO_FONTES: readonly DefaultCatalogLabel[] = [
 
 export const DEFAULT_DOCUMENTACAO_STATUS1: readonly DefaultCatalogLabel[] = [
   { label: 'Em análise', color: 'bg-indigo-100 text-indigo-700' },
+  { label: 'Análise', color: 'bg-indigo-100 text-indigo-700' },
   { label: 'Aprovado', color: 'bg-green-100 text-green-700' },
+  { label: 'Aprovado condicionado', color: 'bg-amber-100 text-amber-800' },
   { label: 'Aprovado c/ restrição', color: 'bg-amber-100 text-amber-700' },
   { label: 'Reprovado', color: 'bg-red-100 text-red-700' },
 ] as const;
 
 export const DEFAULT_DOCUMENTACAO_STATUS2: readonly DefaultCatalogLabel[] = [
   { label: 'Vendido', color: 'bg-green-200 text-green-800' },
-  { label: 'Bacen', color: 'bg-sky-100 text-sky-700' },
   { label: 'Andamento', color: 'bg-orange-100 text-orange-700' },
+  { label: 'Margem comprometida', color: 'bg-amber-100 text-amber-800' },
+  { label: 'Desistência', color: 'bg-slate-200 text-slate-700' },
+  { label: 'Rating', color: 'bg-violet-100 text-violet-700' },
+  { label: 'Restrição', color: 'bg-rose-100 text-rose-700' },
+  { label: 'Bance', color: 'bg-sky-100 text-sky-800' },
+  { label: 'Bacen', color: 'bg-sky-100 text-sky-700' },
+  { label: 'SPC/Serasa', color: 'bg-red-100 text-red-800' },
 ] as const;
 
 /** Motivos padrão de perda de lead. */

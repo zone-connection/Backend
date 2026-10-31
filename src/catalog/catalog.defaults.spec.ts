@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   DEFAULT_CAPTATION_FUNNEL_STAGES,
   DEFAULT_DOCUMENTACAO_STATUS1,
+  DEFAULT_DOCUMENTACAO_STATUS2,
   DEFAULT_FUNNEL_STAGES,
   DEFAULT_POS_VENDA_FUNNEL_STAGES,
   DEFAULT_VENDA_USADOS_FUNNEL_STAGES,
@@ -39,6 +40,21 @@ describe('etapas padrão por tipo de funil', () => {
     assert.ok(labels.includes('Aprovado c/ restrição'));
     assert.ok(labels.includes('Reprovado'));
     assert.ok(labels.includes('Em análise'));
+    assert.ok(labels.includes('Análise'));
+    assert.ok(labels.includes('Aprovado condicionado'));
+    const andamento = DEFAULT_DOCUMENTACAO_STATUS2.map((item) => item.label);
+    for (const label of [
+      'Vendido',
+      'Andamento',
+      'Margem comprometida',
+      'Desistência',
+      'Rating',
+      'Restrição',
+      'Bance',
+      'SPC/Serasa',
+    ]) {
+      assert.ok(andamento.includes(label), label);
+    }
   });
 
   it('venda de usados tem 9 etapas sem análise de crédito', () => {

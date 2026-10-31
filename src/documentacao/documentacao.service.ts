@@ -23,6 +23,10 @@ import {
   status2Group,
 } from '../common/utils/documentacao-status';
 import { requireTenantId } from '../common/utils/tenant';
+import {
+  applyPlanoModules,
+  FICHA_ANALISE_GUIADA_KEY,
+} from '../tenants/tenant-plan';
 import { hasUserModule } from '../common/utils/user-permissions';
 import { prismaTableOrderBy } from '../common/utils/table-sort';
 import { CreateDocumentacaoDto } from './dto/create-documentacao.dto';
@@ -249,7 +253,8 @@ export class DocumentacaoService {
   }
 
   async create(dto: CreateDocumentacaoDto, requester: AuthenticatedUser) {
-    if (requester.role === Role.corretor) {
+    const guided = await this.fichaGuiadaAtiva(requester);
+    if (requester.role === Role.corretor && !guided) {
       throw new ForbiddenException(
         'Corretores não cadastram documentação. Encaminhe o lead para análise.',
       );
@@ -355,6 +360,7 @@ export class DocumentacaoService {
         status1: true,
         status2: true,
         vgv: true,
+        autorId: true,
       },
     });
     if (!existing) {
@@ -362,9 +368,17 @@ export class DocumentacaoService {
     }
 
     await this.assertCanView(id, tenantId, requester);
-    if (!this.canUpdateDocumentacao(requester)) {
+    const guided = await this.fichaGuiadaAtiva(requester);
+    const allowed = guided
+      ? existing.autorId === requester.id
+      : requester.role === Role.admin ||
+        requester.role === Role.analista ||
+        requester.role === Role.gerente;
+    if (!allowed) {
       throw new ForbiddenException(
-        'Você não tem permissão para editar esta documentação.',
+        guided
+          ? 'Você só pode editar a documentação que você mesmo abriu.'
+          : 'Você não tem permissão para editar esta documentação.',
       );
     }
 
@@ -612,12 +626,66 @@ export class DocumentacaoService {
   }
 
 
-  /** Admin, analista e gerente podem editar (status e demais campos). */
-  private canUpdateDocumentacao(requester: AuthenticatedUser): boolean {
-    return (
-      requester.role === Role.admin ||
-      requester.role === Role.analista ||
-      requester.role === Role.gerente
+  private async fichaGuiadaAtiva(requester: AuthenticatedUser): Promise<boolean> {
+    const tenantId = requireTenantId(requester);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { plano: true, modules: true },
+    });
+    if (!tenant) return false;
+    const modules = applyPlanoModules(tenant.plano, tenant.modules);
+    return modules[FICHA_ANALISE_GUIADA_KEY] === true;
+  }
+
+  /** Cria a ficha ao entrar na análise, com construtora e empreendimento obrigatórios. */
+  async abrirFichaGuiada(
+    dto: { leadId: string; construtoraId: string; empreendimentoId: string; nome: string },
+    requester: AuthenticatedUser,
+  ) {
+    if (!(await this.fichaGuiadaAtiva(requester))) {
+      throw new ForbiddenException(
+        'A ficha guiada na análise não está ativa nesta imobiliária.',
+      );
+    }
+    if (!dto.construtoraId || !dto.empreendimentoId) {
+      throw new BadRequestException(
+        'Informe a construtora e o empreendimento.',
+      );
+    }
+    const tenantId = requireTenantId(requester);
+    const existing = await this.prisma.documentacao.findFirst({
+      where: { tenantId, leadId: dto.leadId },
+      select: { id: true, autorId: true },
+    });
+    if (existing) {
+      if (existing.autorId !== requester.id) {
+        throw new ForbiddenException(
+          'Já existe uma ficha deste lead aberta por outra pessoa.',
+        );
+      }
+      return this.update(
+        existing.id,
+        {
+          construtoraId: dto.construtoraId,
+          empreendimentoId: dto.empreendimentoId,
+        },
+        requester,
+      );
+    }
+    return this.create(
+      {
+        leadId: dto.leadId,
+        nome: dto.nome,
+        construtoraId: dto.construtoraId,
+        empreendimentoId: dto.empreendimentoId,
+        fonte: 'Outro',
+        status1: 'Em análise',
+        status2: 'Andamento',
+        corretorId:
+          requester.role === Role.analista ? null : requester.id,
+        dataAnalise: new Date().toISOString().slice(0, 10),
+      },
+      requester,
     );
   }
 

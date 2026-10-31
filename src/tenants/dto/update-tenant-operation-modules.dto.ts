@@ -47,4 +47,9 @@ export class UpdateTenantOperationModulesDto {
   @IsOptional()
   @IsBoolean()
   muralChavesOptIn?: boolean;
+
+  /** Arrastar para análise abre a ficha de documentação. */
+  @IsOptional()
+  @IsBoolean()
+  fichaAnaliseGuiada?: boolean;
 }
