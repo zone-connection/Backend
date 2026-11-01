@@ -1852,8 +1852,11 @@ export class LeadsService {
     // Clientes e leads usam soft-delete (perdidoAt) — clientes vão para
     // "Perda de cliente" (corretor); leads para "Leads Perdidos" (admin).
     const perdidoStage =
-      (await this.funis.getSlugByPapel(tenantId, FunilEtapaPapel.perdido)) ??
-      undefined;
+      (await this.funis.getSlugByPapel(
+        tenantId,
+        FunilEtapaPapel.perdido,
+        existing.funilId,
+      )) ?? undefined;
 
     const timing = perdidoStage
       ? await this.monitoramento.stageChangeData(
@@ -1867,13 +1870,13 @@ export class LeadsService {
     const updated = await this.prisma.lead.update({
       where: { id },
       data: {
+        ...(perdidoStage ? { stage: perdidoStage } : {}),
+        ...(timing ?? {}),
         perdidoAt: new Date(),
         motivoPerda: motivoTrim,
         perdidoPorId: requester.id,
         roletaPrazoAt: null,
         roletaRedistribuido: false,
-        ...(perdidoStage ? { stage: perdidoStage } : {}),
-        ...(timing ?? {}),
       },
       select: leadSelect,
     });
@@ -1923,6 +1926,7 @@ export class LeadsService {
         id: true,
         corretorId: true,
         equipeId: true,
+        funilId: true,
         origemAtrasoLiberacao: true,
       },
     });
@@ -1933,26 +1937,43 @@ export class LeadsService {
       return { ok: true, updated: 0, skipped: unique.length, ids: [] };
     }
 
-    const perdidoStage =
-      (await this.funis.getSlugByPapel(tenantId, FunilEtapaPapel.perdido)) ??
-      undefined;
-    const timing = perdidoStage
-      ? await this.monitoramento.stageChangeData(tenantId, perdidoStage)
-      : null;
     const now = new Date();
+    const allowedRows = rows.filter((row) => allowed.includes(row.id));
+    const byFunil = new Map<string, string[]>();
+    for (const row of allowedRows) {
+      const list = byFunil.get(row.funilId) ?? [];
+      list.push(row.id);
+      byFunil.set(row.funilId, list);
+    }
 
-    await this.prisma.lead.updateMany({
-      where: { tenantId, id: { in: allowed }, perdidoAt: null },
-      data: {
-        perdidoAt: now,
-        motivoPerda: motivoTrim,
-        perdidoPorId: requester.id,
-        roletaPrazoAt: null,
-        roletaRedistribuido: false,
-        ...(perdidoStage ? { stage: perdidoStage } : {}),
-        ...(timing ?? {}),
-      },
-    });
+    for (const [funilId, ids] of byFunil) {
+      const perdidoStage =
+        (await this.funis.getSlugByPapel(
+          tenantId,
+          FunilEtapaPapel.perdido,
+          funilId,
+        )) ?? undefined;
+      const timing = perdidoStage
+        ? await this.monitoramento.stageChangeData(
+            tenantId,
+            perdidoStage,
+            now,
+            funilId,
+          )
+        : null;
+      await this.prisma.lead.updateMany({
+        where: { tenantId, id: { in: ids }, perdidoAt: null },
+        data: {
+          ...(perdidoStage ? { stage: perdidoStage } : {}),
+          ...(timing ?? {}),
+          perdidoAt: now,
+          motivoPerda: motivoTrim,
+          perdidoPorId: requester.id,
+          roletaPrazoAt: null,
+          roletaRedistribuido: false,
+        },
+      });
+    }
 
     return {
       ok: true,

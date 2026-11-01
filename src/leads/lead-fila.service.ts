@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import {
   ContatoTipo,
+  FunilEtapaPapel,
   FunilTipo,
   LeadFilaEventoTipo,
   Prisma,
@@ -575,28 +576,57 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
           stage: true,
           funilId: true,
           corretorId: true,
+          motivoPerda: true,
           roletaAtribuidoAt: true,
           filaDistribuidoAt: true,
           lastAtividadeAt: true,
           lastTarefaAt: true,
           lastTriagemAt: true,
           lastStageChangeAt: true,
+          lastMovementAt: true,
         },
         take: 40,
         orderBy: { roletaPrazoAt: 'asc' },
       });
+      const funilIds = [...new Set(vencidos.map((lead) => lead.funilId))];
+      const etapas = funilIds.length
+        ? await this.prisma.funilEtapa.findMany({
+            where: { funilId: { in: funilIds }, active: true },
+            orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
+            select: { funilId: true, slug: true, label: true, papel: true },
+          })
+        : [];
       const primeira = new Map<string, string>();
-      for (const lead of vencidos) {
-        if (!primeira.has(lead.funilId)) {
-          const etapa = await this.prisma.funilEtapa.findFirst({
-            where: { funilId: lead.funilId, active: true },
-            orderBy: { sortOrder: 'asc' },
-            select: { slug: true },
-          });
-          if (etapa) primeira.set(lead.funilId, etapa.slug);
+      const perdidos = new Map<string, Set<string>>();
+      for (const etapa of etapas) {
+        if (!primeira.has(etapa.funilId)) {
+          const inicial = etapas.find(
+            (item) =>
+              item.funilId === etapa.funilId &&
+              (item.papel === FunilEtapaPapel.inicial ||
+                item.slug === 'novo'),
+          );
+          primeira.set(
+            etapa.funilId,
+            (inicial ?? etapa).slug,
+          );
         }
+        const perdido =
+          etapa.papel === FunilEtapaPapel.perdido ||
+          /perdid|perda/i.test(etapa.label) ||
+          etapa.slug === 'perdido';
+        if (!perdido) continue;
+        const set = perdidos.get(etapa.funilId) ?? new Set<string>();
+        set.add(etapa.slug);
+        perdidos.set(etapa.funilId, set);
+      }
+      for (const lead of vencidos) {
         const desde = lead.roletaAtribuidoAt ?? lead.filaDistribuidoAt ?? now;
+        const perdeu =
+          Boolean(lead.motivoPerda?.trim()) ||
+          (perdidos.get(lead.funilId)?.has(lead.stage) ?? false);
         const andou =
+          perdeu ||
           lead.stage !== primeira.get(lead.funilId) ||
           houveMovimentoDepois(
             [
@@ -604,6 +634,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
               lead.lastTarefaAt,
               lead.lastTriagemAt,
               lead.lastStageChangeAt,
+              lead.lastMovementAt,
             ],
             desde,
           );
@@ -657,6 +688,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         roletaPrazoAt: { lte: params.now },
         corretorId: { not: null },
         perdidoAt: null,
+        motivoPerda: null,
       },
       select: {
         id: true,
@@ -664,10 +696,26 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         telefone: true,
         origem: true,
         cidade: true,
+        stage: true,
+        funilId: true,
         corretorId: true,
       },
     });
     if (!lead?.corretorId) return { assigned: false, motivo: 'nao_elegivel' };
+    const etapaPerdida = await tx.funilEtapa.findFirst({
+      where: {
+        funilId: lead.funilId,
+        slug: lead.stage,
+        OR: [
+          { papel: FunilEtapaPapel.perdido },
+          { slug: 'perdido' },
+          { label: { contains: 'perdid', mode: 'insensitive' } },
+          { label: { contains: 'perda', mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (etapaPerdida) return { assigned: false, motivo: 'perdido' };
 
     const membros = await tx.leadFilaMembro.findMany({
       where: {

@@ -794,12 +794,13 @@ export class FunisService {
     );
   }
 
-  /** Slug da etapa ativa com o papel dado (funil ativo), ou null. */
+  /** Slug da etapa ativa com o papel dado (funil do lead, ou o funil ativo). */
   async getSlugByPapel(
     tenantId: string,
     papel: FunilEtapaPapel,
+    funilId?: string | null,
   ): Promise<string | null> {
-    const slugs = await this.getSlugsByPapel(tenantId, papel);
+    const slugs = await this.getSlugsByPapel(tenantId, papel, funilId);
     return slugs[0] ?? null;
   }
 
@@ -810,8 +811,15 @@ export class FunisService {
   async getSlugsByPapel(
     tenantId: string,
     papel: FunilEtapaPapel,
+    funilId?: string | null,
   ): Promise<string[]> {
-    const funil = await this.ensureTenantHasFunil(tenantId);
+    const owned = funilId
+      ? await this.prisma.funil.findFirst({
+          where: { id: funilId, tenantId },
+          select: funilSelect,
+        })
+      : null;
+    const funil = owned ?? (await this.ensureTenantHasFunil(tenantId));
     const byPapel = funil.etapas
       .filter(
         (e) => e.active && this.resolveEtapaPapel(e, funil.etapas) === papel,
