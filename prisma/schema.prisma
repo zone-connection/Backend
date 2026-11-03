@@ -423,6 +423,8 @@ model User {
   // Leads que este usuário marcou como perdidos.
   leadsPerdidosPor Lead[] @relation("LeadPerdidoPor")
 
+  atribuicoesFeitas LeadReatribuicao[] @relation("LeadAtribuicaoActor")
+
   // Relatos de triagem criados por este corretor.
   triagemEvents TriagemEvent[] @relation("TriagemAutor")
 
@@ -1043,6 +1045,18 @@ enum TriagemOrigem {
   caca_lead
 }
 
+/// Movimentação de dono ou equipe do lead, do cadastro em diante.
+enum LeadAtribuicaoAcao {
+  entrada
+  distribuicao
+  reatribuicao
+  troca_equipe
+  roleta
+  redistribuicao
+  desvinculo
+  caca
+}
+
 /// Relato do corretor sobre um lead/cliente (histórico na Triagem).
 model TriagemEvent {
   id            String        @id @default(uuid())
@@ -1076,6 +1090,10 @@ model LeadReatribuicao {
   fromEquipeId   String?
   toCorretorId   String?
   toEquipeId     String?
+  /// Quem executou a ação (admin, gerente ou o próprio corretor no caça-lead).
+  actorId        String?
+  actor          User?         @relation("LeadAtribuicaoActor", fields: [actorId], references: [id], onDelete: SetNull)
+  acao           LeadAtribuicaoAcao @default(reatribuicao)
   origem         TriagemOrigem
   createdAt      DateTime      @default(now())
 
@@ -1083,6 +1101,7 @@ model LeadReatribuicao {
   @@index([tenantId, fromEquipeId])
   @@index([leadId])
   @@index([createdAt])
+  @@index([actorId])
   @@map("lead_reatribuicoes")
 }
 

@@ -17,6 +17,7 @@ import {
   UserStatus,
   AtrasoLiberacaoDestino,
   InteresseEmpreendimentoStatus,
+  LeadAtribuicaoAcao,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
@@ -59,6 +60,10 @@ import {
   dadosAposRedistribuir,
   isOrigemRetrabalho,
 } from './retrabalho-tag';
+import {
+  acaoDistribuicao,
+  registrarAtribuicoes,
+} from './lead-atribuicao-historico';
 import {
   excludeVendaOuVgvWhere,
   LEAD_VENDA_OU_VGV_MESSAGE,
@@ -223,6 +228,16 @@ export class LeadsService {
       },
       select: leadSelect,
     });
+    await registrarAtribuicoes(this.prisma, [
+      {
+        tenantId,
+        leadId: created.id,
+        acao: LeadAtribuicaoAcao.entrada,
+        actorId: requester.id,
+        toCorretorId: assignment.corretorId,
+        toEquipeId: assignment.equipeId,
+      },
+    ]);
     await this.seedInteresses(
       created.id,
       tenantId,
@@ -382,6 +397,15 @@ export class LeadsService {
           },
           select: leadSelect,
         });
+        await registrarAtribuicoes(this.prisma, [
+          {
+            tenantId,
+            leadId: lead.id,
+            acao: LeadAtribuicaoAcao.entrada,
+            actorId: requester.id,
+            toCorretorId: corretorId,
+          },
+        ]);
         created.push(lead);
       } catch (err) {
         const message =
@@ -513,7 +537,12 @@ export class LeadsService {
 
     const leads = await this.prisma.lead.findMany({
       where: await this.poolAdminWhere(tenantId),
-      select: { id: true, origemAtrasoLiberacao: true },
+      select: {
+        id: true,
+        origemAtrasoLiberacao: true,
+        corretorId: true,
+        equipeId: true,
+      },
       orderBy: { createdAt: 'asc' },
       take: totalPedido,
     });
@@ -562,6 +591,22 @@ export class LeadsService {
             },
           });
         }
+        await registrarAtribuicoes(
+          tx,
+          slice.map((lead) => ({
+            tenantId,
+            leadId: lead.id,
+            acao:
+              lead.equipeId && lead.equipeId !== aloc.equipeId
+                ? LeadAtribuicaoAcao.troca_equipe
+                : LeadAtribuicaoAcao.distribuicao,
+            actorId: requester.id,
+            fromCorretorId: lead.corretorId,
+            toCorretorId: lead.corretorId,
+            fromEquipeId: lead.equipeId,
+            toEquipeId: aloc.equipeId,
+          })),
+        );
         const eq = equipes.find((e) => e.id === aloc.equipeId)!;
         resultado.push({
           equipeId: eq.id,
@@ -722,6 +767,19 @@ export class LeadsService {
               'A distribuição passou do número pedido. Nada foi gravado.',
             );
           }
+          await registrarAtribuicoes(
+            tx,
+            slice.map((lead) => ({
+              tenantId,
+              leadId: lead.id,
+              acao: acaoDistribuicao(lead, corretor.id, corretor.equipeId),
+              actorId: requester.id,
+              fromCorretorId: lead.corretorId,
+              toCorretorId: corretor.id,
+              fromEquipeId: lead.equipeId,
+              toEquipeId: corretor.equipeId,
+            })),
+          );
           resultado.push({
             corretorId: corretor.id,
             nome: corretor.name,
@@ -794,8 +852,9 @@ export class LeadsService {
       if (!firstLead.has(corretor.id)) firstLead.set(corretor.id, lead.id);
     });
 
-    await this.prisma.$transaction(
-      assignments.map((a) =>
+    const leadAntes = new Map(leads.map((lead) => [lead.id, lead]));
+    await this.prisma.$transaction([
+      ...assignments.map((a) =>
         this.prisma.lead.update({
           where: { id: a.leadId },
           data: {
@@ -808,7 +867,27 @@ export class LeadsService {
           },
         }),
       ),
-    );
+      this.prisma.leadReatribuicao.createMany({
+        data: assignments.map((a) => {
+          const antes = leadAntes.get(a.leadId);
+          return {
+            tenantId,
+            leadId: a.leadId,
+            acao: acaoDistribuicao(
+              antes ?? { corretorId: null, equipeId: null },
+              a.corretorId,
+              a.equipeId,
+            ),
+            actorId: requester.id,
+            fromCorretorId: antes?.corretorId ?? null,
+            toCorretorId: a.corretorId,
+            fromEquipeId: antes?.equipeId ?? null,
+            toEquipeId: a.equipeId,
+            origem: TriagemOrigem.manual,
+          };
+        }),
+      }),
+    ]);
 
     this.notifyDistribuicaoCorretores(
       tenantId,
@@ -888,8 +967,11 @@ export class LeadsService {
         data: eligible.map((lead) => ({
           tenantId,
           leadId: lead.id,
+          acao: LeadAtribuicaoAcao.desvinculo,
+          actorId: requester.id,
           fromCorretorId: lead.corretorId,
           toCorretorId: null,
+          fromEquipeId: lead.equipeId,
           toEquipeId: lead.equipeId,
           origem: TriagemOrigem.manual,
         })),
@@ -2324,6 +2406,74 @@ export class LeadsService {
     return this.decorateOne(lead, requester);
   }
 
+  async historicoAtribuicao(id: string, requester: AuthenticatedUser) {
+    if (requester.role !== Role.admin) {
+      throw new ForbiddenException(
+        'Somente o admin da imobiliária vê o histórico de distribuição.',
+      );
+    }
+    const tenantId = requireTenantId(requester);
+    const lead = await this.prisma.lead.findFirst({
+      where: { id, tenantId },
+      select: { id: true, createdAt: true, nome: true },
+    });
+    if (!lead) throw new NotFoundException('Lead não encontrado.');
+
+    const rows = await this.prisma.leadReatribuicao.findMany({
+      where: { tenantId, leadId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+    const userIds = [
+      ...new Set(
+        rows
+          .flatMap((row) => [row.actorId, row.fromCorretorId, row.toCorretorId])
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ];
+    const equipeIds = [
+      ...new Set(
+        rows
+          .flatMap((row) => [row.fromEquipeId, row.toEquipeId])
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ];
+    const [users, equipes] = await Promise.all([
+      userIds.length
+        ? this.prisma.user.findMany({
+            where: { id: { in: userIds } },
+            select: { id: true, name: true },
+          })
+        : [],
+      equipeIds.length
+        ? this.prisma.equipe.findMany({
+            where: { id: { in: equipeIds } },
+            select: { id: true, name: true },
+          })
+        : [],
+    ]);
+    const userName = new Map(users.map((user) => [user.id, user.name]));
+    const equipeName = new Map(equipes.map((equipe) => [equipe.id, equipe.name]));
+    const nome = (value: string | null) =>
+      value ? (userName.get(value) ?? 'Usuário removido') : null;
+    const equipe = (value: string | null) =>
+      value ? (equipeName.get(value) ?? 'Equipe removida') : null;
+
+    return {
+      leadId: lead.id,
+      cadastradoEm: lead.createdAt,
+      itens: rows.map((row) => ({
+        id: row.id,
+        acao: row.acao,
+        criadoEm: row.createdAt,
+        ator: nome(row.actorId),
+        deCorretor: nome(row.fromCorretorId),
+        paraCorretor: nome(row.toCorretorId),
+        deEquipe: equipe(row.fromEquipeId),
+        paraEquipe: equipe(row.toEquipeId),
+      })),
+    };
+  }
+
   // --- Helpers de RBAC ---
 
   private canManageRetrabalho(requester: AuthenticatedUser): boolean {
@@ -2398,6 +2548,13 @@ export class LeadsService {
         data: {
           tenantId: params.tenantId,
           leadId: params.leadId,
+          acao: params.cacaLead
+            ? LeadAtribuicaoAcao.caca
+            : fromEquipeId !== toEquipeId &&
+                params.fromCorretorId === params.toCorretorId
+              ? LeadAtribuicaoAcao.troca_equipe
+              : LeadAtribuicaoAcao.reatribuicao,
+          actorId: params.autorId,
           fromCorretorId: params.fromCorretorId,
           fromEquipeId,
           toCorretorId: params.toCorretorId,
@@ -2473,7 +2630,14 @@ export class LeadsService {
     poolWhere: Prisma.LeadWhereInput,
     leadIds: string[],
     take?: number,
-  ): Promise<Array<{ id: string; origemAtrasoLiberacao: AtrasoLiberacaoDestino | null }>> {
+  ): Promise<
+    Array<{
+      id: string;
+      origemAtrasoLiberacao: AtrasoLiberacaoDestino | null;
+      corretorId: string | null;
+      equipeId: string | null;
+    }>
+  > {
     if (leadIds.length > 0) {
       const vendaSlugs = await this.funis.getSlugsByPapel(
         tenantId,
@@ -2487,7 +2651,12 @@ export class LeadsService {
           perdidoAt: null,
           ...excludeVendaOuVgvWhere(vendaSlugs),
         },
-        select: { id: true, origemAtrasoLiberacao: true },
+        select: {
+          id: true,
+          origemAtrasoLiberacao: true,
+          corretorId: true,
+          equipeId: true,
+        },
       });
       if (found.length !== leadIds.length) {
         throw new BadRequestException(
@@ -2500,7 +2669,12 @@ export class LeadsService {
 
     return this.prisma.lead.findMany({
       where: poolWhere,
-      select: { id: true, origemAtrasoLiberacao: true },
+      select: {
+        id: true,
+        origemAtrasoLiberacao: true,
+        corretorId: true,
+        equipeId: true,
+      },
       orderBy: { createdAt: 'asc' },
       ...(take != null ? { take } : {}),
     });

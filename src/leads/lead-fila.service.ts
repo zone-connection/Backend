@@ -11,6 +11,7 @@ import {
   ContatoTipo,
   FunilEtapaPapel,
   FunilTipo,
+  LeadAtribuicaoAcao,
   LeadFilaEventoTipo,
   Prisma,
   Role,
@@ -21,6 +22,7 @@ import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
 import { dadosAposRedistribuir } from './retrabalho-tag';
+import { registrarAtribuicoes } from './lead-atribuicao-historico';
 
 const ELEGIVEIS: Role[] = [Role.corretor, Role.gerente, Role.treinee];
 const ROLETA_INTERVAL_MS = 30_000;
@@ -498,6 +500,16 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     });
     if (claimed.count !== 1) return { assigned: false, motivo: 'ja_atribuido' };
 
+    await registrarAtribuicoes(tx, [
+      {
+        tenantId: params.tenantId,
+        leadId: lead.id,
+        acao: LeadAtribuicaoAcao.roleta,
+        toCorretorId: proximo.userId,
+        toEquipeId: proximo.user.equipeId,
+      },
+    ]);
+
     const max = await tx.leadFilaMembro.aggregate({
       where: { configId: config.id },
       _max: { ordem: true },
@@ -699,6 +711,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         stage: true,
         funilId: true,
         corretorId: true,
+        equipeId: true,
       },
     });
     if (!lead?.corretorId) return { assigned: false, motivo: 'nao_elegivel' };
@@ -746,6 +759,18 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
       },
     });
     if (claimed.count !== 1) return { assigned: false, motivo: 'ja_atribuido' };
+
+    await registrarAtribuicoes(tx, [
+      {
+        tenantId: params.tenantId,
+        leadId: lead.id,
+        acao: LeadAtribuicaoAcao.redistribuicao,
+        fromCorretorId: lead.corretorId,
+        toCorretorId: proximo.userId,
+        fromEquipeId: lead.equipeId,
+        toEquipeId: proximo.user.equipeId,
+      },
+    ]);
 
     const max = await tx.leadFilaMembro.aggregate({
       where: { configId: params.configId },

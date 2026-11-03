@@ -225,6 +225,16 @@ export class LeadsController {
     return this.leadsService.sendWhatsappChat(id, dto.content, requester);
   }
 
+  @Get(':id/atribuicoes')
+  @UseGuards(RolesGuard)
+  @Roles(Role.admin)
+  historicoAtribuicao(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.historicoAtribuicao(id, requester);
+  }
+
   @Get(':id')
   findOne(
     @Param('id', ParseUUIDPipe) id: string,
