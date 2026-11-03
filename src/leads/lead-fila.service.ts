@@ -31,7 +31,8 @@ function houveMovimentoDepois(
   marcos: Array<Date | null | undefined>,
   desde: Date,
 ) {
-  return marcos.some((marco) => marco != null && marco.getTime() > desde.getTime());
+  const limite = desde.getTime() + 2_000;
+  return marcos.some((marco) => marco != null && marco.getTime() > limite);
 }
 
 type Atribuicao = {
@@ -53,6 +54,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     if (process.env.NODE_ENV === 'test') return;
+    void this.rodarRoleta();
     this.timer = setInterval(() => {
       void this.rodarRoleta();
     }, ROLETA_INTERVAL_MS);
@@ -549,9 +551,12 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     if (this.roletaRunning) return;
     this.roletaRunning = true;
     try {
+      const entradas = await this.processarPool();
       const moved = await this.processarRoleta();
-      if (moved > 0) {
-        this.logger.log(`Roleta: ${moved} lead(s) redistribuído(s).`);
+      if (entradas > 0 || moved > 0) {
+        this.logger.log(
+          `Roleta: ${entradas} lead(s) novo(s), ${moved} redistribuído(s).`,
+        );
       }
     } catch (error) {
       this.logger.error(
@@ -560,6 +565,47 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.roletaRunning = false;
     }
+  }
+
+  /**
+   * Com a fila ligada, lead sem corretor e sem equipe não fica parado no pool.
+   * Entra na roleta no próximo ciclo, mesmo que tenha chegado com a fila pausada.
+   */
+  async processarPool(): Promise<number> {
+    const configs = await this.prisma.leadFilaConfig.findMany({
+      where: { ativa: true },
+      select: { id: true, tenantId: true },
+    });
+    let assigned = 0;
+    for (const config of configs) {
+      const pendentes = await this.prisma.lead.findMany({
+        where: {
+          tenantId: config.tenantId,
+          tipo: ContatoTipo.lead,
+          perdidoAt: null,
+          corretorId: null,
+          equipeId: null,
+        },
+        select: { id: true, origem: true, filaDistribuidoAt: true },
+        orderBy: { createdAt: 'asc' },
+        take: 20,
+      });
+      for (const lead of pendentes) {
+        if (lead.filaDistribuidoAt) {
+          await this.prisma.lead.updateMany({
+            where: { id: lead.id, corretorId: null },
+            data: { filaDistribuidoAt: null },
+          });
+        }
+        const result = await this.atribuirNovoLead({
+          tenantId: config.tenantId,
+          leadId: lead.id,
+          origem: lead.origem,
+        });
+        if (result.assigned) assigned += 1;
+      }
+    }
+    return assigned;
   }
 
   /** Leads parados na primeira etapa, sem atividade, passam ao próximo da fila. */
