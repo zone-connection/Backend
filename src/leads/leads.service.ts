@@ -2420,6 +2420,7 @@ export class LeadsService {
         criadoEm: Date;
         cadastradoEm: Date;
         ator: string | null;
+        atorPerfil: string | null;
         deCorretor: string | null;
         paraCorretor: string | null;
         deEquipe: string | null;
@@ -2431,7 +2432,8 @@ export class LeadsService {
         r.acao::text AS acao,
         r."createdAt" AS "criadoEm",
         l."createdAt" AS "cadastradoEm",
-        actor.name AS ator,
+        COALESCE(actor.name, relato.nome) AS ator,
+        COALESCE(actor.role::text, relato.role) AS "atorPerfil",
         de_corretor.name AS "deCorretor",
         para_corretor.name AS "paraCorretor",
         de_equipe.name AS "deEquipe",
@@ -2440,6 +2442,23 @@ export class LeadsService {
       LEFT JOIN lead_reatribuicoes r
         ON r."leadId" = l.id AND r."tenantId" = l."tenantId"
       LEFT JOIN users actor ON actor.id = r."actorId"
+      LEFT JOIN LATERAL (
+        SELECT u.name AS nome, u.role::text AS role
+        FROM triagem_events te
+        JOIN users u ON u.id = te."autorId"
+        WHERE r."actorId" IS NULL
+          AND r.acao::text NOT IN ('roleta', 'redistribuicao')
+          AND te."leadId" = r."leadId"
+          AND te."createdAt" BETWEEN r."createdAt" - INTERVAL '3 minutes'
+                                 AND r."createdAt" + INTERVAL '3 minutes'
+          AND (
+            te.texto ILIKE '%reatribuiu%'
+            OR te.texto ILIKE '%desvinculou%'
+            OR te.texto ILIKE '%pegou o lead%'
+          )
+        ORDER BY ABS(EXTRACT(EPOCH FROM (te."createdAt" - r."createdAt")))
+        LIMIT 1
+      ) relato ON true
       LEFT JOIN users de_corretor ON de_corretor.id = r."fromCorretorId"
       LEFT JOIN users para_corretor ON para_corretor.id = r."toCorretorId"
       LEFT JOIN equipes de_equipe ON de_equipe.id = r."fromEquipeId"
@@ -2461,6 +2480,7 @@ export class LeadsService {
           acao: row.acao,
           criadoEm: row.criadoEm,
           ator: row.ator,
+          atorPerfil: row.atorPerfil,
           deCorretor: row.deCorretor,
           paraCorretor: row.paraCorretor,
           deEquipe: row.deEquipe,
