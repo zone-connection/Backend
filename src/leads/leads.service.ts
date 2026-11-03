@@ -2413,64 +2413,59 @@ export class LeadsService {
       );
     }
     const tenantId = requireTenantId(requester);
-    const lead = await this.prisma.lead.findFirst({
-      where: { id, tenantId },
-      select: { id: true, createdAt: true, nome: true },
-    });
-    if (!lead) throw new NotFoundException('Lead não encontrado.');
-
-    const rows = await this.prisma.leadReatribuicao.findMany({
-      where: { tenantId, leadId: id },
-      orderBy: { createdAt: 'asc' },
-    });
-    const userIds = [
-      ...new Set(
-        rows
-          .flatMap((row) => [row.actorId, row.fromCorretorId, row.toCorretorId])
-          .filter((value): value is string => Boolean(value)),
-      ),
-    ];
-    const equipeIds = [
-      ...new Set(
-        rows
-          .flatMap((row) => [row.fromEquipeId, row.toEquipeId])
-          .filter((value): value is string => Boolean(value)),
-      ),
-    ];
-    const [users, equipes] = await Promise.all([
-      userIds.length
-        ? this.prisma.user.findMany({
-            where: { id: { in: userIds } },
-            select: { id: true, name: true },
-          })
-        : [],
-      equipeIds.length
-        ? this.prisma.equipe.findMany({
-            where: { id: { in: equipeIds } },
-            select: { id: true, name: true },
-          })
-        : [],
-    ]);
-    const userName = new Map(users.map((user) => [user.id, user.name]));
-    const equipeName = new Map(equipes.map((equipe) => [equipe.id, equipe.name]));
-    const nome = (value: string | null) =>
-      value ? (userName.get(value) ?? 'Usuário removido') : null;
-    const equipe = (value: string | null) =>
-      value ? (equipeName.get(value) ?? 'Equipe removida') : null;
-
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        acao: string;
+        criadoEm: Date;
+        cadastradoEm: Date;
+        ator: string | null;
+        deCorretor: string | null;
+        paraCorretor: string | null;
+        deEquipe: string | null;
+        paraEquipe: string | null;
+      }>
+    >`
+      SELECT
+        r.id,
+        r.acao::text AS acao,
+        r."createdAt" AS "criadoEm",
+        l."createdAt" AS "cadastradoEm",
+        actor.name AS ator,
+        de_corretor.name AS "deCorretor",
+        para_corretor.name AS "paraCorretor",
+        de_equipe.name AS "deEquipe",
+        para_equipe.name AS "paraEquipe"
+      FROM leads l
+      LEFT JOIN lead_reatribuicoes r
+        ON r."leadId" = l.id AND r."tenantId" = l."tenantId"
+      LEFT JOIN users actor ON actor.id = r."actorId"
+      LEFT JOIN users de_corretor ON de_corretor.id = r."fromCorretorId"
+      LEFT JOIN users para_corretor ON para_corretor.id = r."toCorretorId"
+      LEFT JOIN equipes de_equipe ON de_equipe.id = r."fromEquipeId"
+      LEFT JOIN equipes para_equipe ON para_equipe.id = r."toEquipeId"
+      WHERE l.id = ${id} AND l."tenantId" = ${tenantId}
+      ORDER BY r."createdAt" ASC NULLS LAST
+    `;
+    if (rows.length === 0) {
+      throw new NotFoundException('Lead não encontrado.');
+    }
+    const cadastradoEm = rows[0].cadastradoEm;
     return {
-      leadId: lead.id,
-      cadastradoEm: lead.createdAt,
-      itens: rows.map((row) => ({
-        id: row.id,
-        acao: row.acao,
-        criadoEm: row.createdAt,
-        ator: nome(row.actorId),
-        deCorretor: nome(row.fromCorretorId),
-        paraCorretor: nome(row.toCorretorId),
-        deEquipe: equipe(row.fromEquipeId),
-        paraEquipe: equipe(row.toEquipeId),
-      })),
+      leadId: id,
+      cadastradoEm,
+      itens: rows
+        .filter((row) => row.id)
+        .map((row) => ({
+          id: row.id,
+          acao: row.acao,
+          criadoEm: row.criadoEm,
+          ator: row.ator,
+          deCorretor: row.deCorretor,
+          paraCorretor: row.paraCorretor,
+          deEquipe: row.deEquipe,
+          paraEquipe: row.paraEquipe,
+        })),
     };
   }
 

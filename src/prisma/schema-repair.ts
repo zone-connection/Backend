@@ -365,4 +365,46 @@ export async function ensureRuntimeSchema(prisma: PrismaService) {
       err instanceof Error ? err.stack : err,
     );
   }
+  try {
+    await ensureLeadAtribuicaoSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar o histórico de distribuição do lead.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
 }
+
+export async function ensureLeadAtribuicaoSchema(prisma: PrismaService) {
+  await prisma.$executeRawUnsafe(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'LeadAtribuicaoAcao') THEN
+        CREATE TYPE "LeadAtribuicaoAcao" AS ENUM (
+          'entrada',
+          'distribuicao',
+          'reatribuicao',
+          'troca_equipe',
+          'roleta',
+          'redistribuicao',
+          'desvinculo',
+          'caca'
+        );
+      END IF;
+    END $$
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "lead_reatribuicoes"
+      ADD COLUMN IF NOT EXISTS "actorId" TEXT,
+      ADD COLUMN IF NOT EXISTS "acao" "LeadAtribuicaoAcao" NOT NULL DEFAULT 'reatribuicao'
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "lead_reatribuicoes_actorId_idx"
+      ON "lead_reatribuicoes"("actorId")
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "lead_reatribuicoes_leadId_createdAt_idx"
+      ON "lead_reatribuicoes"("leadId", "createdAt")
+  `);
+}
+
