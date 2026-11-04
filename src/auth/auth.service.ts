@@ -57,6 +57,8 @@ export interface AuthTokens {
 export type AuthUserPayload = PublicUser & {
   tenant: TenantBranding | null;
   temVendaVinculada?: boolean;
+  mfaDecisionPending?: boolean;
+  mfaSetupPending?: boolean;
 };
 
 export interface AuthResult extends AuthTokens {
@@ -163,16 +165,10 @@ export class AuthService {
         mfaToken: await this.mfa.issuePending(user.id, 'mfa_verify'),
       };
     }
-    if (gate === 'configurar') {
+    if (gate === 'configurar' && user.role === Role.super_admin) {
       return {
         status: 'setup',
         setupToken: await this.mfa.issuePending(user.id, 'mfa_setup'),
-      };
-    }
-    if (gate === 'decidir') {
-      return {
-        status: 'decision',
-        decisionToken: await this.mfa.issuePending(user.id, 'mfa_decision'),
       };
     }
     return { status: 'authenticated', ...(await this.finishLogin(user, context)) };
@@ -231,6 +227,15 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('Sessão inválida.');
     return user;
+  }
+
+  async decideMfaInSession(
+    userId: string,
+    choice: 'manter' | 'recusar',
+    password = '',
+  ) {
+    const user = await this.requireUser(userId);
+    await this.mfa.decide(user, choice, password);
   }
 
   async decideMfa(
@@ -408,6 +413,8 @@ export class AuthService {
       where: { id: userId },
       select: {
         ...publicUserSelect,
+        mfaDecision: true,
+        totpEnabledAt: true,
         tenant: {
           select: {
             ...tenantBrandingSelect,
@@ -433,11 +440,17 @@ export class AuthService {
       throw new UnauthorizedException('Sessão inválida.');
     }
 
-    const { tenant, ...rest } = user;
+    const { tenant, mfaDecision, totpEnabledAt, ...rest } = user;
     const branding = tenant ? stripTenantStatus(tenant) : null;
     return {
       ...rest,
       temVendaVinculada: await this.resolveTemVendaVinculada(rest),
+      mfaDecisionPending:
+        rest.role === Role.admin && mfaDecision == null && totpEnabledAt == null,
+      mfaSetupPending:
+        rest.role === Role.admin &&
+        mfaDecision === MfaDecision.manter &&
+        totpEnabledAt == null,
       tenant: branding
         ? {
             ...withOzapConnectionFlag(branding),
@@ -793,6 +806,12 @@ export class AuthService {
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       temVendaVinculada: await this.resolveTemVendaVinculada(user),
+      mfaDecisionPending:
+        user.role === Role.admin && user.mfaDecision == null && user.totpEnabledAt == null,
+      mfaSetupPending:
+        user.role === Role.admin &&
+        user.mfaDecision === MfaDecision.manter &&
+        user.totpEnabledAt == null,
       tenant: tenant
         ? {
             ...withOzapConnectionFlag(tenant),

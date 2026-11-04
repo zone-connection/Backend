@@ -214,6 +214,19 @@ export class AuthController {
     await this.authService.heartbeat(user.id, user.tenantId);
   }
 
+  @Throttle({ default: THROTTLE.mfa })
+  @Post('mfa/decisao')
+  async mfaDecisao(
+    @CurrentUser('id') userId: string,
+    @Body() body: { choice?: 'manter' | 'recusar'; password?: string },
+  ) {
+    if (!body.choice || (body.choice === 'recusar' && !body.password)) {
+      throw new BadRequestException('Informe a escolha e a senha atual.');
+    }
+    await this.authService.decideMfaInSession(userId, body.choice, body.password ?? '');
+    return { ok: true, setup: body.choice === 'manter' };
+  }
+
   @Get('mfa/status')
   mfaStatus(@CurrentUser('id') userId: string) {
     return this.authService.mfaStatus(userId);

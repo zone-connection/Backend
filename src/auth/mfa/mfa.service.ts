@@ -170,8 +170,10 @@ export class MfaService {
     if (user.mfaDecision) {
       throw new BadRequestException('A decisão de segurança já foi registrada.');
     }
-    const passwordOk = await bcrypt.compare(password, user.password);
-    if (!passwordOk) throw new UnauthorizedException('Senha atual incorreta.');
+    if (choice === 'recusar') {
+      const passwordOk = await bcrypt.compare(password, user.password);
+      if (!passwordOk) throw new UnauthorizedException('Senha atual incorreta.');
+    }
     await this.prisma.user.update({
       where: { id: user.id },
       data: {
