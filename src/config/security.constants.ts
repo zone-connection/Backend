@@ -30,6 +30,8 @@ export const THROTTLE = {
   global: { ttl: 60_000, limit: 120 },
   /** Login: tolera erro de digitação, mas mata força bruta. */
   login: { ttl: 60_000, limit: 5 },
+  /** Segunda etapa e configuração do autenticador. */
+  mfa: { ttl: 60_000, limit: 8 },
   /** Renovação de sessão. */
   refresh: { ttl: 60_000, limit: 20 },
   /** Recuperação de senha: evita spam de e-mail e sondagem de contas. */

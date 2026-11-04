@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import {
   CreciProcessoStatus,
   LoginFailureReason,
+  MfaDecision,
   Role,
   User,
   UserStatus,
@@ -27,6 +28,7 @@ import {
   type TenantBranding,
 } from '../common/utils/tenant-branding';
 import { normalizeCor } from '../common/utils/cor';
+import { MfaService } from './mfa/mfa.service';
 import {
   isDeliverableEmail,
   parseOptionalNotifyEmail,
@@ -60,6 +62,12 @@ export type AuthUserPayload = PublicUser & {
 export interface AuthResult extends AuthTokens {
   user: AuthUserPayload;
 }
+
+export type LoginOutcome =
+  | ({ status: 'authenticated' } & AuthResult)
+  | { status: 'mfa'; mfaToken: string }
+  | { status: 'setup'; setupToken: string }
+  | { status: 'decision'; decisionToken: string };
 
 /** Origem da requisição, usada na trilha de auditoria. */
 export interface RequestContext {
@@ -95,6 +103,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly presence: PresenceService,
     private readonly media: MediaService,
+    private readonly mfa: MfaService,
   ) {}
 
   async login(
@@ -102,7 +111,7 @@ export class AuthService {
     password: string,
     context: RequestContext = {},
     tenantSlug?: string,
-  ): Promise<AuthResult> {
+  ): Promise<LoginOutcome> {
     const normalizedEmail = email.toLowerCase().trim();
 
     // O bloqueio é contado por e-mail na trilha de auditoria — vale também
@@ -147,7 +156,101 @@ export class AuthService {
       await this.recordAttempt(normalizedEmail, false, context, 'usuario_inativo');
     });
 
+    const gate = this.mfa.gate(user);
+    if (gate === 'codigo') {
+      return {
+        status: 'mfa',
+        mfaToken: await this.mfa.issuePending(user.id, 'mfa_verify'),
+      };
+    }
+    if (gate === 'configurar') {
+      return {
+        status: 'setup',
+        setupToken: await this.mfa.issuePending(user.id, 'mfa_setup'),
+      };
+    }
+    if (gate === 'decidir') {
+      return {
+        status: 'decision',
+        decisionToken: await this.mfa.issuePending(user.id, 'mfa_decision'),
+      };
+    }
+    return { status: 'authenticated', ...(await this.finishLogin(user, context)) };
+  }
+
+  async verifyMfa(mfaToken: string, code: string, context: RequestContext = {}) {
+    const user = await this.mfa.readPending(mfaToken, 'mfa_verify');
+    await this.mfa.verifyLoginCode(user, code);
     return this.finishLogin(user, context);
+  }
+
+  async recoverMfa(mfaToken: string, recoveryCode: string, context: RequestContext = {}) {
+    const user = await this.mfa.readPending(mfaToken, 'mfa_verify');
+    await this.mfa.recover(user, recoveryCode);
+    return this.finishLogin(user, context);
+  }
+
+  async beginMfaSetup(setupToken: string) {
+    const user = await this.mfa.readPending(setupToken, 'mfa_setup');
+    return this.mfa.beginSetup(user);
+  }
+
+  async confirmMfaSetup(setupToken: string, code: string, context: RequestContext = {}) {
+    const user = await this.mfa.readPending(setupToken, 'mfa_setup');
+    const recovery = await this.mfa.confirmSetup(user, code);
+    const session = await this.finishLogin(
+      { ...user, totpEnabledAt: new Date() },
+      context,
+    );
+    return { ...session, recoveryCodes: recovery.recoveryCodes };
+  }
+
+  mfaStatus(userId: string) {
+    return this.mfa.status(userId);
+  }
+
+  async mfaEnable(userId: string) {
+    const user = await this.requireUser(userId);
+    if (user.role === Role.super_admin && user.totpEnabledAt) {
+      throw new BadRequestException('Use a reconfiguração após confirmar o código atual.');
+    }
+    return this.mfa.beginSetup(user);
+  }
+
+  async mfaConfirm(userId: string, code: string) {
+    const user = await this.requireUser(userId);
+    return this.mfa.confirmSetup(user, code);
+  }
+
+  async mfaDisable(userId: string, password: string, code: string) {
+    const user = await this.requireUser(userId);
+    await this.mfa.disable(user, password, code);
+  }
+
+  private async requireUser(userId: string): Promise<User> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('Sessão inválida.');
+    return user;
+  }
+
+  async decideMfa(
+    decisionToken: string,
+    choice: 'manter' | 'recusar',
+    password: string,
+    context: RequestContext = {},
+  ): Promise<LoginOutcome | { status: 'setup'; setupToken: string }> {
+    const user = await this.mfa.readPending(decisionToken, 'mfa_decision');
+    await this.mfa.decide(user, choice, password);
+    if (choice === 'recusar') {
+      return this.finishLogin(
+        { ...user, mfaDecision: MfaDecision.recusar },
+        context,
+      ).then((session) => ({ status: 'authenticated' as const, ...session }));
+    }
+    return {
+      status: 'setup',
+      setupToken: await this.mfa.issuePending(user.id, 'mfa_setup'),
+    };
   }
 
   private async finishLogin(
@@ -252,6 +355,11 @@ export class AuthService {
     }
 
     await this.assertTenantAllowsAccess(user.tenantId);
+    if (user.role === Role.super_admin && !user.totpEnabledAt) {
+      throw new UnauthorizedException(
+        'Configure a autenticação em duas etapas para continuar.',
+      );
+    }
 
     const tokenMatches = await bcrypt.compare(
       refreshToken,
@@ -472,7 +580,7 @@ export class AuthService {
   /**
    * Gera um token de recuperação de senha. A resposta é sempre a mesma,
    * exista o e-mail ou não, para não expor a base de usuários.
-   * Em dev o token volta na resposta; em produção iria por e-mail.
+   * Em dev o token também volta na resposta, para testes locais.
    */
   async forgotPassword(email: string): Promise<{ resetToken?: string }> {
     const normalized = email.toLowerCase().trim();

@@ -12,6 +12,20 @@ datasource db {
 
 /// Perfis de acesso (RBAC). Espelha os perfis usados no frontend.
 /// super_admin = plataforma Zone Connection (sem tenant).
+enum MfaDecision {
+  manter
+  recusar
+}
+
+enum MfaAuditEvent {
+  ativacao
+  desativacao
+  falha
+  regeneracao
+  recuperacao
+  decisao
+}
+
 enum Role {
   super_admin
   admin
@@ -409,6 +423,23 @@ model User {
   // Proteção contra força bruta: bloqueia a conta após falhas consecutivas.
   failedLoginAttempts Int       @default(0)
   lockedUntil         DateTime?
+
+  /// Segredo TOTP ativo, criptografado. Nunca em texto puro.
+  totpSecretEnc     String?
+  /// Segredo ainda não confirmado pelo primeiro código.
+  totpPendingEnc    String?
+  totpEnabledAt     DateTime?
+  totpDisabledAt    DateTime?
+  /// Último passo TOTP aceito, para não reutilizar o mesmo código.
+  totpLastStep      Int?
+  mfaFailedAttempts Int       @default(0)
+  mfaLockedUntil    DateTime?
+  /// Decisão inicial do administrador da imobiliária. Nula até a primeira escolha.
+  mfaDecision       MfaDecision?
+  mfaDecisionAt     DateTime?
+
+  mfaRecoveryCodes UserMfaRecoveryCode[]
+  mfaAuditEvents   UserMfaAudit[]
 
   // Fluxo de recuperação de senha.
   passwordResetToken   String?
@@ -3880,6 +3911,28 @@ enum LoginFailureReason {
 }
 
 /// Trilha de auditoria de acessos — permite detectar ataques de força bruta.
+model UserMfaRecoveryCode {
+  id       String    @id @default(uuid())
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash String
+  usedAt   DateTime?
+
+  @@index([userId])
+  @@map("user_mfa_recovery_codes")
+}
+
+model UserMfaAudit {
+  id        String        @id @default(uuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event     MfaAuditEvent
+  createdAt DateTime      @default(now())
+
+  @@index([userId, createdAt])
+  @@map("user_mfa_audit")
+}
+
 model LoginAttempt {
   id        String              @id @default(uuid())
   email     String

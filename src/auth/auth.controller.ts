@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -64,6 +65,102 @@ export class AuthController {
       dto.tenantSlug,
     );
 
+    if (result.status === 'mfa') {
+      return { mfaRequired: true, mfaToken: result.mfaToken };
+    }
+    if (result.status === 'setup') {
+      return { mfaSetupRequired: true, setupToken: result.setupToken };
+    }
+    if (result.status === 'decision') {
+      return { mfaDecisionRequired: true, decisionToken: result.decisionToken };
+    }
+    return this.sessionResponse(res, result);
+  }
+
+  @Public()
+  @Throttle({ default: THROTTLE.mfa })
+  @Post('mfa/verify')
+  @HttpCode(HttpStatus.OK)
+  async verifyMfa(
+    @Body() body: { mfaToken?: string; code?: string },
+    @RequestContext() context: ClientContext,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!body.mfaToken || !body.code) {
+      return { ok: false };
+    }
+    const result = await this.authService.verifyMfa(body.mfaToken, body.code, context);
+    return this.sessionResponse(res, result);
+  }
+
+  @Public()
+  @Throttle({ default: THROTTLE.mfa })
+  @Post('mfa/recover')
+  @HttpCode(HttpStatus.OK)
+  async recoverMfa(
+    @Body() body: { mfaToken?: string; recoveryCode?: string },
+    @RequestContext() context: ClientContext,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!body.mfaToken || !body.recoveryCode) {
+      return { ok: false };
+    }
+    const result = await this.authService.recoverMfa(
+      body.mfaToken,
+      body.recoveryCode,
+      context,
+    );
+    return this.sessionResponse(res, result);
+  }
+
+  @Public()
+  @Throttle({ default: THROTTLE.mfa })
+  @Post('mfa/setup')
+  @HttpCode(HttpStatus.OK)
+  beginMfaSetup(@Body() body: { setupToken?: string }) {
+    if (!body.setupToken) return { ok: false };
+    return this.authService.beginMfaSetup(body.setupToken);
+  }
+
+  @Public()
+  @Throttle({ default: THROTTLE.mfa })
+  @Post('mfa/setup/confirm')
+  @HttpCode(HttpStatus.OK)
+  async confirmMfaSetup(
+    @Body() body: { setupToken?: string; code?: string },
+    @RequestContext() context: ClientContext,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!body.setupToken || !body.code) return { ok: false };
+    const result = await this.authService.confirmMfaSetup(
+      body.setupToken,
+      body.code,
+      context,
+    );
+    const session = this.sessionResponse(res, result);
+    return { ...session, recoveryCodes: result.recoveryCodes };
+  }
+
+  @Public()
+  @Throttle({ default: THROTTLE.mfa })
+  @Post('mfa/decision')
+  @HttpCode(HttpStatus.OK)
+  async decideMfa(
+    @Body() body: { decisionToken?: string; choice?: 'manter' | 'recusar'; password?: string },
+    @RequestContext() context: ClientContext,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!body.decisionToken || !body.choice || !body.password) return { ok: false };
+    const result = await this.authService.decideMfa(
+      body.decisionToken,
+      body.choice,
+      body.password,
+      context,
+    );
+    if (result.status === 'setup') {
+      return { mfaSetupRequired: true, setupToken: result.setupToken };
+    }
+    if (result.status !== 'authenticated') return { ok: false };
     return this.sessionResponse(res, result);
   }
 
@@ -115,6 +212,43 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async heartbeat(@CurrentUser() user: AuthenticatedUser) {
     await this.authService.heartbeat(user.id, user.tenantId);
+  }
+
+  @Get('mfa/status')
+  mfaStatus(@CurrentUser('id') userId: string) {
+    return this.authService.mfaStatus(userId);
+  }
+
+  @Throttle({ default: THROTTLE.mfa })
+  @Post('mfa/enable')
+  mfaEnable(@CurrentUser('id') userId: string) {
+    return this.authService.mfaEnable(userId);
+  }
+
+  @Throttle({ default: THROTTLE.mfa })
+  @Post('mfa/enable/confirm')
+  mfaConfirm(
+    @CurrentUser('id') userId: string,
+    @Body() body: { code?: string },
+  ) {
+    if (!body.code) throw new BadRequestException('Informe o código de seis dígitos.');
+    return this.authService.mfaConfirm(userId, body.code);
+  }
+
+  @Throttle({ default: THROTTLE.mfa })
+  @Post('mfa/disable')
+  mfaDisable(
+    @CurrentUser('id') userId: string,
+    @Body() body: { password?: string; code?: string },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!body.password || !body.code) {
+      throw new BadRequestException('Informe a senha e o código atual.');
+    }
+    return this.authService.mfaDisable(userId, body.password, body.code).then(() => {
+      clearAuthCookies(res, this.config);
+      return { ok: true };
+    });
   }
 
   @Get('me')

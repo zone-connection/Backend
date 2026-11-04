@@ -366,6 +366,14 @@ export async function ensureRuntimeSchema(prisma: PrismaService) {
     );
   }
   try {
+    await ensureMfaSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar a autenticação em duas etapas.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
+  try {
     await ensureLeadAtribuicaoSchema(prisma);
   } catch (err) {
     logger.error(
@@ -373,6 +381,50 @@ export async function ensureRuntimeSchema(prisma: PrismaService) {
       err instanceof Error ? err.stack : err,
     );
   }
+}
+
+export async function ensureMfaSchema(prisma: PrismaService) {
+  await prisma.$executeRawUnsafe(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'MfaDecision') THEN
+        CREATE TYPE "MfaDecision" AS ENUM ('manter', 'recusar');
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'MfaAuditEvent') THEN
+        CREATE TYPE "MfaAuditEvent" AS ENUM ('ativacao', 'desativacao', 'falha', 'regeneracao', 'recuperacao', 'decisao');
+      END IF;
+    END $$
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "totpSecretEnc" TEXT,
+      ADD COLUMN IF NOT EXISTS "totpPendingEnc" TEXT,
+      ADD COLUMN IF NOT EXISTS "totpEnabledAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "totpDisabledAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "totpLastStep" INTEGER,
+      ADD COLUMN IF NOT EXISTS "mfaFailedAttempts" INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS "mfaLockedUntil" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "mfaDecision" "MfaDecision",
+      ADD COLUMN IF NOT EXISTS "mfaDecisionAt" TIMESTAMP(3)
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "user_mfa_recovery_codes" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL,
+      "codeHash" TEXT NOT NULL,
+      "usedAt" TIMESTAMP(3),
+      CONSTRAINT "user_mfa_recovery_codes_pkey" PRIMARY KEY ("id")
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "user_mfa_audit" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL,
+      "event" "MfaAuditEvent" NOT NULL,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "user_mfa_audit_pkey" PRIMARY KEY ("id")
+    )
+  `);
 }
 
 export async function ensureLeadAtribuicaoSchema(prisma: PrismaService) {
