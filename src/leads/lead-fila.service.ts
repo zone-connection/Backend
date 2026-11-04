@@ -609,16 +609,30 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     });
     let assigned = 0;
     for (const config of configs) {
+      const etapasPerda = await this.prisma.funilEtapa.findMany({
+        where: {
+          funil: { tenantId: config.tenantId },
+          OR: [
+            { papel: FunilEtapaPapel.perdido },
+            { slug: 'perdido' },
+            { label: { contains: 'perdid', mode: 'insensitive' } },
+            { label: { contains: 'perda', mode: 'insensitive' } },
+          ],
+        },
+        select: { slug: true },
+      });
+      const slugsPerda = [...new Set(etapasPerda.map((etapa) => etapa.slug))];
       const pendentes = await this.prisma.lead.findMany({
         where: {
           tenantId: config.tenantId,
           tipo: ContatoTipo.lead,
-        perdidoAt: null,
-        motivoPerda: null,
-        origemAtrasoLiberacao: null,
-        corretorId: null,
-        equipeId: null,
-      },
+          perdidoAt: null,
+          motivoPerda: null,
+          origemAtrasoLiberacao: null,
+          corretorId: null,
+          equipeId: null,
+          ...(slugsPerda.length > 0 ? { stage: { notIn: slugsPerda } } : {}),
+        },
         select: { id: true, origem: true, filaDistribuidoAt: true },
         orderBy: { createdAt: 'asc' },
         take: 20,

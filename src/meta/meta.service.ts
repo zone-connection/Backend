@@ -269,13 +269,19 @@ export class MetaService {
       await this.loadAttribution(connection.pageAccessToken, event),
       formName,
     );
-    const { lead, created } = await this.findOrCreateLead(
+    const { lead, created, keptLost } = await this.findOrCreateLead(
       mapped,
       event,
       metaLead,
       connection.tenantId,
       attribution,
     );
+    if (keptLost) {
+      this.logger.log(
+        `Lead perdido não reaberto crmLeadId=${lead.id} tenantId=${connection.tenantId} leadgen_id=${leadgenId}`,
+      );
+      return 'skipped';
+    }
 
     await this.upsertMetaLink(
       lead.id,
@@ -431,13 +437,19 @@ export class MetaService {
             }),
             null,
           );
-      const { lead, created } = await this.findOrCreateLead(
+      const { lead, created, keptLost } = await this.findOrCreateLead(
         mapped,
         event,
         metaLead,
         connection.tenantId,
         attribution,
       );
+      if (keptLost) {
+        this.logger.log(
+          `Lead perdido não reaberto crmLeadId=${lead.id} tenantId=${connection.tenantId} leadgen_id=${event.leadgenId}`,
+        );
+        return { ok: true, duplicate: true };
+      }
 
       await this.upsertMetaLink(
         lead.id,
@@ -576,6 +588,14 @@ export class MetaService {
     tenantId: string,
     attribution?: MetaAdAttribution | null,
   ) {
+    const archived = await this.findArchivedLead(mapped, tenantId);
+    if (archived) {
+      this.logger.log(
+        `Lead perdido permanece fora do funil crmLeadId=${archived.id} tenantId=${tenantId} leadgen_id=${event.leadgenId}`,
+      );
+      return { lead: archived, created: false, keptLost: true };
+    }
+
     const reusable = await this.findReusableLead(mapped, tenantId);
     if (reusable) {
       await this.mergeTags(reusable.id, reusable.tags, mapped.extraTags);
@@ -656,7 +676,26 @@ export class MetaService {
       leadId: lead.id,
       origem,
     });
-    return { lead, created: true };
+    return { lead, created: true, keptLost: false };
+  }
+
+  /** Lead já marcado como perda não volta para Novo lead. */
+  private async findArchivedLead(mapped: MappedMetaLead, tenantId: string) {
+    if (mapped.telefone) {
+      const byPhone = await this.prisma.lead.findFirst({
+        where: { tenantId, telefone: mapped.telefone, perdidoAt: { not: null } },
+        orderBy: { perdidoAt: 'desc' },
+      });
+      if (byPhone) return byPhone;
+    }
+    if (mapped.email && !mapped.email.endsWith('@facebook.meta.local')) {
+      const byEmail = await this.prisma.lead.findFirst({
+        where: { tenantId, email: mapped.email, perdidoAt: { not: null } },
+        orderBy: { perdidoAt: 'desc' },
+      });
+      if (byEmail) return byEmail;
+    }
+    return null;
   }
 
   /** Liga o lead ao cadastro do tenant pelo nome do form; não usa corretor/equipe. */

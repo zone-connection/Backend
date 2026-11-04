@@ -98,6 +98,9 @@ function memoria() {
         if (membro) membro.ordem = data.ordem;
       },
     },
+    leadReatribuicao: {
+      createMany: async () => ({ count: 1 }),
+    },
     leadFilaEvento: {
       create: async ({ data }: { data: { tipo: LeadFilaEventoTipo; userId?: string; leadId?: string } }) => {
         eventos.push(data);

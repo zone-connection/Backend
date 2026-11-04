@@ -267,6 +267,33 @@ export class GrupoZapService {
       );
     }
 
+    const archived = await this.prisma.lead.findFirst({
+      where: {
+        tenantId,
+        telefone: lead.phone,
+        perdidoAt: { not: null },
+      },
+      select: { id: true },
+      orderBy: { perdidoAt: 'desc' },
+    });
+    if (archived) {
+      await this.prisma.grupoZapWebhookDelivery
+        .create({
+          data: {
+            originLeadId: lead.originLeadId,
+            tenantId,
+            payload: (asRecord(body) ?? {}) as Prisma.InputJsonValue,
+          },
+        })
+        .catch((error) => {
+          if (!isUniqueViolation(error)) throw error;
+        });
+      this.logger.log(
+        `Lead perdido não reaberto crmLeadId=${archived.id} originLeadId=${lead.originLeadId} tenantId=${tenantId}`,
+      );
+      return { ok: true, duplicate: true, leadId: archived.id };
+    }
+
     try {
       const created = await this.persistLead(tenantId, lead, body);
       void this.leadNotify.notifyNewLead({

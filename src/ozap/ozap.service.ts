@@ -272,7 +272,12 @@ export class OzapService {
       lead =
         (await tx.lead.findFirst({
           where: { tenantId, telefone: phone, perdidoAt: null },
-        })) ?? undefined;
+        })) ??
+        (await tx.lead.findFirst({
+          where: { tenantId, telefone: phone, perdidoAt: { not: null } },
+          orderBy: { perdidoAt: 'desc' },
+        })) ??
+        undefined;
     }
 
     if (!lead) {

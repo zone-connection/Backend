@@ -124,6 +124,7 @@ const prisma = {
     findUnique: async () => null,
   },
   lead: {
+    findFirst: async () => null,
     create: async ({
       data,
     }: {

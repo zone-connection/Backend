@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   ContatoTipo,
+  FunilEtapaPapel,
   FunilTipo,
   Role,
   UserStatus,
@@ -121,13 +122,28 @@ export class LeadDistribuicaoAutoService
     // Um único corretor online não esvazia o pool: a quantidade continua manual.
     if (online.length < 2) return 0;
 
+    const etapasPerda = await this.prisma.funilEtapa.findMany({
+      where: {
+        funil: { tenantId },
+        OR: [
+          { papel: FunilEtapaPapel.perdido },
+          { slug: 'perdido' },
+          { label: { contains: 'perdid', mode: 'insensitive' } },
+          { label: { contains: 'perda', mode: 'insensitive' } },
+        ],
+      },
+      select: { slug: true },
+    });
+    const slugsPerda = [...new Set(etapasPerda.map((etapa) => etapa.slug))];
     const pool = await this.prisma.lead.findMany({
       where: {
         tenantId,
         tipo: ContatoTipo.lead,
         perdidoAt: null,
+        motivoPerda: null,
         corretorId: null,
         equipeId: null,
+        ...(slugsPerda.length > 0 ? { stage: { notIn: slugsPerda } } : {}),
       },
       select: {
         id: true,
