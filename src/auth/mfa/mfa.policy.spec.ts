@@ -11,24 +11,18 @@ describe('política de 2FA', () => {
     assert.equal(mfaPolicyForRole(Role.corretor), 'voluntaria');
   });
 
-  it('não libera o super admin sem autenticador', () => {
+  it('não pede autenticador para nenhum perfil', () => {
     assert.equal(
       mfaGateFor({ role: Role.super_admin, totpEnabledAt: null, mfaDecision: MfaDecision.recusar }),
-      'configurar',
+      null,
     );
-  });
-
-  it('pede o código quando a 2FA já está ativa', () => {
     assert.equal(
       mfaGateFor({ role: Role.corretor, totpEnabledAt: new Date(), mfaDecision: null }),
-      'codigo',
+      null,
     );
-  });
-
-  it('pede o QR Code do admin antes de entrar e não repete depois de recusar', () => {
     assert.equal(
       mfaGateFor({ role: Role.admin, totpEnabledAt: null, mfaDecision: null }),
-      'configurar',
+      null,
     );
     assert.equal(
       mfaGateFor({ role: Role.admin, totpEnabledAt: null, mfaDecision: MfaDecision.recusar }),

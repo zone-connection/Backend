@@ -87,12 +87,6 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       throw new UnauthorizedException('Sessão inválida.');
     }
 
-    if (row.role === Role.super_admin && !row.totpEnabledAt) {
-      throw new UnauthorizedException(
-        'Configure a autenticação em duas etapas para continuar.',
-      );
-    }
-
     if (
       row.tenantId &&
       (!row.tenant || row.tenant.status !== UserStatus.ativo)

@@ -19,12 +19,7 @@ export function mfaGateFor(input: {
   totpEnabledAt: Date | null;
   mfaDecision: MfaDecision | null;
 }): MfaGate {
-  if (input.totpEnabledAt) return 'codigo';
-  const policy = mfaPolicyForRole(input.role);
-  if (policy === 'obrigatoria') return 'configurar';
-  if (policy === 'escolha' && input.mfaDecision !== MfaDecision.recusar) {
-    return 'configurar';
-  }
+  void input;
   return null;
 }
 

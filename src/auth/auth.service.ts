@@ -361,12 +361,6 @@ export class AuthService {
     }
 
     await this.assertTenantAllowsAccess(user.tenantId);
-    if (user.role === Role.super_admin && !user.totpEnabledAt) {
-      throw new UnauthorizedException(
-        'Configure a autenticação em duas etapas para continuar.',
-      );
-    }
-
     const tokenMatches = await bcrypt.compare(
       refreshToken,
       user.hashedRefreshToken,
@@ -446,12 +440,8 @@ export class AuthService {
     return {
       ...rest,
       temVendaVinculada: await this.resolveTemVendaVinculada(rest),
-      mfaDecisionPending:
-        rest.role === Role.admin && mfaDecision == null && totpEnabledAt != null,
-      mfaSetupPending:
-        rest.role === Role.admin &&
-        mfaDecision === MfaDecision.manter &&
-        totpEnabledAt == null,
+      mfaDecisionPending: false,
+      mfaSetupPending: false,
       tenant: branding
         ? {
             ...withOzapConnectionFlag(branding),
@@ -807,12 +797,8 @@ export class AuthService {
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       temVendaVinculada: await this.resolveTemVendaVinculada(user),
-      mfaDecisionPending:
-        user.role === Role.admin && user.mfaDecision == null && user.totpEnabledAt != null,
-      mfaSetupPending:
-        user.role === Role.admin &&
-        user.mfaDecision === MfaDecision.manter &&
-        user.totpEnabledAt == null,
+      mfaDecisionPending: false,
+      mfaSetupPending: false,
       tenant: tenant
         ? {
             ...withOzapConnectionFlag(tenant),
