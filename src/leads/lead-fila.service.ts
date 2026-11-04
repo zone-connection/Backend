@@ -439,6 +439,8 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         tenantId: params.tenantId,
         tipo: ContatoTipo.lead,
         perdidoAt: null,
+        motivoPerda: null,
+        origemAtrasoLiberacao: null,
         corretorId: null,
         filaDistribuidoAt: null,
       },
@@ -551,8 +553,14 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     if (this.roletaRunning) return;
     this.roletaRunning = true;
     try {
+      const encerrados = await this.encerrarEtapaPerda();
       const entradas = await this.processarPool();
       const moved = await this.processarRoleta();
+      if (encerrados > 0) {
+        this.logger.log(
+          `Perda: ${encerrados} lead(s) saíram do funil para Leads perdidos.`,
+        );
+      }
       if (entradas > 0 || moved > 0) {
         this.logger.log(
           `Roleta: ${entradas} lead(s) novo(s), ${moved} redistribuído(s).`,
@@ -565,6 +573,29 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.roletaRunning = false;
     }
+  }
+
+  /** Quem está na etapa de perda sai do funil e fica em Leads perdidos. */
+  async encerrarEtapaPerda(): Promise<number> {
+    return this.prisma.$executeRaw`
+      UPDATE leads AS l
+      SET
+        "perdidoAt" = NOW(),
+        "motivoPerda" = COALESCE(NULLIF(BTRIM(l."motivoPerda"), ''), 'Perda no funil'),
+        "roletaPrazoAt" = NULL,
+        "roletaRedistribuido" = false,
+        "filaDistribuidoAt" = COALESCE(l."filaDistribuidoAt", NOW())
+      FROM funil_etapas AS e
+      WHERE l."funilId" = e."funilId"
+        AND l.stage = e.slug
+        AND l."perdidoAt" IS NULL
+        AND (
+          e.papel::text = 'perdido'
+          OR e.slug = 'perdido'
+          OR e.label ILIKE '%perdid%'
+          OR e.label ILIKE '%perda%'
+        )
+    `;
   }
 
   /**
@@ -582,10 +613,12 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         where: {
           tenantId: config.tenantId,
           tipo: ContatoTipo.lead,
-          perdidoAt: null,
-          corretorId: null,
-          equipeId: null,
-        },
+        perdidoAt: null,
+        motivoPerda: null,
+        origemAtrasoLiberacao: null,
+        corretorId: null,
+        equipeId: null,
+      },
         select: { id: true, origem: true, filaDistribuidoAt: true },
         orderBy: { createdAt: 'asc' },
         take: 20,
@@ -624,6 +657,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
           corretorId: { not: null },
           filaDistribuidoAt: { not: null },
           roletaPrazoAt: { lte: now },
+          motivoPerda: null,
         },
         select: {
           id: true,
@@ -747,6 +781,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         corretorId: { not: null },
         perdidoAt: null,
         motivoPerda: null,
+        origemAtrasoLiberacao: null,
       },
       select: {
         id: true,
@@ -774,7 +809,13 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
       },
       select: { id: true },
     });
-    if (etapaPerdida) return { assigned: false, motivo: 'perdido' };
+    if (etapaPerdida) {
+      await tx.lead.update({
+        where: { id: lead.id },
+        data: { roletaPrazoAt: null, roletaRedistribuido: false },
+      });
+      return { assigned: false, motivo: 'perdido' };
+    }
 
     const membros = await tx.leadFilaMembro.findMany({
       where: {
@@ -795,6 +836,8 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         corretorId: lead.corretorId,
         roletaPrazoAt: { lte: params.now },
         perdidoAt: null,
+        motivoPerda: null,
+        origemAtrasoLiberacao: null,
       },
       data: {
         corretorId: proximo.userId,

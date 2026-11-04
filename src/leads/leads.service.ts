@@ -1681,6 +1681,7 @@ export class LeadsService {
         )
       : null;
 
+    const etapaPerdida = stagePapel === FunilEtapaPapel.perdido;
     const lead = await this.prisma.lead.update({
       where: { id },
       data: {
@@ -1689,6 +1690,16 @@ export class LeadsService {
           ? { construtoraId, empreendimentoId }
           : {}),
         ...(timing ?? {}),
+        ...(etapaPerdida
+          ? {
+              perdidoAt: new Date(),
+              motivoPerda: 'Perda no funil',
+              perdidoPorId: requester.id,
+              roletaPrazoAt: null,
+              roletaRedistribuido: false,
+              filaDistribuidoAt: new Date(),
+            }
+          : {}),
       },
       select: leadSelect,
     });
@@ -1959,6 +1970,7 @@ export class LeadsService {
         perdidoPorId: requester.id,
         roletaPrazoAt: null,
         roletaRedistribuido: false,
+        filaDistribuidoAt: new Date(),
       },
       select: leadSelect,
     });
@@ -2053,6 +2065,7 @@ export class LeadsService {
           perdidoPorId: requester.id,
           roletaPrazoAt: null,
           roletaRedistribuido: false,
+          filaDistribuidoAt: now,
         },
       });
     }
