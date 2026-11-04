@@ -23,8 +23,10 @@ describe('lead-notify messages', () => {
     const text = formatLeadWhatsApp({
       titulo: copy.whatsappTitulo,
       lead,
+      imobiliaria: 'New Palace',
       crmUrl: `https://app.exemplo.com${leadCrmPath(lead.id)}`,
     });
+    assert.match(text, /^Imobiliária: New Palace/);
     assert.match(text, /Novo lead atribuído a você/);
     assert.match(text, /Ana Silva/);
     assert.match(text, /funil\?lead=lead-1/);

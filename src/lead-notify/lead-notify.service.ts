@@ -87,6 +87,7 @@ export class LeadNotifyService {
     skipEmail?: boolean;
   }): Promise<void> {
     const copy = leadAtribuidoCopy(params.lead);
+    const imobiliaria = await this.tenantName(params.tenantId);
     await this.notificacoes.createLeadAtribuido({
       userId: params.userId,
       leadId: params.lead.id,
@@ -102,6 +103,7 @@ export class LeadNotifyService {
         titulo: copy.whatsappTitulo,
         lead: params.lead,
         crmUrl: this.crmUrl(params.lead.id),
+        imobiliaria,
       }),
       email: params.skipEmail
         ? null
@@ -122,6 +124,7 @@ export class LeadNotifyService {
   }): Promise<void> {
     if (params.quantidade <= 0 || params.userId === params.actorUserId) return;
     const copy = leadLoteCopy(params.quantidade);
+    const imobiliaria = await this.tenantName(params.tenantId);
     await this.notificacoes.createLeadAtribuido({
       userId: params.userId,
       leadId: params.leadId ?? null,
@@ -137,6 +140,7 @@ export class LeadNotifyService {
         titulo: copy.whatsappTitulo,
         extra: copy.corpo,
         crmUrl: this.crmUrl(params.leadId),
+        imobiliaria,
       }),
       email: {
         titulo: copy.whatsappTitulo,
@@ -158,6 +162,7 @@ export class LeadNotifyService {
       return;
     }
     const copy = equipePoolCopy(params.quantidade, params.equipeNome);
+    const imobiliaria = await this.tenantName(params.tenantId);
     await this.notificacoes.createLeadPool({
       userId: params.gerenteId,
       leadId: params.leadId ?? null,
@@ -173,6 +178,7 @@ export class LeadNotifyService {
         titulo: copy.whatsappTitulo,
         extra: copy.corpo,
         crmUrl: this.crmUrl(params.leadId),
+        imobiliaria,
       }),
       email: {
         titulo: copy.whatsappTitulo,
@@ -197,6 +203,7 @@ export class LeadNotifyService {
       select: { id: true },
     });
     const copy = leadPoolCopy(params.lead);
+    const imobiliaria = await this.tenantName(params.tenantId);
     for (const manager of managers) {
       await this.notificacoes.createLeadPool({
         userId: manager.id,
@@ -213,6 +220,7 @@ export class LeadNotifyService {
           titulo: copy.whatsappTitulo,
           lead: params.lead,
           crmUrl: this.crmUrl(params.lead.id),
+          imobiliaria,
         }),
         email: {
           titulo: copy.whatsappTitulo,
@@ -386,6 +394,14 @@ export class LeadNotifyService {
       phone,
       tenants.map((tenant) => tenant.telefone),
     );
+  }
+
+  private async tenantName(tenantId: string): Promise<string | null> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true },
+    });
+    return tenant?.name?.trim() || null;
   }
 
   private crmUrl(leadId?: string | null): string | null {

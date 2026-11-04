@@ -65,8 +65,13 @@ export function formatLeadWhatsApp(params: {
   extra?: string;
   crmUrl?: string | null;
   includeTelefone?: boolean;
+  /** Nome da imobiliária dona do lead, não o perfil do WhatsApp conectado. */
+  imobiliaria?: string | null;
 }): string {
-  const lines = [params.titulo, ''];
+  const imobiliaria = params.imobiliaria?.trim();
+  const lines = imobiliaria
+    ? [`Imobiliária: ${imobiliaria}`, '', params.titulo, '']
+    : [params.titulo, ''];
   if (params.lead) {
     lines.push(`Nome: ${params.lead.nome}`);
     if (params.includeTelefone !== false) {
