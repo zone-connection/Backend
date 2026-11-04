@@ -108,8 +108,14 @@ export class MfaService {
           totpLastStep: match.step,
           mfaFailedAttempts: 0,
           mfaLockedUntil: null,
-          mfaDecision: MfaDecision.manter,
-          mfaDecisionAt: user.mfaDecisionAt ?? new Date(),
+          mfaDecision:
+            user.role === Role.admin && user.mfaDecision == null
+              ? null
+              : MfaDecision.manter,
+          mfaDecisionAt:
+            user.role === Role.admin && user.mfaDecision == null
+              ? user.mfaDecisionAt
+              : (user.mfaDecisionAt ?? new Date()),
           hashedRefreshToken: null,
         },
       }),
@@ -163,6 +169,7 @@ export class MfaService {
     user: User,
     choice: 'manter' | 'recusar',
     password: string,
+    code = '',
   ): Promise<void> {
     if (user.role !== Role.admin) {
       throw new ForbiddenException('Esta escolha não se aplica ao seu perfil.');
@@ -173,14 +180,28 @@ export class MfaService {
     if (choice === 'recusar') {
       const passwordOk = await bcrypt.compare(password, user.password);
       if (!passwordOk) throw new UnauthorizedException('Senha atual incorreta.');
+      if (user.totpEnabledAt) await this.acceptTotp(user, code);
     }
     await this.prisma.user.update({
       where: { id: user.id },
       data: {
         mfaDecision: choice === 'manter' ? MfaDecision.manter : MfaDecision.recusar,
         mfaDecisionAt: new Date(),
+        ...(choice === 'recusar' && user.totpEnabledAt
+          ? {
+              totpSecretEnc: null,
+              totpPendingEnc: null,
+              totpEnabledAt: null,
+              totpDisabledAt: new Date(),
+              totpLastStep: null,
+            }
+          : {}),
       },
     });
+    if (choice === 'recusar' && user.totpEnabledAt) {
+      await this.prisma.userMfaRecoveryCode.deleteMany({ where: { userId: user.id } });
+      await this.audit(user.id, MfaAuditEvent.desativacao);
+    }
     await this.audit(user.id, MfaAuditEvent.decisao);
   }
 

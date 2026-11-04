@@ -28,6 +28,7 @@ import {
   type TenantBranding,
 } from '../common/utils/tenant-branding';
 import { normalizeCor } from '../common/utils/cor';
+import { AccountMailService } from '../mailer/account-mail.service';
 import { MfaService } from './mfa/mfa.service';
 import {
   isDeliverableEmail,
@@ -105,6 +106,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly presence: PresenceService,
     private readonly media: MediaService,
+    private readonly accountMail: AccountMailService,
     private readonly mfa: MfaService,
   ) {}
 
@@ -165,7 +167,7 @@ export class AuthService {
         mfaToken: await this.mfa.issuePending(user.id, 'mfa_verify'),
       };
     }
-    if (gate === 'configurar' && user.role === Role.super_admin) {
+    if (gate === 'configurar') {
       return {
         status: 'setup',
         setupToken: await this.mfa.issuePending(user.id, 'mfa_setup'),
@@ -233,9 +235,10 @@ export class AuthService {
     userId: string,
     choice: 'manter' | 'recusar',
     password = '',
+    code = '',
   ) {
     const user = await this.requireUser(userId);
-    await this.mfa.decide(user, choice, password);
+    await this.mfa.decide(user, choice, password, code);
   }
 
   async decideMfa(
@@ -446,7 +449,7 @@ export class AuthService {
       ...rest,
       temVendaVinculada: await this.resolveTemVendaVinculada(rest),
       mfaDecisionPending:
-        rest.role === Role.admin && mfaDecision == null && totpEnabledAt == null,
+        rest.role === Role.admin && mfaDecision == null && totpEnabledAt != null,
       mfaSetupPending:
         rest.role === Role.admin &&
         mfaDecision === MfaDecision.manter &&
@@ -617,6 +620,13 @@ export class AuthService {
         passwordResetToken: hashedToken,
         passwordResetExpires: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
       },
+    });
+
+    await this.accountMail.sendForgotPassword({
+      name: user.name,
+      email: user.email,
+      notifyEmail: user.notifyEmail,
+      token: rawToken,
     });
 
     const isProd = this.config.get<string>('NODE_ENV') === 'production';
@@ -807,7 +817,7 @@ export class AuthService {
       updatedAt: user.updatedAt,
       temVendaVinculada: await this.resolveTemVendaVinculada(user),
       mfaDecisionPending:
-        user.role === Role.admin && user.mfaDecision == null && user.totpEnabledAt == null,
+        user.role === Role.admin && user.mfaDecision == null && user.totpEnabledAt != null,
       mfaSetupPending:
         user.role === Role.admin &&
         user.mfaDecision === MfaDecision.manter &&

@@ -218,12 +218,17 @@ export class AuthController {
   @Post('mfa/decisao')
   async mfaDecisao(
     @CurrentUser('id') userId: string,
-    @Body() body: { choice?: 'manter' | 'recusar'; password?: string },
+    @Body() body: { choice?: 'manter' | 'recusar'; password?: string; code?: string },
   ) {
     if (!body.choice || (body.choice === 'recusar' && !body.password)) {
       throw new BadRequestException('Informe a escolha e a senha atual.');
     }
-    await this.authService.decideMfaInSession(userId, body.choice, body.password ?? '');
+    await this.authService.decideMfaInSession(
+      userId,
+      body.choice,
+      body.password ?? '',
+      body.code ?? '',
+    );
     return { ok: true, setup: body.choice === 'manter' };
   }
 

@@ -25,10 +25,10 @@ describe('política de 2FA', () => {
     );
   });
 
-  it('mostra a escolha uma vez para o admin e não repete depois de recusar', () => {
+  it('pede o QR Code do admin antes de entrar e não repete depois de recusar', () => {
     assert.equal(
       mfaGateFor({ role: Role.admin, totpEnabledAt: null, mfaDecision: null }),
-      'decidir',
+      'configurar',
     );
     assert.equal(
       mfaGateFor({ role: Role.admin, totpEnabledAt: null, mfaDecision: MfaDecision.recusar }),

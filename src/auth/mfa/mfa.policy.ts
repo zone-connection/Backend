@@ -22,8 +22,7 @@ export function mfaGateFor(input: {
   if (input.totpEnabledAt) return 'codigo';
   const policy = mfaPolicyForRole(input.role);
   if (policy === 'obrigatoria') return 'configurar';
-  if (policy === 'escolha' && input.mfaDecision == null) return 'decidir';
-  if (policy === 'escolha' && input.mfaDecision === MfaDecision.manter) {
+  if (policy === 'escolha' && input.mfaDecision !== MfaDecision.recusar) {
     return 'configurar';
   }
   return null;
