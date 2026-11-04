@@ -28,7 +28,6 @@ import {
   type TenantBranding,
 } from '../common/utils/tenant-branding';
 import { normalizeCor } from '../common/utils/cor';
-import { AccountMailService } from '../mailer/account-mail.service';
 import { MfaService } from './mfa/mfa.service';
 import {
   isDeliverableEmail,
@@ -106,7 +105,6 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly presence: PresenceService,
     private readonly media: MediaService,
-    private readonly accountMail: AccountMailService,
     private readonly mfa: MfaService,
   ) {}
 
@@ -620,13 +618,6 @@ export class AuthService {
         passwordResetToken: hashedToken,
         passwordResetExpires: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
       },
-    });
-
-    await this.accountMail.sendForgotPassword({
-      name: user.name,
-      email: user.email,
-      notifyEmail: user.notifyEmail,
-      token: rawToken,
     });
 
     const isProd = this.config.get<string>('NODE_ENV') === 'production';
