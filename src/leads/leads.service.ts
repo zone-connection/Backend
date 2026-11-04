@@ -1748,6 +1748,66 @@ export class LeadsService {
     return this.decorateOne(lead, requester);
   }
 
+  /** Lead do funil comercial passa a ser cliente da carteira e do funil de clientes. */
+  async tornarCliente(id: string, requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    await this.ensureExistsAndAccessible(id, requester);
+    const current = await this.prisma.lead.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        tipo: true,
+        nome: true,
+        perdidoAt: true,
+        corretorId: true,
+        equipeId: true,
+      },
+    });
+    if (!current) throw new NotFoundException('Lead não encontrado.');
+    if (current.perdidoAt) {
+      throw new BadRequestException(
+        'Um lead perdido não pode virar cliente.',
+      );
+    }
+    if (current.tipo === ContatoTipo.cliente) {
+      throw new BadRequestException('Este contato já é cliente.');
+    }
+
+    const now = new Date();
+    const updated = await this.prisma.lead.update({
+      where: { id },
+      data: {
+        tipo: ContatoTipo.cliente,
+        roletaPrazoAt: null,
+        roletaRedistribuido: false,
+        lastMovementAt: now,
+      },
+      select: leadSelect,
+    });
+    await this.prisma.triagemEvent.create({
+      data: {
+        leadId: id,
+        autorId: requester.id,
+        texto: `${requester.name} transformou este lead em cliente. Saiu da tabela e do funil de leads e passou para a seção de clientes e o funil de clientes.`,
+        origem: TriagemOrigem.manual,
+      },
+    });
+    await registrarAtribuicoes(this.prisma, [
+      {
+        tenantId,
+        leadId: id,
+        acao: LeadAtribuicaoAcao.transformacao,
+        actorId: requester.id,
+        fromCorretorId: current.corretorId,
+        toCorretorId: current.corretorId,
+        fromEquipeId: current.equipeId,
+        toEquipeId: current.equipeId,
+        origem: TriagemOrigem.manual,
+      },
+    ]);
+    return this.decorateOne(updated, requester);
+  }
+
   async addInteresse(
     leadId: string,
     dto: CreateLeadInteresseDto,

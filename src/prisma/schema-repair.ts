@@ -394,6 +394,9 @@ export async function ensureLeadAtribuicaoSchema(prisma: PrismaService) {
     END $$
   `);
   await prisma.$executeRawUnsafe(`
+    ALTER TYPE "LeadAtribuicaoAcao" ADD VALUE IF NOT EXISTS 'transformacao'
+  `);
+  await prisma.$executeRawUnsafe(`
     ALTER TABLE "lead_reatribuicoes"
       ADD COLUMN IF NOT EXISTS "actorId" TEXT,
       ADD COLUMN IF NOT EXISTS "acao" "LeadAtribuicaoAcao" NOT NULL DEFAULT 'reatribuicao'

@@ -261,6 +261,14 @@ export class LeadsController {
     return this.leadsService.updateStage(id, dto, requester);
   }
 
+  @Post(':id/tornar-cliente')
+  tornarCliente(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.tornarCliente(id, requester);
+  }
+
   @Post(':id/converter-cliente')
   @UseGuards(RolesGuard)
   @Roles(Role.super_admin)

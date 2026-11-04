@@ -1055,6 +1055,7 @@ enum LeadAtribuicaoAcao {
   redistribuicao
   desvinculo
   caca
+  transformacao
 }
 
 /// Relato do corretor sobre um lead/cliente (histórico na Triagem).
