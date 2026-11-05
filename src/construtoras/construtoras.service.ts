@@ -13,7 +13,9 @@ import {
   isStatusVendido,
   status2VendidoWhere,
   documentacaoVendaNoPeriodoWhere,
+  documentacaoVinculadaAoCorretorWhere,
 } from "../common/utils/documentacao-status";
+import { isCorretorLike } from "../common/utils/roles";
 import { TeamScopeService } from "../equipes/team-scope.service";
 import { QueryConstrutorasDto } from "./dto/query-construtoras.dto";
 import { CreateConstrutoraDto } from "./dto/create-construtora.dto";
@@ -120,6 +122,7 @@ export class ConstrutorasService {
     const vendasMap = await this.vendasTotaisPorConstrutora(
       tenantId,
       items.map((item) => item.id),
+      isCorretorLike(requester.role) ? [requester.id] : null,
     );
     return items.map((item) => {
       const totais = vendasMap.get(item.id) ?? { vendas: 0, vgv: 0 };
@@ -140,7 +143,11 @@ export class ConstrutorasService {
     if (!this.canViewVendas(requester)) {
       return this.expose(item, requester);
     }
-    const vendasMap = await this.vendasTotaisPorConstrutora(tenantId, [item.id]);
+    const vendasMap = await this.vendasTotaisPorConstrutora(
+      tenantId,
+      [item.id],
+      isCorretorLike(requester.role) ? [requester.id] : null,
+    );
     const totais = vendasMap.get(item.id) ?? { vendas: 0, vgv: 0 };
     return this.expose(
       { ...item, vendas: totais.vendas, vgv: totais.vgv },
@@ -447,6 +454,7 @@ export class ConstrutorasService {
   private async vendasTotaisPorConstrutora(
     tenantId: string,
     ids: string[],
+    corretorIds?: string[] | null,
   ) {
     const totais = new Map<string, { vendas: number; vgv: number }>();
     if (ids.length === 0) return totais;
@@ -454,7 +462,12 @@ export class ConstrutorasService {
     const rows = await this.prisma.documentacao.findMany({
       where: {
         tenantId,
-        AND: [status2VendidoWhere()],
+        AND: [
+          status2VendidoWhere(),
+          ...(corretorIds
+            ? [documentacaoVinculadaAoCorretorWhere(corretorIds)]
+            : []),
+        ],
         OR: [
           { construtoraId: { in: ids } },
           {
@@ -489,13 +502,17 @@ export class ConstrutorasService {
   }
 
   private canViewVendas(requester: AuthenticatedUser) {
-    return requester.role === Role.admin || requester.role === Role.gerente;
+    return (
+      requester.role === Role.admin ||
+      requester.role === Role.gerente ||
+      isCorretorLike(requester.role)
+    );
   }
 
   private assertCanViewVendas(requester: AuthenticatedUser) {
     if (!this.canViewVendas(requester)) {
       throw new ForbiddenException(
-        "Apenas administradores e gerentes podem ver vendas das construtoras.",
+        "Você não tem permissão para ver vendas das construtoras.",
       );
     }
   }
