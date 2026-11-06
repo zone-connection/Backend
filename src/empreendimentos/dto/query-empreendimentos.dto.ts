@@ -1,4 +1,4 @@
-import { IsOptional, IsUUID } from 'class-validator';
+import { IsIn, IsOptional, IsUUID } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class QueryEmpreendimentosDto {
@@ -14,4 +14,11 @@ export class QueryEmpreendimentosDto {
     return undefined;
   })
   ativo?: boolean;
+
+  @IsOptional()
+  @IsIn(['created_desc', 'created_asc', 'nome_asc', 'nome_desc'], {
+    message:
+      'Ordenação inválida. Use created_desc, created_asc, nome_asc ou nome_desc.',
+  })
+  sort?: 'created_desc' | 'created_asc' | 'nome_asc' | 'nome_desc';
 }
