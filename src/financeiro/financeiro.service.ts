@@ -912,7 +912,6 @@ export class FinanceiroService {
   ) {
     this.assertAccess(requester);
     const tenantId = resolveFinanceiroTenantId(requester);
-    await this.syncComissoesParaTitulos(tenantId);
     try {
       await this.extendIndeterminateRecurrences(tenantId);
     } catch {
@@ -2064,7 +2063,6 @@ export class FinanceiroService {
     const anoAnt = mesFiltro != null ? (mesFiltro === 1 ? y - 1 : y) : y - 1;
     const boundsAnt = slackBoundsVisao(anoAnt, mesAnt);
 
-    await this.syncComissoesParaTitulos(tenantId).catch(() => undefined);
     await this.syncTitulosAtrasados(tenantId).catch(() => undefined);
 
     const [movJanela, movJanelaAnt, titulosReceber, titulosPagar, movAbertosParceiro, comissoesJanela] =
@@ -3637,7 +3635,6 @@ export class FinanceiroService {
   ): Promise<FluxoEvento[]> {
     await this.extendIndeterminateRecurrences(tenantId).catch(() => undefined);
     await this.syncTitulosAtrasados(tenantId).catch(() => undefined);
-    await this.syncComissoesParaTitulos(tenantId).catch(() => undefined);
     const fromDate = parseDayStart(from);
     const toExclusive = parseDayEnd(to);
 
@@ -4655,36 +4652,28 @@ export class FinanceiroService {
           },
         });
         if (deveEstarPago) {
-          if (current.movimento) {
-            await this.prisma.financeiroMovimento.update({
-              where: { id: current.movimento.id },
-              data: {
-                descricao,
-                valor: peca.valor,
-                categoria: peca.categoria,
-                centro: peca.centro,
-                parceiroNome: peca.parceiroNome,
-                natureza:
-                  peca.tipo === FinanceiroTituloTipo.pagar
-                    ? FinanceiroDespesaNatureza.variavel
-                    : null,
-                tipo:
-                  peca.tipo === FinanceiroTituloTipo.receber
-                    ? FinanceiroMovimentoTipo.entrada
-                    : FinanceiroMovimentoTipo.saida,
-              },
-            });
-          } else {
-            await this.prisma.financeiroMovimento.create({
-              data: this.movimentoDaPecaComissao(
-                peca,
-                descricao,
-                row.tenantId,
-                current.id,
-                dataPagamento ?? dataPagamentoDefault,
-              ),
-            });
-          }
+          const dataMov = this.movimentoDaPecaComissao(
+            peca,
+            descricao,
+            row.tenantId,
+            current.id,
+            dataPagamento ?? dataPagamentoDefault,
+          );
+          await this.prisma.financeiroMovimento.upsert({
+            where: { tituloId: current.id },
+            update: {
+              descricao: dataMov.descricao,
+              valor: dataMov.valor,
+              categoria: dataMov.categoria,
+              centro: dataMov.centro,
+              parceiroNome: dataMov.parceiroNome,
+              natureza: dataMov.natureza,
+              tipo: dataMov.tipo,
+              status: dataMov.status,
+              data: dataMov.data,
+            },
+            create: dataMov,
+          });
         } else if (current.movimento) {
           await this.prisma.financeiroMovimento.delete({
             where: { id: current.movimento.id },
@@ -4718,14 +4707,27 @@ export class FinanceiroService {
           },
         });
         if (comissaoPaga) {
-          await tx.financeiroMovimento.create({
-            data: this.movimentoDaPecaComissao(
-              peca,
-              descricao,
-              row.tenantId,
-              titulo.id,
-              dataPagamentoDefault,
-            ),
+          const dataMov = this.movimentoDaPecaComissao(
+            peca,
+            descricao,
+            row.tenantId,
+            titulo.id,
+            dataPagamentoDefault,
+          );
+          await tx.financeiroMovimento.upsert({
+            where: { tituloId: titulo.id },
+            update: {
+              descricao: dataMov.descricao,
+              valor: dataMov.valor,
+              categoria: dataMov.categoria,
+              centro: dataMov.centro,
+              parceiroNome: dataMov.parceiroNome,
+              natureza: dataMov.natureza,
+              tipo: dataMov.tipo,
+              status: dataMov.status,
+              data: dataMov.data,
+            },
+            create: dataMov,
           });
         }
       });
