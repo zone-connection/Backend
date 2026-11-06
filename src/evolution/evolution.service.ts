@@ -17,6 +17,7 @@ import { EvolutionApiClient, EvolutionApiError } from './evolution-api.client';
 import {
   MAX_WHATSAPP_ATTEMPTS,
   NOVO_LEAD_NOTIFICATION,
+  digitsOnly,
   instanceNameForUser,
   leadWhatsappMessage,
   mapEvolutionState,
@@ -65,6 +66,26 @@ export class EvolutionService implements OnModuleInit {
       return this.empty();
     }
     return this.toPublic(row, this.qrByUser.get(user.id) ?? null);
+  }
+
+  async connectSender(user: AuthenticatedUser): Promise<PublicConnection> {
+    this.assertTenantUser(user);
+    this.assertConfigured();
+    const instanceName = this.notifyInstanceName();
+    try {
+      await this.api.createInstance(instanceName, this.webhookUrl());
+    } catch (error) {
+      if (!this.alreadyExists(error)) throw this.asHttp(error);
+    }
+    const qr = readQrBase64(await this.api.connect(instanceName));
+    return {
+      status: 'connecting',
+      phoneNumber: null,
+      notificationsEnabled: true,
+      connectedAt: null,
+      lastConnectionCheck: null,
+      qrCode: qr,
+    };
   }
 
   async connect(user: AuthenticatedUser): Promise<PublicConnection> {
@@ -260,7 +281,7 @@ export class EvolutionService implements OnModuleInit {
     const row = await this.prisma.whatsappNotification.findUnique({
       where: { id },
       include: {
-        user: { select: { name: true } },
+        user: { select: { name: true, whatsapp: true, phone: true } },
         lead: { select: { nome: true, interesse: true, origem: true, tenantId: true } },
       },
     });
@@ -272,30 +293,31 @@ export class EvolutionService implements OnModuleInit {
     const connection = await this.prisma.whatsappConnection.findUnique({
       where: { userId: row.userId },
     });
-    if (!connection || connection.tenantId !== row.tenantId) {
-      this.logger.warn(
-        `WhatsApp pessoal ignorado user=${row.userId}: esse corretor não conectou o WhatsApp.`,
-      );
-      await this.finish(row.id, WhatsappNotificationStatus.skipped, 'WhatsApp não conectado.');
-      return;
-    }
-    if (!connection.notificationsEnabled) {
+    if (connection && connection.tenantId === row.tenantId && !connection.notificationsEnabled) {
       await this.finish(row.id, WhatsappNotificationStatus.skipped, 'Avisos desativados.');
       return;
     }
-    if (connection.connectionStatus !== WhatsappConnectionStatus.connected) {
-      await this.retryOrStop(row.id, row.attempts, 'WhatsApp não conectado.');
-      return;
-    }
-    const phone = await this.ensurePhone(connection);
+    const sender = this.notifyInstanceName();
+    const fromProfile = [row.user.whatsapp, row.user.phone]
+      .map((value) => digitsOnly(value ?? ''))
+      .find((value) => value.length >= 10);
+    const phone =
+      fromProfile ||
+      (connection && connection.tenantId === row.tenantId
+        ? (await this.ensurePhone(connection)) ?? ''
+        : '');
     if (!phone) {
-      await this.retryOrStop(row.id, row.attempts, 'Número do WhatsApp conectado não identificado.');
+      this.logger.warn(`WhatsApp ignorado user=${row.userId}: corretor sem número de WhatsApp.`);
+      await this.finish(row.id, WhatsappNotificationStatus.skipped, 'Corretor sem número de WhatsApp.');
       return;
     }
     const attempt = row.attempts + 1;
     try {
+      await this.api.createInstance(sender, this.webhookUrl()).catch((error: unknown) => {
+        if (!this.alreadyExists(error)) throw error;
+      });
       await this.api.sendText(
-        connection.instanceName,
+        sender,
         phone,
         leadWhatsappMessage({
           nomeCorretor: row.user.name,
@@ -411,6 +433,10 @@ export class EvolutionService implements OnModuleInit {
         'A conexão de WhatsApp ainda não está disponível neste servidor.',
       );
     }
+  }
+
+  private notifyInstanceName(): string {
+    return this.config.get<string>('EVOLUTION_NOTIFY_INSTANCE')?.trim() || 'zone-avisos';
   }
 
   private webhookUrl(): string | null {

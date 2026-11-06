@@ -26,6 +26,13 @@ export class EvolutionMeController {
     return this.evolution.connect(user);
   }
 
+  @Post('remetente')
+  @UseGuards(RolesGuard)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
+  sender(@CurrentUser() user: AuthenticatedUser) {
+    return this.evolution.connectSender(user);
+  }
+
   @Delete()
   disconnect(@CurrentUser() user: AuthenticatedUser) {
     return this.evolution.disconnect(user);
