@@ -1,7 +1,7 @@
--- AlterTable
-ALTER TABLE "lead_meta_links" ADD COLUMN "formName" TEXT,
-ADD COLUMN "adName" TEXT,
-ADD COLUMN "campaignId" TEXT,
-ADD COLUMN "campaignName" TEXT,
-ADD COLUMN "costPerLead" DECIMAL(12,2),
-ADD COLUMN "costCurrency" TEXT DEFAULT 'BRL';
+ALTER TABLE "lead_meta_links"
+  ADD COLUMN IF NOT EXISTS "formName" TEXT,
+  ADD COLUMN IF NOT EXISTS "adName" TEXT,
+  ADD COLUMN IF NOT EXISTS "campaignId" TEXT,
+  ADD COLUMN IF NOT EXISTS "campaignName" TEXT,
+  ADD COLUMN IF NOT EXISTS "costPerLead" DECIMAL(12,2),
+  ADD COLUMN IF NOT EXISTS "costCurrency" TEXT DEFAULT 'BRL';
