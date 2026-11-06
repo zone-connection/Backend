@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   instanceNameForUser,
+  whatsappDestination,
   leadWhatsappMessage,
   mapEvolutionState,
   parseEvolutionWebhook,
@@ -22,6 +23,12 @@ describe('mensagem de lead no WhatsApp do corretor', () => {
     assert.match(text, /Interesse: Comprar/);
     assert.match(text, /Origem: Meta/);
     assert.equal(text.includes('119'), false);
+  });
+});
+
+describe('destino do WhatsApp', () => {
+  it('coloca o código do Brasil quando o cadastro só tem DDD', () => {
+    assert.equal(whatsappDestination('(81) 99221-5812'), '5581992215812');
   });
 });
 

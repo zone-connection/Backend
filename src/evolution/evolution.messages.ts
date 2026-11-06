@@ -37,6 +37,13 @@ export function digitsOnly(value: string): string {
   return value.replace(/\D/g, '');
 }
 
+/** Evolution entrega no Brasil com DDI 55. O cadastro costuma vir só com DDD. */
+export function whatsappDestination(value: string): string {
+  const digits = digitsOnly(value);
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
 export type ConnectionView = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 export function mapEvolutionState(state: string | null | undefined): ConnectionView {

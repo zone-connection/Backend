@@ -19,6 +19,7 @@ import {
   MAX_WHATSAPP_ATTEMPTS,
   NOVO_LEAD_NOTIFICATION,
   digitsOnly,
+  whatsappDestination,
   instanceNameForUser,
   leadWhatsappMessage,
   mapEvolutionState,
@@ -315,7 +316,7 @@ export class EvolutionService implements OnModuleInit {
     }
     const sender = this.notifyInstanceName();
     const fromProfile = [row.user.whatsapp, row.user.phone]
-      .map((value) => digitsOnly(value ?? ''))
+      .map((value) => whatsappDestination(value ?? ''))
       .find((value) => value.length >= 10);
     const phone =
       fromProfile ||
