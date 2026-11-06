@@ -90,13 +90,33 @@ export function parseEvolutionWebhook(body: unknown): WebhookUpdate | null {
 }
 
 export function readQrBase64(payload: unknown): string | null {
-  if (!payload || typeof payload !== 'object') return null;
-  const record = payload as Record<string, unknown>;
-  if (typeof record.base64 === 'string' && record.base64.trim()) return record.base64;
-  const qr = record.qrcode;
-  if (qr && typeof qr === 'object') {
-    const nested = qr as Record<string, unknown>;
-    if (typeof nested.base64 === 'string' && nested.base64.trim()) return nested.base64;
+  return findQrString(payload, (key, value) => key.includes('base64') || value.startsWith('data:image'));
+}
+
+export function readQrCode(payload: unknown): string | null {
+  return findQrString(payload, (key, value) => key === 'code' && value.startsWith('2@'));
+}
+
+function findQrString(
+  payload: unknown,
+  match: (key: string, value: string) => boolean,
+): string | null {
+  const found = walkQr(payload, 0, match);
+  return found;
+}
+
+function walkQr(
+  value: unknown,
+  depth: number,
+  match: (key: string, value: string) => boolean,
+): string | null {
+  if (!value || typeof value !== 'object' || depth > 4) return null;
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof item === 'string' && item.trim().length > 20 && match(key.toLowerCase(), item.trim())) {
+      return item.trim();
+    }
+    const nested = walkQr(item, depth + 1, match);
+    if (nested) return nested;
   }
   return null;
 }

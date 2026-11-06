@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import QRCode from 'qrcode';
 import {
   Prisma,
   WhatsappConnectionStatus,
@@ -25,6 +26,7 @@ import {
   phoneFromJid,
   readConnectionState,
   readQrBase64,
+  readQrCode,
 } from './evolution.messages';
 
 const RETRY_MS = [20_000, 60_000, 180_000];
@@ -91,7 +93,7 @@ export class EvolutionService implements OnModuleInit {
     } catch (error) {
       if (!this.alreadyExists(error)) throw this.asHttp(error);
     }
-    const qr = readQrBase64(await this.api.connect(instanceName));
+    const qr = await this.waitForQr(instanceName);
     return {
       status: 'connecting',
       phoneNumber: null,
@@ -447,6 +449,19 @@ export class EvolutionService implements OnModuleInit {
         'A conexão de WhatsApp ainda não está disponível neste servidor.',
       );
     }
+  }
+
+  private async waitForQr(instanceName: string): Promise<string | null> {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const payload = await this.api.connect(instanceName);
+      const image = readQrBase64(payload);
+      if (image) return image;
+      const code = readQrCode(payload);
+      if (code) return QRCode.toDataURL(code);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    this.logger.warn(`Evolution não devolveu QR Code para ${instanceName}.`);
+    return null;
   }
 
   private notifyInstanceName(): string {
