@@ -127,7 +127,11 @@ export class OzapApiClient {
     const legacyMessages = `${base}/api/v1/${params.instanceId}/messages`;
 
     try {
-      await this.postJson(primary, apiKey, { to, message: params.text });
+      await this.postJson(primary, apiKey, {
+        to,
+        message: params.text,
+        linkPreview: false,
+      });
     } catch (error) {
       if (
         !(error instanceof OzapApiError) ||
@@ -136,7 +140,10 @@ export class OzapApiClient {
         throw error;
       }
       try {
-        await this.postJson(legacyChat, apiKey, { content: params.text });
+        await this.postJson(legacyChat, apiKey, {
+          content: params.text,
+          linkPreview: false,
+        });
       } catch (legacyError) {
         if (
           legacyError instanceof OzapApiError &&
@@ -145,6 +152,7 @@ export class OzapApiClient {
           await this.postJson(legacyMessages, apiKey, {
             to,
             content: params.text,
+            linkPreview: false,
           });
           return;
         }

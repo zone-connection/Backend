@@ -17,6 +17,7 @@ import {
   leadCrmPath,
   leadLoteCopy,
   leadPoolCopy,
+  DEFAULT_CRM_ORIGIN,
   pickPublicFrontendUrl,
   type LeadNotifySnapshot,
 } from './lead-notify.messages';
@@ -102,7 +103,7 @@ export class LeadNotifyService {
       text: formatLeadWhatsApp({
         titulo: copy.whatsappTitulo,
         lead: params.lead,
-        crmUrl: this.crmUrl(params.lead.id),
+        crmUrl: this.whatsappCrmUrl(params.lead.id),
         imobiliaria,
       }),
       email: params.skipEmail
@@ -139,7 +140,7 @@ export class LeadNotifyService {
       text: formatLeadWhatsApp({
         titulo: copy.whatsappTitulo,
         extra: copy.corpo,
-        crmUrl: this.crmUrl(params.leadId),
+        crmUrl: this.whatsappCrmUrl(params.leadId),
         imobiliaria,
       }),
       email: {
@@ -177,7 +178,7 @@ export class LeadNotifyService {
       text: formatLeadWhatsApp({
         titulo: copy.whatsappTitulo,
         extra: copy.corpo,
-        crmUrl: this.crmUrl(params.leadId),
+        crmUrl: this.whatsappCrmUrl(params.leadId),
         imobiliaria,
       }),
       email: {
@@ -219,7 +220,7 @@ export class LeadNotifyService {
         text: formatLeadWhatsApp({
           titulo: copy.whatsappTitulo,
           lead: params.lead,
-          crmUrl: this.crmUrl(params.lead.id),
+          crmUrl: this.whatsappCrmUrl(params.lead.id),
           imobiliaria,
         }),
         email: {
@@ -410,5 +411,13 @@ export class LeadNotifyService {
       this.config.get<string>('CRM_PUBLIC_URL'),
     );
     return `${base}${leadCrmPath(leadId)}`;
+  }
+
+  /**
+   * Link do WhatsApp. Não usa o domínio de uma imobiliária (ex.: openhausimob),
+   * porque o WhatsApp monta a prévia com a foto e o título desse site.
+   */
+  private whatsappCrmUrl(leadId?: string | null): string {
+    return `${DEFAULT_CRM_ORIGIN}${leadCrmPath(leadId)}`;
   }
 }

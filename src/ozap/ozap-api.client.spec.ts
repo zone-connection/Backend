@@ -37,7 +37,11 @@ describe('OzapApiClient.sendText', () => {
     );
     assert.equal(
       calls[0]!.init.body,
-      JSON.stringify({ to: '5511999998888', message: 'Novo lead' }),
+      JSON.stringify({
+        to: '5511999998888',
+        message: 'Novo lead',
+        linkPreview: false,
+      }),
     );
   });
 
