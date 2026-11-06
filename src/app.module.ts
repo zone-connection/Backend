@@ -53,6 +53,8 @@ import { CsrfGuard } from './common/guards/csrf.guard';
 import { validateEnv } from './config/env.validation';
 import { THROTTLE } from './config/security.constants';
 import { PrismaSchemaExceptionFilter } from './common/filters/prisma-schema.filter';
+import { IntegracoesModule } from './integracoes/integracoes.module';
+import { EvolutionModule } from './evolution/evolution.module';
 
 @Module({
   imports: [
@@ -77,6 +79,7 @@ import { PrismaSchemaExceptionFilter } from './common/filters/prisma-schema.filt
     DashboardModule,
     MetasModule,
     OzapModule,
+    EvolutionModule,
     MetaModule,
     OruloModule,
     GrupoZapModule,
@@ -90,6 +93,7 @@ import { PrismaSchemaExceptionFilter } from './common/filters/prisma-schema.filt
     OnboardingModule,
     SuporteModule,
     MelhoriasModule,
+    IntegracoesModule,
     PlatformFornecedorContratosModule,
     EquipesModule,
     AnaliseModule,

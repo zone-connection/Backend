@@ -176,6 +176,7 @@ export class LeadDistribuicaoAutoService
     const byId = new Map(online.map((c) => [c.id, c]));
     const counts = new Map(online.map((c) => [c.id, 0]));
     const firstLead = new Map<string, string>();
+    const leadIds = new Map<string, string[]>();
     let assigned = 0;
 
     for (const lead of pool) {
@@ -202,6 +203,9 @@ export class LeadDistribuicaoAutoService
       load.set(nextId, (load.get(nextId) ?? 0) + 1);
       counts.set(nextId, (counts.get(nextId) ?? 0) + 1);
       if (!firstLead.has(nextId)) firstLead.set(nextId, lead.id);
+      const ids = leadIds.get(nextId) ?? [];
+      ids.push(lead.id);
+      leadIds.set(nextId, ids);
       assigned += 1;
     }
 
@@ -212,6 +216,8 @@ export class LeadDistribuicaoAutoService
         userId: corretorId,
         quantidade,
         leadId: firstLead.get(corretorId) ?? null,
+        leadIds: leadIds.get(corretorId),
+        whatsappPessoal: true,
       });
     }
 

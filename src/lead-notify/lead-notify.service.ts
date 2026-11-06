@@ -24,6 +24,7 @@ import {
 } from './lead-notify.messages';
 import { isPhoneOwnedByAnotherTenant } from './lead-notify-phone';
 import { phonesOwnedByOtherTenants } from '../ozap/ozap-other-tenant';
+import { EvolutionService } from '../evolution/evolution.service';
 
 @Injectable()
 export class LeadNotifyService {
@@ -35,6 +36,7 @@ export class LeadNotifyService {
     private readonly ozapApi: OzapApiClient,
     private readonly mailer: MailerService,
     private readonly config: ConfigService,
+    private readonly evolution: EvolutionService,
   ) {}
 
   /** Lead recém-criado: avisa o corretor dono ou o pool (admin/gerente). */
@@ -62,6 +64,7 @@ export class LeadNotifyService {
           tenantId: params.tenantId,
           userId: params.lead.corretorId,
           lead: params.lead,
+          whatsappPessoal: true,
         });
         return;
       }
@@ -87,6 +90,8 @@ export class LeadNotifyService {
     lead: LeadNotifySnapshot;
     /** Roleta e saída de carteira avisam no sino/WhatsApp, sem e-mail. */
     skipEmail?: boolean;
+    /** Só a primeira entrega ao corretor. Transferência e roleta ficam de fora. */
+    whatsappPessoal?: boolean;
   }): Promise<void> {
     const copy = leadAtribuidoCopy(params.lead);
     await this.notificacoes.createLeadAtribuido({
@@ -96,6 +101,13 @@ export class LeadNotifyService {
       corpo: copy.corpo,
       eventoChave: `lead_atribuido:${params.lead.id}`,
     });
+    if (params.whatsappPessoal) {
+      void this.evolution.enqueueNewLead({
+        tenantId: params.tenantId,
+        userId: params.userId,
+        leadId: params.lead.id,
+      });
+    }
     this.queueOutbound({
       tenantId: params.tenantId,
       userId: params.userId,
@@ -116,9 +128,25 @@ export class LeadNotifyService {
     userId: string;
     quantidade: number;
     leadId?: string | null;
+    leadIds?: string[];
     actorUserId?: string | null;
+    whatsappPessoal?: boolean;
   }): Promise<void> {
     if (params.quantidade <= 0 || params.userId === params.actorUserId) return;
+    if (params.whatsappPessoal) {
+      const ids = params.leadIds?.length
+        ? params.leadIds
+        : params.leadId
+          ? [params.leadId]
+          : [];
+      for (const leadId of ids) {
+        void this.evolution.enqueueNewLead({
+          tenantId: params.tenantId,
+          userId: params.userId,
+          leadId,
+        });
+      }
+    }
     const copy = leadLoteCopy(params.quantidade);
     await this.notificacoes.createLeadAtribuido({
       userId: params.userId,

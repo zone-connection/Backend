@@ -188,6 +188,7 @@ model Tenant {
   users             User[]
   equipes           Equipe[]
   leads             Lead[]
+  integracaoChamadas IntegracaoChamada[]
   interessesEmpreendimento LeadEmpreendimentoInteresse[]
   construtoras      Construtora[]
   empreendimentos   Empreendimento[]
@@ -206,6 +207,8 @@ model Tenant {
   metaConnections   TenantMetaConnection[]
   metaOAuthPending  TenantMetaOAuthPending[]
   ozapConnections   TenantOzapConnection[]
+  whatsappConnections WhatsappConnection[]
+  whatsappNotifications WhatsappNotification[]
   whatsappUserTags  WhatsappUserTag[]
   oruloConnections  TenantOruloConnection[]
   grupoZapConnection TenantGrupoZapConnection?
@@ -513,6 +516,8 @@ model User {
 
   // Notificações in-app destinadas a este usuário.
   notificacoes Notificacao[] @relation("NotificacaoDestinatario")
+  whatsappConnection WhatsappConnection?
+  whatsappNotifications WhatsappNotification[]
 
   // Adiamentos de prazo de etapa registrados por este usuário.
   leadPrazoAdiamentos LeadPrazoAdiamento[] @relation("LeadPrazoAdiamentoAutor")
@@ -703,6 +708,7 @@ model Lead {
   // preservando o histórico do lead.
   corretor   User?   @relation("LeadCorretor", fields: [corretorId], references: [id], onDelete: SetNull)
   corretorId String?
+  whatsappNotifications WhatsappNotification[]
   /// Preenchido quando a fila rotativa já processou este lead.
   filaDistribuidoAt DateTime?
   /// Última entrega desta roleta (inicial ou por tempo esgotado).
@@ -805,6 +811,31 @@ model Lead {
   @@index([tenantId, origemAtrasoLiberacao])
   @@index([roletaPrazoAt])
   @@map("leads")
+}
+
+/// Pacote de chamada recebido de um agente de voz (idempotente por externalId).
+model IntegracaoChamada {
+  id               String    @id @default(uuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  externalId       String
+  leadId           String?
+  telefone         String    @default("")
+  funilId          String?
+  etapaSlug        String?
+  inicioEm         DateTime?
+  fimEm            DateTime?
+  resumo           String    @default("")
+  transcricao      String    @default("")
+  resultado        String    @default("")
+  imoveisOfertados String[]  @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, externalId])
+  @@index([tenantId, leadId])
+  @@map("integracao_chamadas")
 }
 
 /// Empreendimentos de interesse do contato. Remover da lista ativa não apaga o registro.
@@ -3580,6 +3611,8 @@ model FinanceiroTitulo {
   comissaoPapel   String?
   /// Classificação da despesa (só títulos a pagar): fixa ou variável.
   natureza        FinanceiroDespesaNatureza?
+  /// E-mail de cobrança atrasada já enviado para este título.
+  avisoAtrasoEnviadoEm DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3817,6 +3850,10 @@ model PlatformContrato {
   vencimento DateTime?
   status     PlatformContratoStatus @default(proposta)
   observacao String                 @default("")
+  /// E-mail de plano perto do vencimento já enviado para este contrato.
+  avisoVencimentoEnviadoEm DateTime?
+  /// E-mail de assinatura em atraso já enviado para este contrato.
+  avisoAtrasoEnviadoEm DateTime?
 
   parcelas PlatformContratoParcela[]
   titulos  FinanceiroTitulo[]
@@ -4691,4 +4728,61 @@ model MelhoriaHistorico {
 
   @@index([solicitacaoId, createdAt])
   @@map("melhoria_historicos")
+}
+
+enum WhatsappConnectionStatus {
+  disconnected
+  connecting
+  connected
+  error
+}
+
+enum WhatsappNotificationStatus {
+  pending
+  sent
+  failed
+  skipped
+}
+
+/// Sessão Baileys do corretor na Evolution API. Uma por usuário.
+model WhatsappConnection {
+  id                     String                   @id @default(uuid())
+  tenantId               String
+  tenant                 Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId                 String                   @unique
+  user                   User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instanceName           String                   @unique
+  phoneNumber            String?
+  connectionStatus       WhatsappConnectionStatus @default(disconnected)
+  notificationsEnabled   Boolean                  @default(true)
+  connectedAt            DateTime?
+  disconnectedAt         DateTime?
+  lastConnectionCheck    DateTime?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  @@index([tenantId])
+  @@map("whatsapp_connections")
+}
+
+/// Histórico de avisos de lead enviados pelo WhatsApp do próprio corretor.
+model WhatsappNotification {
+  id               String                     @id @default(uuid())
+  tenantId         String
+  tenant           Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leadId           String
+  lead             Lead                       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  notificationType String
+  status           WhatsappNotificationStatus @default(pending)
+  errorMessage     String?
+  attempts         Int                        @default(0)
+  sentAt           DateTime?
+  createdAt        DateTime                   @default(now())
+
+  @@unique([tenantId, userId, leadId, notificationType])
+  @@index([status, attempts])
+  @@index([tenantId, userId])
+  @@map("whatsapp_notifications")
 }
