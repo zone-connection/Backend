@@ -119,22 +119,39 @@ export class EvolutionApiClient {
 }
 
 function phoneFromInstances(payload: unknown, instanceName: string): string | null {
-  const rows = Array.isArray(payload) ? payload : [];
-  for (const row of rows) {
-    if (!row || typeof row !== 'object') continue;
-    const record = row as Record<string, unknown>;
-    const instance =
-      record.instance && typeof record.instance === 'object'
-        ? (record.instance as Record<string, unknown>)
-        : record;
-    const name = typeof instance.instanceName === 'string' ? instance.instanceName : '';
+  const rows = instanceRows(payload);
+  for (const instance of rows) {
+    const name = stringField(instance, ['instanceName', 'name']);
     if (name !== instanceName) continue;
-    const owner = instance.owner ?? instance.wuid ?? instance.number;
-    if (typeof owner !== 'string') return null;
+    const owner = stringField(instance, ['ownerJid', 'owner', 'wuid', 'number']);
+    if (!owner) return null;
     const digits = owner.split('@')[0]?.replace(/\D/g, '') ?? '';
     return digits.length >= 10 ? digits : null;
   }
   return null;
+}
+
+function instanceRows(payload: unknown): Record<string, unknown>[] {
+  const list = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object' && Array.isArray((payload as { instances?: unknown }).instances)
+      ? (payload as { instances: unknown[] }).instances
+      : [];
+  return list.flatMap((row) => {
+    if (!row || typeof row !== 'object') return [];
+    const record = row as Record<string, unknown>;
+    const nested = record.instance;
+    if (nested && typeof nested === 'object') return [nested as Record<string, unknown>];
+    return [record];
+  });
+}
+
+function stringField(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return '';
 }
 
 function safeJson(text: string): unknown {

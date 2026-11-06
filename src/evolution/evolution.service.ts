@@ -273,6 +273,9 @@ export class EvolutionService implements OnModuleInit {
       where: { userId: row.userId },
     });
     if (!connection || connection.tenantId !== row.tenantId) {
+      this.logger.warn(
+        `WhatsApp pessoal ignorado user=${row.userId}: esse corretor não conectou o WhatsApp.`,
+      );
       await this.finish(row.id, WhatsappNotificationStatus.skipped, 'WhatsApp não conectado.');
       return;
     }
@@ -335,7 +338,12 @@ export class EvolutionService implements OnModuleInit {
     if (connection.phoneNumber) return connection.phoneNumber;
     try {
       const phone = await this.api.ownerPhone(connection.instanceName);
-      if (!phone) return null;
+      if (!phone) {
+        this.logger.warn(
+          `Número da instância ${connection.instanceName} não veio no fetchInstances.`,
+        );
+        return null;
+      }
       await this.prisma.whatsappConnection.update({
         where: { id: connection.id },
         data: { phoneNumber: phone },
