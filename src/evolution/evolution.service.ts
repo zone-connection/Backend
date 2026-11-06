@@ -84,6 +84,8 @@ export class EvolutionService implements OnModuleInit {
     this.assertTenantUser(user);
     this.assertConfigured();
     const instanceName = this.notifyInstanceName();
+    await this.api.logout(instanceName).catch(() => undefined);
+    await this.api.deleteInstance(instanceName).catch(() => undefined);
     try {
       await this.api.createInstance(instanceName, this.webhookUrl());
     } catch (error) {
