@@ -785,6 +785,7 @@ export class LeadsService {
             nome: corretor.name,
             quantidade: slice.length,
             primeiroLeadId: slice[0]?.id ?? null,
+            leadIds: slice.map((lead) => lead.id),
           });
         }
       });
@@ -795,7 +796,7 @@ export class LeadsService {
         ok: true,
         total: totalPedido,
         porCorretor: null,
-        distribuicao: resultado.map(({ primeiroLeadId: _id, ...rest }) => rest),
+        distribuicao: resultado.map(({ primeiroLeadId: _id, leadIds: _ids, ...rest }) => rest),
       };
     }
 
@@ -830,6 +831,7 @@ export class LeadsService {
 
     const counts = new Map(corretores.map((c) => [c.id, 0]));
     const firstLead = new Map<string, string>();
+    const leadIdsPorCorretor = new Map<string, string[]>();
     const assignments: Array<{
       leadId: string;
       corretorId: string;
@@ -850,6 +852,9 @@ export class LeadsService {
       });
       counts.set(corretor.id, (counts.get(corretor.id) ?? 0) + 1);
       if (!firstLead.has(corretor.id)) firstLead.set(corretor.id, lead.id);
+      const ids = leadIdsPorCorretor.get(corretor.id) ?? [];
+      ids.push(lead.id);
+      leadIdsPorCorretor.set(corretor.id, ids);
     });
 
     const leadAntes = new Map(leads.map((lead) => [lead.id, lead]));
@@ -896,6 +901,7 @@ export class LeadsService {
         corretorId: c.id,
         quantidade: counts.get(c.id) ?? 0,
         primeiroLeadId: firstLead.get(c.id) ?? null,
+        leadIds: leadIdsPorCorretor.get(c.id) ?? [],
       })),
     );
 
@@ -2811,6 +2817,7 @@ export class LeadsService {
       corretorId: string;
       quantidade: number;
       primeiroLeadId: string | null;
+      leadIds?: string[];
     }>,
   ) {
     for (const item of items) {
@@ -2819,6 +2826,7 @@ export class LeadsService {
         userId: item.corretorId,
         quantidade: item.quantidade,
         leadId: item.primeiroLeadId,
+        leadIds: item.leadIds,
         actorUserId,
       });
     }

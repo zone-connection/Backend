@@ -61,7 +61,13 @@ export class EvolutionApiClient {
     await this.request('POST', `/message/sendText/${encodeURIComponent(instanceName)}`, {
       number,
       text,
+      linkPreview: false,
     });
+  }
+
+  async ownerPhone(instanceName: string): Promise<string | null> {
+    const payload = await this.request('GET', '/instance/fetchInstances');
+    return phoneFromInstances(payload, instanceName);
   }
 
   private baseUrl(): string {
@@ -110,6 +116,25 @@ export class EvolutionApiClient {
     }
     return parsed;
   }
+}
+
+function phoneFromInstances(payload: unknown, instanceName: string): string | null {
+  const rows = Array.isArray(payload) ? payload : [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const record = row as Record<string, unknown>;
+    const instance =
+      record.instance && typeof record.instance === 'object'
+        ? (record.instance as Record<string, unknown>)
+        : record;
+    const name = typeof instance.instanceName === 'string' ? instance.instanceName : '';
+    if (name !== instanceName) continue;
+    const owner = instance.owner ?? instance.wuid ?? instance.number;
+    if (typeof owner !== 'string') return null;
+    const digits = owner.split('@')[0]?.replace(/\D/g, '') ?? '';
+    return digits.length >= 10 ? digits : null;
+  }
+  return null;
 }
 
 function safeJson(text: string): unknown {

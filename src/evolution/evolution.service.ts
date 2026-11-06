@@ -280,15 +280,20 @@ export class EvolutionService implements OnModuleInit {
       await this.finish(row.id, WhatsappNotificationStatus.skipped, 'Avisos desativados.');
       return;
     }
-    if (connection.connectionStatus !== WhatsappConnectionStatus.connected || !connection.phoneNumber) {
+    if (connection.connectionStatus !== WhatsappConnectionStatus.connected) {
       await this.retryOrStop(row.id, row.attempts, 'WhatsApp não conectado.');
+      return;
+    }
+    const phone = await this.ensurePhone(connection);
+    if (!phone) {
+      await this.retryOrStop(row.id, row.attempts, 'Número do WhatsApp conectado não identificado.');
       return;
     }
     const attempt = row.attempts + 1;
     try {
       await this.api.sendText(
         connection.instanceName,
-        connection.phoneNumber,
+        phone,
         leadWhatsappMessage({
           nomeCorretor: row.user.name,
           nomeLead: row.lead.nome,
@@ -320,6 +325,30 @@ export class EvolutionService implements OnModuleInit {
       take: 100,
     });
     for (const row of rows) void this.deliver(row.id);
+  }
+
+  private async ensurePhone(connection: {
+    id: string;
+    instanceName: string;
+    phoneNumber: string | null;
+  }): Promise<string | null> {
+    if (connection.phoneNumber) return connection.phoneNumber;
+    try {
+      const phone = await this.api.ownerPhone(connection.instanceName);
+      if (!phone) return null;
+      await this.prisma.whatsappConnection.update({
+        where: { id: connection.id },
+        data: { phoneNumber: phone },
+      });
+      return phone;
+    } catch (error) {
+      this.logger.warn(
+        `Número da instância ${connection.instanceName} não lido: ${
+          error instanceof Error ? error.message : 'erro'
+        }`,
+      );
+      return null;
+    }
   }
 
   private async retryOrStop(id: string, attempts: number, message: string) {
