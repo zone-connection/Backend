@@ -706,6 +706,7 @@ export class LeadsService {
         nome: string;
         quantidade: number;
         primeiroLeadId: string | null;
+        leadIds: string[];
       }> = [];
       const byId = new Map(corretores.map((c) => [c.id, c]));
 
