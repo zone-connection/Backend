@@ -68,6 +68,18 @@ export class EvolutionService implements OnModuleInit {
     return this.toPublic(row, this.qrByUser.get(user.id) ?? null);
   }
 
+  async senderStatus(): Promise<PublicConnection> {
+    const instanceName = this.notifyInstanceName();
+    if (!this.api.configured()) return { ...this.empty(), status: 'disconnected' };
+    try {
+      const state = readConnectionState(await this.api.connectionState(instanceName));
+      const status = state ? mapEvolutionState(state) : 'disconnected';
+      return { ...this.empty(), status };
+    } catch {
+      return { ...this.empty(), status: 'disconnected' };
+    }
+  }
+
   async connectSender(user: AuthenticatedUser): Promise<PublicConnection> {
     this.assertTenantUser(user);
     this.assertConfigured();
