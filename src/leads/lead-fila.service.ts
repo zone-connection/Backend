@@ -414,7 +414,6 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         tenantId: params.tenantId,
         userId: result.userId,
         lead: result.lead,
-        whatsappPessoal: true,
       });
     }
     return { assigned: result.assigned, userId: result.userId, motivo: result.motivo };
@@ -767,7 +766,6 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
             tenantId: config.tenantId,
             userId: result.userId,
             lead: result.lead,
-            skipEmail: true,
           });
         }
       }

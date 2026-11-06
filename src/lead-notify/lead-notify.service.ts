@@ -64,7 +64,6 @@ export class LeadNotifyService {
           tenantId: params.tenantId,
           userId: params.lead.corretorId,
           lead: params.lead,
-          whatsappPessoal: true,
         });
         return;
       }
@@ -88,10 +87,8 @@ export class LeadNotifyService {
     tenantId: string;
     userId: string;
     lead: LeadNotifySnapshot;
-    /** Roleta e saída de carteira avisam no sino/WhatsApp, sem e-mail. */
+    /** Quando verdadeiro, o e-mail fica de fora. Atribuição sempre envia. */
     skipEmail?: boolean;
-    /** Só a primeira entrega ao corretor. Transferência e roleta ficam de fora. */
-    whatsappPessoal?: boolean;
   }): Promise<void> {
     const copy = leadAtribuidoCopy(params.lead);
     await this.notificacoes.createLeadAtribuido({
@@ -99,15 +96,13 @@ export class LeadNotifyService {
       leadId: params.lead.id,
       titulo: copy.titulo,
       corpo: copy.corpo,
-      eventoChave: `lead_atribuido:${params.lead.id}`,
+      eventoChave: `lead_atribuido:${params.lead.id}:${params.userId}:${Date.now()}`,
     });
-    if (params.whatsappPessoal) {
-      void this.evolution.enqueueNewLead({
-        tenantId: params.tenantId,
-        userId: params.userId,
-        leadId: params.lead.id,
-      });
-    }
+    void this.evolution.enqueueNewLead({
+      tenantId: params.tenantId,
+      userId: params.userId,
+      leadId: params.lead.id,
+    });
     this.queueOutbound({
       tenantId: params.tenantId,
       userId: params.userId,
@@ -130,22 +125,19 @@ export class LeadNotifyService {
     leadId?: string | null;
     leadIds?: string[];
     actorUserId?: string | null;
-    whatsappPessoal?: boolean;
   }): Promise<void> {
     if (params.quantidade <= 0 || params.userId === params.actorUserId) return;
-    if (params.whatsappPessoal) {
-      const ids = params.leadIds?.length
-        ? params.leadIds
-        : params.leadId
-          ? [params.leadId]
-          : [];
-      for (const leadId of ids) {
-        void this.evolution.enqueueNewLead({
-          tenantId: params.tenantId,
-          userId: params.userId,
-          leadId,
-        });
-      }
+    const ids = params.leadIds?.length
+      ? params.leadIds
+      : params.leadId
+        ? [params.leadId]
+        : [];
+    for (const leadId of ids) {
+      void this.evolution.enqueueNewLead({
+        tenantId: params.tenantId,
+        userId: params.userId,
+        leadId,
+      });
     }
     const copy = leadLoteCopy(params.quantidade);
     await this.notificacoes.createLeadAtribuido({
@@ -153,7 +145,7 @@ export class LeadNotifyService {
       leadId: params.leadId ?? null,
       titulo: copy.titulo,
       corpo: copy.corpo,
-      eventoChave: `lead_atribuido_lote:${params.userId}:${params.leadId ?? 'lote'}:${params.quantidade}`,
+      eventoChave: `lead_atribuido_lote:${params.userId}:${params.leadId ?? 'lote'}:${params.quantidade}:${Date.now()}`,
     });
     this.queueOutbound({
       tenantId: params.tenantId,

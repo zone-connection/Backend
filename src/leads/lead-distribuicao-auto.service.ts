@@ -217,7 +217,6 @@ export class LeadDistribuicaoAutoService
         quantidade,
         leadId: firstLead.get(corretorId) ?? null,
         leadIds: leadIds.get(corretorId),
-        whatsappPessoal: true,
       });
     }
 

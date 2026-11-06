@@ -1616,8 +1616,6 @@ export class LeadsService {
         tenantId,
         userId: assignment.corretorId,
         lead: this.notifySnapshot(updated),
-        skipEmail: Boolean(previousCorretorId),
-        whatsappPessoal: !previousCorretorId,
       });
     }
     return this.decorateOne(updated, requester);

@@ -4781,7 +4781,7 @@ model WhatsappNotification {
   sentAt           DateTime?
   createdAt        DateTime                   @default(now())
 
-  @@unique([tenantId, userId, leadId, notificationType])
+  @@index([tenantId, userId, leadId])
   @@index([status, attempts])
   @@index([tenantId, userId])
   @@map("whatsapp_notifications")
