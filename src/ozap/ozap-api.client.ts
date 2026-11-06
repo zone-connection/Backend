@@ -592,7 +592,7 @@ export class OzapApiClient {
   private async postJson(
     url: string,
     apiKey: string,
-    body: Record<string, string>,
+    body: Record<string, string | boolean>,
   ): Promise<void> {
     let response: Response;
     try {
