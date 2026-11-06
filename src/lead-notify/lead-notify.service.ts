@@ -14,6 +14,7 @@ import {
   formatLeadEmailHtml,
   formatLeadWhatsApp,
   leadAtribuidoCopy,
+  leadChegouWhatsApp,
   leadCrmPath,
   leadLoteCopy,
   leadPoolCopy,
@@ -88,7 +89,6 @@ export class LeadNotifyService {
     skipEmail?: boolean;
   }): Promise<void> {
     const copy = leadAtribuidoCopy(params.lead);
-    const imobiliaria = await this.tenantName(params.tenantId);
     await this.notificacoes.createLeadAtribuido({
       userId: params.userId,
       leadId: params.lead.id,
@@ -100,12 +100,7 @@ export class LeadNotifyService {
       tenantId: params.tenantId,
       userId: params.userId,
       subject: copy.titulo,
-      text: formatLeadWhatsApp({
-        titulo: copy.whatsappTitulo,
-        lead: params.lead,
-        crmUrl: this.whatsappCrmUrl(params.lead.id),
-        imobiliaria,
-      }),
+      text: leadChegouWhatsApp(1),
       email: params.skipEmail
         ? null
         : {
@@ -125,7 +120,6 @@ export class LeadNotifyService {
   }): Promise<void> {
     if (params.quantidade <= 0 || params.userId === params.actorUserId) return;
     const copy = leadLoteCopy(params.quantidade);
-    const imobiliaria = await this.tenantName(params.tenantId);
     await this.notificacoes.createLeadAtribuido({
       userId: params.userId,
       leadId: params.leadId ?? null,
@@ -137,12 +131,7 @@ export class LeadNotifyService {
       tenantId: params.tenantId,
       userId: params.userId,
       subject: copy.titulo,
-      text: formatLeadWhatsApp({
-        titulo: copy.whatsappTitulo,
-        extra: copy.corpo,
-        crmUrl: this.whatsappCrmUrl(params.leadId),
-        imobiliaria,
-      }),
+      text: leadChegouWhatsApp(params.quantidade),
       email: {
         titulo: copy.whatsappTitulo,
         extra: copy.corpo,
@@ -275,26 +264,32 @@ export class LeadNotifyService {
     ]);
   }
 
+  /** Instância da plataforma. O aviso não usa a conexão OZap do tenant. */
+  private platformInstanceId(): number | null {
+    const raw = this.config.get<string>('OZAP_INSTANCE_ID')?.trim();
+    if (!raw) return null;
+    const instanceId = Number(raw);
+    return Number.isInteger(instanceId) && instanceId > 0 ? instanceId : null;
+  }
+
   private async tryWhatsApp(params: {
     tenantId: string;
     userId: string;
     text: string;
   }): Promise<boolean> {
-    const [connection, user] = await Promise.all([
-      this.prisma.tenantOzapConnection.findFirst({
-        where: { tenantId: params.tenantId, ativo: true },
-        select: { instanceId: true, ozapApiKey: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.prisma.user.findFirst({
-        where: { id: params.userId, tenantId: params.tenantId },
-        select: { whatsapp: true, phone: true },
-      }),
-    ]);
+    const instanceId = this.platformInstanceId();
+    const apiKey = this.ozapApi.apiKey();
+    if (!instanceId || !apiKey) {
+      this.logger.warn(
+        'WhatsApp de lead não enviado: OZAP_INSTANCE_ID ou OZAP_API_KEY ausente no servidor.',
+      );
+      return false;
+    }
 
-    if (!connection) return false;
-    const apiKey = this.ozapApi.keyFromStored(connection.ozapApiKey);
-    if (!apiKey) return false;
+    const user = await this.prisma.user.findFirst({
+      where: { id: params.userId, tenantId: params.tenantId },
+      select: { whatsapp: true, phone: true },
+    });
     const to = user?.whatsapp?.trim() || user?.phone?.trim() || '';
     if (!to) return false;
     if (await this.phoneBelongsToAnotherTenant(params.tenantId, to)) {
@@ -306,7 +301,7 @@ export class LeadNotifyService {
 
     try {
       await this.ozapApi.sendText({
-        instanceId: connection.instanceId,
+        instanceId,
         to,
         text: params.text,
         apiKey,

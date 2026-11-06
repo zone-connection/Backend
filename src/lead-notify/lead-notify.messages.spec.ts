@@ -4,6 +4,7 @@ import {
   formatLeadEmailHtml,
   formatLeadWhatsApp,
   leadAtribuidoCopy,
+  leadChegouWhatsApp,
   leadCrmPath,
   isCrmWhatsappLeadNotifyText,
   leadLoteCopy,
@@ -71,6 +72,12 @@ describe('lead-notify messages', () => {
     assert.match(html, /Imobiliária Campinas/);
     assert.doesNotMatch(html, /Telefone/);
     assert.doesNotMatch(html, /99999-8888/);
+  });
+
+  it('avisa no WhatsApp só que o lead chegou', () => {
+    assert.equal(leadChegouWhatsApp(1), 'Um lead chegou para você.');
+    assert.equal(leadChegouWhatsApp(4), 'Leads chegaram para você.');
+    assert.equal(isCrmWhatsappLeadNotifyText(leadChegouWhatsApp(1)), true);
   });
 
   it('agrupa distribuição', () => {

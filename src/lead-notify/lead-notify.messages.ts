@@ -103,6 +103,8 @@ export function isCrmWhatsappLeadNotifyText(
     /voce recebeu\s+\d+\s+leads? novos?/.test(t) ||
     /novo lead no pool/.test(t) ||
     /novo lead atribuido/.test(t) ||
+    /um lead chegou para voce/.test(t) ||
+    /leads chegaram para voce/.test(t) ||
     /\d+\s+leads? no pool da equipe/.test(t) ||
     /funil\?lead=/.test(t)
   );
@@ -173,6 +175,13 @@ export function formatLeadEmailHtml(params: {
   </table>
 </body>
 </html>`;
+}
+
+/** Texto único do WhatsApp do corretor: sem dados do lead. */
+export function leadChegouWhatsApp(quantidade = 1): string {
+  return quantidade > 1
+    ? 'Leads chegaram para você.'
+    : 'Um lead chegou para você.';
 }
 
 export function leadAtribuidoCopy(lead: LeadNotifySnapshot) {
