@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, VendaUsadoStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListarPropertiesApiDto } from './dto/listar-properties-api.dto';
@@ -63,6 +63,64 @@ function respostaPublica(row: VendaRow) {
   };
 }
 
+const detalheImovel = {
+  ...imovelPublico,
+  suites: true,
+  comodidadesUnidade: true,
+  comodidadesCondominio: true,
+} satisfies Prisma.ImovelSelect;
+
+function detalheSelect(tenantId: string) {
+  return {
+    id: true,
+    status: true,
+    precoVenda: true,
+    updatedAt: true,
+    imovel: {
+      select: {
+        ...detalheImovel,
+        fotos: {
+          where: { tenantId },
+          orderBy: { sortOrder: 'asc' as const },
+          select: { url: true },
+        },
+      },
+    },
+  } satisfies Prisma.VendaUsadoSelect;
+}
+
+type DetalheRow = Prisma.VendaUsadoGetPayload<{ select: ReturnType<typeof detalheSelect> }>;
+
+function galeria(capa: string | null, fotos: { url: string }[]) {
+  const vistas = new Set<string>();
+  if (capa) vistas.add(capa);
+  const images: string[] = [];
+  for (const foto of fotos) {
+    const url = foto.url.trim();
+    if (!url || vistas.has(url)) continue;
+    vistas.add(url);
+    images.push(url);
+  }
+  return images;
+}
+
+function respostaDetalhe(row: DetalheRow) {
+  const ficha = respostaPublica(row);
+  const imovel = row.imovel;
+  return {
+    ...ficha,
+    features: {
+      ...ficha.features,
+      suites: imovel.suites,
+      amenities: {
+        unit: imovel.comodidadesUnidade,
+        building: imovel.comodidadesCondominio,
+      },
+    },
+    images: galeria(ficha.coverImage, imovel.fotos),
+  };
+}
+
 @Injectable()
 export class ApiPropertiesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -99,6 +157,20 @@ export class ApiPropertiesService {
         totalPages: total === 0 ? 0 : Math.ceil(total / limit),
       },
     };
+  }
+
+  async detalhe(tenantId: string, id: string) {
+    const row = await this.prisma.vendaUsado.findFirst({
+      where: {
+        id,
+        tenantId,
+        status: VendaUsadoStatus.disponivel,
+        imovel: { tenantId },
+      },
+      select: detalheSelect(tenantId),
+    });
+    if (!row?.imovel) throw new NotFoundException('Imóvel não encontrado.');
+    return respostaDetalhe(row);
   }
 }
 

@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { Public } from '../common/decorators/public.decorator';
 import { ApiAccessGuard } from './api-access.guard';
 import { ApiAuditInterceptor } from './api-audit.interceptor';
@@ -21,5 +21,14 @@ export class ApiPropertiesController {
     @Query() query: ListarPropertiesApiDto,
   ) {
     return this.properties.listar(api.tenantId, query);
+  }
+
+  @Get(':id')
+  @ApiScopes('properties:read')
+  detalhe(
+    @ApiTenant() api: ApiRequestContext,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ) {
+    return this.properties.detalhe(api.tenantId, id);
   }
 }

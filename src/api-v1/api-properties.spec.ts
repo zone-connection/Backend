@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { Prisma } from '@prisma/client';
@@ -24,6 +24,10 @@ type Imovel = {
   area: Prisma.Decimal | null;
   areaConstruida: Prisma.Decimal | null;
   fotoUrl: string | null;
+  suites?: number | null;
+  comodidadesUnidade?: string[];
+  comodidadesCondominio?: string[];
+  fotos?: { url: string; publicId?: string; sortOrder: number }[];
   logradouro?: string;
   proprietario?: string;
   fotoPublicId?: string;
@@ -56,6 +60,13 @@ function imovel(partial: Partial<Imovel> = {}): Imovel {
     area: money('90.00'),
     areaConstruida: money('85.50'),
     fotoUrl: 'https://cdn.exemplo.com/capa.jpg',
+    suites: 1,
+    comodidadesUnidade: ['varanda'],
+    comodidadesCondominio: ['piscina'],
+    fotos: [
+      { url: 'https://cdn.exemplo.com/capa.jpg', publicId: 'capa', sortOrder: 0 },
+      { url: 'https://cdn.exemplo.com/sala.jpg', publicId: 'sala', sortOrder: 1 },
+    ],
     logradouro: 'Av. Boa Viagem',
     proprietario: 'Dono',
     fotoPublicId: 'secret',
@@ -78,6 +89,7 @@ function contem(valor: string, termo: string) {
 }
 
 function casa(where: Record<string, unknown>, item: Row) {
+  if (where.id && item.id !== where.id) return false;
   if (where.tenantId && item.tenantId !== where.tenantId) return false;
   if (where.status && item.status !== where.status) return false;
   const imovelWhere = where.imovel as Record<string, unknown> | undefined;
@@ -105,7 +117,7 @@ function casa(where: Record<string, unknown>, item: Row) {
 }
 
 function banco(rows: Row[]) {
-  const chamadas = { findMany: 0, count: 0, fotos: 0, imovel: 0 };
+  const chamadas = { findMany: 0, findFirst: 0, count: 0, fotos: 0, imovel: 0 };
   let ultimo: { where?: Record<string, unknown>; orderBy?: unknown; skip?: number; take?: number; select?: unknown } = {};
   let whereCount: Record<string, unknown> | undefined;
   const prisma = {
@@ -117,6 +129,41 @@ function banco(rows: Row[]) {
         chamadas.count += 1;
         whereCount = where;
         return rows.filter((item) => casa(where, item)).length;
+      },
+      findFirst: async (args: { where: Record<string, unknown>; select?: unknown }) => {
+        chamadas.findFirst += 1;
+        const select = JSON.stringify(args.select ?? {});
+        if (select.includes('publicId') || select.includes('proprietario') || select.includes('logradouro') || select.includes('cep')) {
+          throw new Error('select expôs campo interno');
+        }
+        const item = rows.find((row) => casa(args.where, row));
+        if (!item?.imovel) return null;
+        return {
+          id: item.id,
+          status: item.status,
+          precoVenda: item.precoVenda,
+          updatedAt: item.updatedAt,
+          imovel: {
+            tipo: item.imovel.tipo,
+            descricao: item.imovel.descricao,
+            cidade: item.imovel.cidade,
+            estado: item.imovel.estado,
+            bairro: item.imovel.bairro,
+            quartos: item.imovel.quartos,
+            banheiros: item.imovel.banheiros,
+            vagas: item.imovel.vagas,
+            area: item.imovel.area,
+            areaConstruida: item.imovel.areaConstruida,
+            fotoUrl: item.imovel.fotoUrl,
+            suites: item.imovel.suites ?? null,
+            comodidadesUnidade: item.imovel.comodidadesUnidade ?? [],
+            comodidadesCondominio: item.imovel.comodidadesCondominio ?? [],
+            fotos: (item.imovel.fotos ?? [])
+              .slice()
+              .sort((a, b) => a.sortOrder - b.sortOrder)
+              .map((foto) => ({ url: foto.url })),
+          },
+        };
       },
       findMany: async (args: typeof ultimo) => {
         chamadas.findMany += 1;
@@ -348,5 +395,81 @@ describe('GET /api/v1/properties', () => {
       { getAllAndOverride: () => ['properties:read'] } as never,
     );
     await assert.rejects(() => invalido.canActivate(contexto as never), UnauthorizedException);
+  });
+});
+
+describe('GET /api/v1/properties/:id', () => {
+  const vendaId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const outro = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const estoque = [
+    row({
+      id: vendaId,
+      tenantId: A,
+      imovel: imovel({
+        fotos: [
+          { url: 'https://cdn.exemplo.com/sala.jpg', publicId: 'sala', sortOrder: 1 },
+          { url: 'https://cdn.exemplo.com/capa.jpg', publicId: 'capa', sortOrder: 0 },
+        ],
+      }),
+    }),
+    row({ id: outro, tenantId: B }),
+    row({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', tenantId: A, status: 'reservado' }),
+    row({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', tenantId: A, status: 'vendido' }),
+    row({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', tenantId: A, status: 'indisponivel' }),
+    row({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', tenantId: A, imovel: null }),
+    row({
+      id: '99999999-9999-4999-8999-999999999999',
+      tenantId: A,
+      imovel: imovel({ tenantId: B }),
+    }),
+    row({
+      id: '88888888-8888-4888-8888-888888888888',
+      tenantId: A,
+      imovel: imovel({ fotoUrl: null, fotos: [] }),
+    }),
+  ];
+
+  it('devolve a ficha, a capa e a galeria sem repetir a capa nem dados internos', async () => {
+    const db = banco(estoque);
+    const service = new ApiPropertiesService(db as never);
+    const item = await service.detalhe(A, vendaId);
+    assert.equal(item.id, vendaId);
+    assert.equal(item.sourceType, 'venda_usado');
+    assert.equal(item.purpose, 'venda');
+    assert.equal(item.availability, 'disponivel');
+    assert.equal(item.price, '350000.00');
+    assert.equal(item.coverImage, 'https://cdn.exemplo.com/capa.jpg');
+    assert.deepEqual(item.images, ['https://cdn.exemplo.com/sala.jpg']);
+    assert.equal(item.features.suites, 1);
+    assert.deepEqual(item.features.amenities.unit, ['varanda']);
+    assert.equal(db.chamadas.findFirst, 1);
+    const cru = JSON.stringify(item);
+    for (const proibido of ['tenantId', 'publicId', 'logradouro', 'proprietario', 'cpf', 'telefone', 'email', 'cep', 'complemento']) {
+      assert.equal(cru.toLowerCase().includes(proibido), false, proibido);
+    }
+  });
+
+  it('responde 404 para inexistente, outro tenant, status fechado, sem imóvel ou imóvel de outro tenant', async () => {
+    const service = new ApiPropertiesService(banco(estoque) as never);
+    const ids = [
+      '00000000-0000-4000-8000-000000000099',
+      outro,
+      'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      '99999999-9999-4999-8999-999999999999',
+    ];
+    for (const id of ids) {
+      await assert.rejects(() => service.detalhe(A, id), NotFoundException);
+    }
+    await assert.rejects(() => service.detalhe(B, vendaId), NotFoundException);
+  });
+
+  it('imóvel sem foto devolve capa nula e galeria vazia', async () => {
+    const service = new ApiPropertiesService(banco(estoque) as never);
+    const item = await service.detalhe(A, '88888888-8888-4888-8888-888888888888');
+    assert.equal(item.coverImage, null);
+    assert.deepEqual(item.images, []);
   });
 });
