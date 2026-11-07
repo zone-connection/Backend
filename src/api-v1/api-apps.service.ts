@@ -22,6 +22,59 @@ import { generateClientId, generateClientSecret } from './api-token';
 export class ApiAppsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  listar() {
+    return this.prisma.apiAplicacao.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        nome: true,
+        descricao: true,
+        status: true,
+        clientId: true,
+        createdAt: true,
+        autorizacoes: {
+          select: {
+            id: true,
+            tenantId: true,
+            scopes: true,
+            status: true,
+            tenant: { select: { name: true, slug: true } },
+          },
+        },
+        webhooks: {
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            url: true,
+            eventos: true,
+            ativo: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+  }
+
+  async tenantAtivo(aplicacaoId: string) {
+    const app = await this.prisma.apiAplicacao.findUnique({
+      where: { id: aplicacaoId },
+      select: {
+        id: true,
+        autorizacoes: {
+          where: { status: ApiAutorizacaoStatus.ativa },
+          select: { tenantId: true },
+          take: 1,
+        },
+      },
+    });
+    if (!app) throw new NotFoundException('Aplicação não encontrada.');
+    const tenantId = app.autorizacoes[0]?.tenantId;
+    if (!tenantId) {
+      throw new BadRequestException('Aplicação sem imobiliária ativa.');
+    }
+    return { aplicacaoId: app.id, tenantId };
+  }
+
   async criar(input: {
     nome: string;
     descricao?: string;

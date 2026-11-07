@@ -1,9 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
+  Get,
+  NotFoundException,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -11,8 +15,10 @@ import { Role } from '@prisma/client';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   MaxLength,
   MinLength,
@@ -22,6 +28,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ApiAppsService } from './api-apps.service';
+import { WebhookDestinosService } from './webhooks/webhooks.service';
 
 class CriarAplicacaoDto {
   @IsString()
@@ -43,6 +50,30 @@ class CriarAplicacaoDto {
   scopes!: string[];
 }
 
+class CriarWebhookAdminDto {
+  @IsUrl({ require_protocol: true, protocols: ['https', 'http'] })
+  url!: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  events!: string[];
+}
+
+class AtualizarWebhookAdminDto {
+  @IsOptional()
+  @IsUrl({ require_protocol: true, protocols: ['https', 'http'] })
+  url?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  events?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
+
 class ConcederDto {
   @IsUUID()
   tenantId!: string;
@@ -57,7 +88,16 @@ class ConcederDto {
 @UseGuards(RolesGuard)
 @Roles(Role.super_admin)
 export class ApiAppsController {
-  constructor(private readonly apps: ApiAppsService) {}
+  constructor(
+    private readonly apps: ApiAppsService,
+    private readonly webhooks: WebhookDestinosService,
+  ) {}
+
+  @Get()
+  listar(@CurrentUser() user: AuthenticatedUser) {
+    this.onlySuperAdmin(user);
+    return this.apps.listar();
+  }
 
   @Post()
   criar(
@@ -66,6 +106,64 @@ export class ApiAppsController {
   ) {
     this.onlySuperAdmin(user);
     return this.apps.criar(body);
+  }
+
+  @Get(':id/webhooks')
+  listarWebhooks(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    this.onlySuperAdmin(user);
+    return this.apps.listar().then((apps) => {
+      const app = apps.find((item) => item.id === id);
+      if (!app) throw new NotFoundException('Aplicação não encontrada.');
+      return app.webhooks;
+    });
+  }
+
+  @Post(':id/webhooks')
+  async criarWebhook(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: CriarWebhookAdminDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    this.onlySuperAdmin(user);
+    const alvo = await this.apps.tenantAtivo(id);
+    return this.webhooks.criar(alvo.tenantId, alvo.aplicacaoId, body.url, body.events);
+  }
+
+  @Patch(':id/webhooks/:webhookId')
+  async atualizarWebhook(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('webhookId', ParseUUIDPipe) webhookId: string,
+    @Body() body: AtualizarWebhookAdminDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    this.onlySuperAdmin(user);
+    const alvo = await this.apps.tenantAtivo(id);
+    return this.webhooks.atualizar(alvo.tenantId, alvo.aplicacaoId, webhookId, body);
+  }
+
+  @Delete(':id/webhooks/:webhookId')
+  async desativarWebhook(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('webhookId', ParseUUIDPipe) webhookId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    this.onlySuperAdmin(user);
+    const alvo = await this.apps.tenantAtivo(id);
+    return this.webhooks.desativar(alvo.tenantId, alvo.aplicacaoId, webhookId);
+  }
+
+  @Post(':id/webhooks/:webhookId/rotate-secret')
+  async rotacionarWebhook(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('webhookId', ParseUUIDPipe) webhookId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    this.onlySuperAdmin(user);
+    const alvo = await this.apps.tenantAtivo(id);
+    return this.webhooks.rotacionar(alvo.tenantId, alvo.aplicacaoId, webhookId);
   }
 
   @Post(':id/rotacionar')

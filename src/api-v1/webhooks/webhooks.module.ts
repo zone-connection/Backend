@@ -21,6 +21,6 @@ import {
     WebhookEntregaService,
     WebhookWorkerService,
   ],
-  exports: [WebhookEventosService],
+  exports: [WebhookEventosService, WebhookDestinosService],
 })
 export class WebhooksModule {}
