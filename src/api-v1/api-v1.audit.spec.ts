@@ -6,7 +6,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ApiAplicacaoStatus, ApiAutorizacaoStatus, Role } from '@prisma/client';
+import { ApiAplicacaoStatus, ApiAutorizacaoStatus, Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { ApiAccessGuard } from './api-access.guard';
 import { ApiAppsController } from './api-apps.controller';
@@ -61,8 +61,38 @@ function memory() {
   ];
   const apps: AppRow[] = [];
   const grants: GrantRow[] = [];
+  const users: Array<{ id: string; tenantId: string; email: string }> = [];
   let n = 0;
   const prisma = {
+    $transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(prisma),
+    user: {
+      findFirst: async ({
+        where,
+      }: {
+        where: { email?: string; tenantId?: string };
+      }) =>
+        users.find(
+          (user) =>
+            (where.email === undefined || user.email === where.email) &&
+            (where.tenantId === undefined || user.tenantId === where.tenantId),
+        ) ?? null,
+      create: async ({
+        data,
+      }: {
+        data: { tenantId: string; email: string };
+      }) => {
+        if (users.some((user) => user.tenantId === data.tenantId && user.email === data.email)) {
+          throw new Prisma.PrismaClientKnownRequestError('chave única', {
+            code: 'P2002',
+            clientVersion: '6.2.0',
+            meta: { target: ['tenantId', 'email'] },
+          });
+        }
+        const row = { id: `user-${++n}`, tenantId: data.tenantId, email: data.email };
+        users.push(row);
+        return { id: row.id };
+      },
+    },
     tenant: {
       findUnique: async ({ where }: { where: { id: string } }) =>
         tenants.find((t) => t.id === where.id) ?? null,
