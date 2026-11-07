@@ -190,6 +190,8 @@ model Tenant {
   leads             Lead[]
   integracaoChamadas IntegracaoChamada[]
   apiAutorizacoes ApiAutorizacao[]
+  apiWebhookDestinos ApiWebhookDestino[]
+  apiWebhookEventos ApiWebhookEvento[]
   interessesEmpreendimento LeadEmpreendimentoInteresse[]
   construtoras      Construtora[]
   empreendimentos   Empreendimento[]
@@ -4810,6 +4812,7 @@ model ApiAplicacao {
   credencialVersao Int                 @default(1)
   autorizacoes     ApiAutorizacao[]
   auditorias      ApiAuditoria[]
+  webhooks        ApiWebhookDestino[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4863,4 +4866,89 @@ model ApiOauthTentativa {
   updatedAt    DateTime  @updatedAt
 
   @@map("api_oauth_tentativas")
+}
+
+enum ApiWebhookEntregaEstado {
+  pendente
+  entregue
+  falhou
+  cancelada
+}
+
+model ApiWebhookDestino {
+  id             String    @id @default(uuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  aplicacaoId    String
+  aplicacao      ApiAplicacao @relation(fields: [aplicacaoId], references: [id], onDelete: Cascade)
+  url            String
+  segredoCifrado String
+  eventos        String[]
+  ativo          Boolean   @default(true)
+  desativadoEm   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  entregas       ApiWebhookEntrega[]
+
+  @@index([tenantId, aplicacaoId])
+  @@map("api_webhook_destinos")
+}
+
+model ApiWebhookEvento {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nome         String
+  resourceId   String
+  resourceType String
+  occurredAt   DateTime
+  payload      Json
+  processadoEm DateTime?
+  createdAt    DateTime @default(now())
+  entregas     ApiWebhookEntrega[]
+
+  @@index([processadoEm, createdAt])
+  @@index([tenantId, occurredAt])
+  @@map("api_webhook_eventos")
+}
+
+model ApiWebhookEntrega {
+  id                  String                  @id @default(uuid())
+  eventoId            String
+  evento              ApiWebhookEvento        @relation(fields: [eventoId], references: [id], onDelete: Cascade)
+  destinoId           String
+  destino             ApiWebhookDestino       @relation(fields: [destinoId], references: [id], onDelete: Cascade)
+  tenantId            String
+  estado              ApiWebhookEntregaEstado @default(pendente)
+  tentativas          Int                     @default(0)
+  proximaTentativaEm  DateTime                @default(now())
+  reservadoAte        DateTime?
+  ultimoHttp          Int?
+  ultimoErro          String                  @default("")
+  ultimaTentativaEm   DateTime?
+  concluidaEm         DateTime?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  historico           ApiWebhookTentativa[]
+
+  @@unique([eventoId, destinoId])
+  @@index([estado, proximaTentativaEm])
+  @@index([reservadoAte])
+  @@index([tenantId, destinoId])
+  @@map("api_webhook_entregas")
+}
+
+model ApiWebhookTentativa {
+  id         String            @id @default(uuid())
+  entregaId  String
+  entrega    ApiWebhookEntrega @relation(fields: [entregaId], references: [id], onDelete: Cascade)
+  numero     Int
+  httpStatus Int?
+  duracaoMs  Int?
+  sucesso    Boolean
+  erro       String            @default("")
+  createdAt  DateTime          @default(now())
+
+  @@index([entregaId, numero])
+  @@map("api_webhook_tentativas")
 }

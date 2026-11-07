@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   UserStatus,
@@ -214,7 +215,11 @@ const DOC_HISTORICO: Partial<Record<VendaUsadoDocumentoStatus, string>> = {
 
 @Injectable()
 export class VendaUsadoFechamentoService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional()
+    private readonly webhooks?: import('../api-v1/webhooks/webhooks.service').WebhookEventosService,
+  ) {}
 
   async get(vendaId: string, user: AuthenticatedUser) {
     const tenantId = requireTenantId(user);
@@ -729,6 +734,14 @@ export class VendaUsadoFechamentoService {
         where: { id: vendaId },
         data: { status: VendaUsadoStatus.vendido },
       });
+      if (venda.status === VendaUsadoStatus.disponivel) {
+        await this.webhooks?.gravar(tx, {
+          tenantId,
+          nome: 'property.unavailable',
+          resourceId: vendaId,
+          resourceType: 'property',
+        });
+      }
       await tx.vendaUsadoHistorico.create({
         data: {
           tenantId,

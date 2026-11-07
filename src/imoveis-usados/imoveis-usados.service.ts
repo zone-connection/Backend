@@ -104,6 +104,8 @@ export class ImoveisUsadosService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly funilResolver?: FunilResolverService,
+    @Optional()
+    private readonly webhooks?: import('../api-v1/webhooks/webhooks.service').WebhookEventosService,
   ) {}
 
   async resumo(user: AuthenticatedUser) {
@@ -419,10 +421,31 @@ export class ImoveisUsadosService {
     const tenantId = requireTenantId(user);
     const venda = await this.prisma.vendaUsado.findFirst({
       where: { id: vendaId, tenantId },
-      select: { id: true, imovelId: true },
+      select: {
+        id: true,
+        imovelId: true,
+        status: true,
+        imovel: {
+          select: {
+            tipo: true,
+            descricao: true,
+            cidade: true,
+            estado: true,
+            bairro: true,
+            quartos: true,
+            suites: true,
+            banheiros: true,
+            vagas: true,
+            area: true,
+            areaConstruida: true,
+            fotoUrl: true,
+          },
+        },
+      },
     });
     if (!venda) throw new NotFoundException('Venda de usado não encontrada.');
-    await this.prisma.imovel.update({
+    const imovelAtualizado = await this.prisma.$transaction(async (tx) => {
+      const salvo = await tx.imovel.update({
       where: { id: venda.imovelId },
       data: {
         ...(dto.tipo ? { tipo: dto.tipo } : {}),
@@ -469,6 +492,20 @@ export class ImoveisUsadosService {
           : {}),
       },
     });
+      if (venda.status === 'disponivel') {
+        const { imovelPublicoMudou } = await import('../api-v1/webhooks/webhook-eventos');
+        if (imovelPublicoMudou(venda.imovel, salvo)) {
+          await this.webhooks?.gravar(tx, {
+            tenantId,
+            nome: 'property.updated',
+            resourceId: venda.id,
+            resourceType: 'property',
+          });
+        }
+      }
+      return salvo;
+    });
+    void imovelAtualizado;
     return this.get(vendaId, user);
   }
 
@@ -636,6 +673,28 @@ export class ImoveisUsadosService {
             texto: h.texto,
             autorId: user.id,
           })),
+        });
+      }
+      const statusDepois = dto.status ?? current.status;
+      const { eventoDeTransicaoStatus } = await import('../api-v1/webhooks/webhook-eventos');
+      const transicao = eventoDeTransicaoStatus(current.status, statusDepois);
+      if (transicao) {
+        await this.webhooks?.gravar(tx, {
+          tenantId,
+          nome: transicao,
+          resourceId: id,
+          resourceType: 'property',
+        });
+      } else if (
+        statusDepois === 'disponivel' &&
+        dto.precoVenda !== undefined &&
+        String(dto.precoVenda) !== String(current.precoVenda)
+      ) {
+        await this.webhooks?.gravar(tx, {
+          tenantId,
+          nome: 'property.updated',
+          resourceId: id,
+          resourceType: 'property',
         });
       }
     });

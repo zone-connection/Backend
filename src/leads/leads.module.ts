@@ -15,6 +15,7 @@ import { OzapApiModule } from '../ozap/ozap-api.module';
 import { PlatformContratosModule } from '../platform-contratos/platform-contratos.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { LeadConversaoService } from './lead-conversao.service';
+import { WebhooksModule } from '../api-v1/webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { LeadConversaoService } from './lead-conversao.service';
     LeadFilaModule,
     TenantsModule,
     PlatformContratosModule,
+    WebhooksModule,
   ],
   controllers: [LeadsController],
   providers: [

@@ -14,9 +14,10 @@ import { ApiPropertiesController } from './api-properties.controller';
 import { ApiPropertiesService } from './api-properties.service';
 import { ApiTecnicoAdapter } from './api-tecnico.adapter';
 import { ApiV1Controller } from './api-v1.controller';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
-  imports: [LeadsModule],
+  imports: [LeadsModule, WebhooksModule],
   controllers: [
     ApiV1Controller,
     ApiAppsController,

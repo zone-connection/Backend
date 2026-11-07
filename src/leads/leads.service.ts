@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import {
@@ -160,6 +161,7 @@ export class LeadsService {
     private readonly presence: PresenceService,
     private readonly ozapApi: OzapApiClient,
     private readonly fila: LeadFilaService,
+    @Optional() private readonly webhooks?: import('../api-v1/webhooks/webhooks.service').WebhookEventosService,
   ) {}
 
   async create(
@@ -195,7 +197,8 @@ export class LeadsService {
     );
     const prospeccao = sanitizeProspeccao(dto.prospeccao);
 
-    const created = await this.prisma.lead.create({
+    const created = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.lead.create({
       data: {
         tenantId,
         tipo: dto.tipo === 'cliente' ? ContatoTipo.cliente : ContatoTipo.lead,
@@ -227,6 +230,17 @@ export class LeadsService {
         ...timing,
       },
       select: leadSelect,
+    });
+      if (row.tipo === ContatoTipo.lead) {
+        await this.webhooks?.gravar(tx, {
+          tenantId,
+          nome: 'lead.created',
+          resourceId: row.id,
+          resourceType: 'lead',
+          occurredAt: row.createdAt,
+        });
+      }
+      return row;
     });
     await registrarAtribuicoes(this.prisma, [
       {
@@ -1498,7 +1512,22 @@ export class LeadsService {
         )
       : null;
 
-    const updated = await this.prisma.lead.update({
+    const antesPublico = await this.prisma.lead.findFirst({
+      where: { id, tenantId },
+      select: {
+        tipo: true,
+        nome: true,
+        telefone: true,
+        email: true,
+        origem: true,
+        interesse: true,
+        cidade: true,
+        bairro: true,
+        prioridade: true,
+      },
+    });
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.lead.update({
       where: { id },
       data: {
         ...(dto.nome !== undefined ? { nome: dto.nome.trim() } : {}),
@@ -1593,6 +1622,27 @@ export class LeadsService {
       },
       select: leadSelect,
     });
+      if (row.tipo === ContatoTipo.lead && antesPublico?.tipo === ContatoTipo.lead) {
+        const { leadPublicoMudou } = await import('../api-v1/webhooks/webhook-eventos');
+        if (leadPublicoMudou(antesPublico, row)) {
+          await this.webhooks?.gravar(tx, {
+            tenantId,
+            nome: 'lead.updated',
+            resourceId: row.id,
+            resourceType: 'lead',
+          });
+        }
+        if (stageChanged) {
+          await this.webhooks?.gravar(tx, {
+            tenantId,
+            nome: 'lead.stage_changed',
+            resourceId: row.id,
+            resourceType: 'lead',
+          });
+        }
+      }
+      return row;
+    });
     if (!stageChanged) {
       await this.monitoramento.recordMovement(id, 'edicao');
     }
@@ -1651,6 +1701,7 @@ export class LeadsService {
       where: { id, tenantId },
       select: {
         stage: true,
+        tipo: true,
         funilId: true,
         construtoraId: true,
         empreendimentoId: true,
@@ -1688,7 +1739,8 @@ export class LeadsService {
       : null;
 
     const etapaPerdida = stagePapel === FunilEtapaPapel.perdido;
-    const lead = await this.prisma.lead.update({
+    const lead = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.lead.update({
       where: { id },
       data: {
         stage,
@@ -1708,6 +1760,20 @@ export class LeadsService {
           : {}),
       },
       select: leadSelect,
+    });
+      if (
+        stageChanged &&
+        previous?.tipo === ContatoTipo.lead &&
+        row.tipo === ContatoTipo.lead
+      ) {
+        await this.webhooks?.gravar(tx, {
+          tenantId,
+          nome: 'lead.stage_changed',
+          resourceId: row.id,
+          resourceType: 'lead',
+        });
+      }
+      return row;
     });
     if (isAnalise && dto.empreendimentoId) {
       await this.upsertInteresseAtivo(

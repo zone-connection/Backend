@@ -8,9 +8,10 @@ import { ImoveisUsadosController } from './imoveis-usados.controller';
 import { InteressadosUsadosController } from './interessados-usados.controller';
 
 import { FunisModule } from '../funis/funis.module';
+import { WebhooksModule } from '../api-v1/webhooks/webhooks.module';
 
 @Module({
-  imports: [FunisModule],
+  imports: [FunisModule, WebhooksModule],
   controllers: [InteressadosUsadosController, ImoveisUsadosController],
   providers: [
     ImoveisUsadosService,
