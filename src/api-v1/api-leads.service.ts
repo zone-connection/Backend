@@ -6,12 +6,43 @@ import {
 } from '@nestjs/common';
 import { ContatoTipo, FunilTipo, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { formatarTelefone } from '../integracoes/integracoes.service';
 import { LeadsService } from '../leads/leads.service';
 import type { CreateLeadDto } from '../leads/dto/create-lead.dto';
 import { ApiTecnicoAdapter } from './api-tecnico.adapter';
 import type { CriarLeadApiDto } from './dto/criar-lead-api.dto';
 import type { AtualizarLeadApiDto } from './dto/atualizar-lead-api.dto';
 import type { ListarLeadsApiDto } from './dto/listar-leads-api.dto';
+
+function lerCsvBaseFria(csv: string) {
+  const linhas = csv.replace(/^\uFEFF/, '').split(/\r?\n/).filter((linha) => linha.trim());
+  if (linhas.length < 2) {
+    throw new BadRequestException('O CSV precisa do cabeçalho e de ao menos uma linha.');
+  }
+  const separador = linhas[0].split(';').length > linhas[0].split(',').length ? ';' : ',';
+  const cabecalho = linhas[0].split(separador).map((coluna) => coluna.trim().toLowerCase());
+  if (cabecalho[0] !== 'nome' || cabecalho[1] !== 'telefone') {
+    throw new BadRequestException('Cabeçalho inválido. Comece com nome,telefone.');
+  }
+  return linhas.slice(1).map((linha) => {
+    const celulas = linha.split(separador).map((celula) => celula.trim());
+    const registro = Object.fromEntries(cabecalho.map((coluna, indice) => [coluna, celulas[indice] ?? '']));
+    const telefone = formatarTelefone(registro.telefone ?? '');
+    if (!telefone) {
+      throw new BadRequestException(`Telefone inválido em ${registro.nome || 'uma linha'}. Use (81) 99999-9999.`);
+    }
+    return {
+      nome: registro.nome,
+      telefone,
+      email: registro.email || undefined,
+      cidade: registro.cidade || 'Não informado',
+      bairro: registro.bairro || undefined,
+      interesse: registro.interesse || 'Comprar',
+      origem: registro.origem || 'base-fria',
+      prioridade: registro.prioridade || undefined,
+    };
+  });
+}
 
 const SEM_ETAPAS = 'COMMERCIAL_FUNNEL_WITHOUT_STAGES';
 const SEM_FUNIL = 'COMMERCIAL_FUNNEL_NOT_FOUND';
@@ -65,6 +96,12 @@ export class ApiLeadsService {
       throw mapearErroCriacao(err);
     }
     return respostaPublica(created);
+  }
+
+  async importarCsv(tenantId: string, csv: string) {
+    const actor = await this.tecnico.contexto(tenantId);
+    const leads = lerCsvBaseFria(csv);
+    return this.leads.importMany({ tipo: 'lead', leads }, actor);
   }
 
   async listar(tenantId: string, query: ListarLeadsApiDto) {

@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { IsString, MaxLength } from 'class-validator';
 import { Public } from '../common/decorators/public.decorator';
 import { ApiAccessGuard } from './api-access.guard';
 import { ApiAuditInterceptor } from './api-audit.interceptor';
@@ -9,6 +10,17 @@ import { CriarLeadApiDto } from './dto/criar-lead-api.dto';
 import { AtualizarLeadApiDto } from './dto/atualizar-lead-api.dto';
 import { ListarLeadsApiDto } from './dto/listar-leads-api.dto';
 import { MoverLeadApiDto } from './dto/mover-lead-api.dto';
+
+class ImportarCsvApiDto {
+  @IsString()
+  @MaxLength(1_500_000)
+  csv!: string;
+}
+
+export const MODELO_CSV_BASE_FRIA = [
+  'nome,telefone,email,cidade,bairro,interesse,origem,prioridade',
+  'Ana Souza,(81) 98888-7777,ana@email.com,Recife,Boa Viagem,Comprar,base-fria,Média',
+].join('\n');
 
 @Public()
 @UseInterceptors(ApiAuditInterceptor)
@@ -27,6 +39,19 @@ export class ApiLeadsController {
   @ApiScopes('leads:read')
   listar(@ApiTenant() api: ApiRequestContext, @Query() query: ListarLeadsApiDto) {
     return this.leads.listar(api.tenantId, query);
+  }
+
+  @Get('import/modelo')
+  @ApiScopes('leads:write')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  modelo() {
+    return MODELO_CSV_BASE_FRIA;
+  }
+
+  @Post('import')
+  @ApiScopes('leads:write')
+  importar(@ApiTenant() api: ApiRequestContext, @Body() body: ImportarCsvApiDto) {
+    return this.leads.importarCsv(api.tenantId, body.csv);
   }
 
   @Get(':id')
