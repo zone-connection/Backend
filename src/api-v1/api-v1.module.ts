@@ -10,6 +10,8 @@ import { ApiOauthLimiteService } from './api-oauth-limite.service';
 import { ApiOauthService } from './api-oauth.service';
 import { ApiFunisController } from './api-funis.controller';
 import { ApiFunisService } from './api-funis.service';
+import { ApiPropertiesController } from './api-properties.controller';
+import { ApiPropertiesService } from './api-properties.service';
 import { ApiTecnicoAdapter } from './api-tecnico.adapter';
 import { ApiV1Controller } from './api-v1.controller';
 
@@ -20,12 +22,14 @@ import { ApiV1Controller } from './api-v1.controller';
     ApiAppsController,
     ApiFunisController,
     ApiLeadsController,
+    ApiPropertiesController,
   ],
   providers: [
     ApiOauthService,
     ApiOauthLimiteService,
     ApiAppsService,
     ApiFunisService,
+    ApiPropertiesService,
     ApiTecnicoAdapter,
     ApiLeadsService,
     ApiAccessGuard,
