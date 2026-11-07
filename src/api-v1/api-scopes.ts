@@ -5,6 +5,7 @@ export const API_SCOPES = [
   'leads:write',
   'leads:update',
   'funnels:read',
+  'funnels:write',
   'calls:write',
   'webhooks:manage',
 ] as const;

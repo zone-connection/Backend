@@ -2,13 +2,16 @@ import {
   BadRequestException,
   HttpException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
-import { FunilTipo } from '@prisma/client';
+import { ContatoTipo, FunilTipo, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LeadsService } from '../leads/leads.service';
 import type { CreateLeadDto } from '../leads/dto/create-lead.dto';
 import { ApiTecnicoAdapter } from './api-tecnico.adapter';
 import type { CriarLeadApiDto } from './dto/criar-lead-api.dto';
+import type { AtualizarLeadApiDto } from './dto/atualizar-lead-api.dto';
+import type { ListarLeadsApiDto } from './dto/listar-leads-api.dto';
 
 const SEM_ETAPAS = 'COMMERCIAL_FUNNEL_WITHOUT_STAGES';
 const SEM_FUNIL = 'COMMERCIAL_FUNNEL_NOT_FOUND';
@@ -64,6 +67,77 @@ export class ApiLeadsService {
     return respostaPublica(created);
   }
 
+  async listar(tenantId: string, query: ListarLeadsApiDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const where = filtroLeads(tenantId, query);
+    const [total, rows] = await Promise.all([
+      this.prisma.lead.count({ where }),
+      this.prisma.lead.findMany({
+        where,
+        select: leadApiSelect,
+        orderBy: ordemLead(query.sort),
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+    return {
+      data: rows.map((row) => respostaPublica(row)),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async detalhe(tenantId: string, id: string) {
+    const lead = await this.prisma.lead.findFirst({
+      where: { id, tenantId, perdidoAt: null, tipo: ContatoTipo.lead },
+      select: leadApiSelect,
+    });
+    if (!lead) throw new NotFoundException('Lead não encontrado.');
+    return respostaPublica(lead);
+  }
+
+  async atualizar(tenantId: string, id: string, body: AtualizarLeadApiDto) {
+    await this.leadDoTenant(tenantId, id);
+    const actor = await this.tecnico.contexto(tenantId);
+    const dto = {
+      ...body,
+      ...(body.origem === null ? { origem: '' } : {}),
+    };
+    const updated = (await this.leads.update(id, dto, actor)) as LeadInterno;
+    return respostaPublica(updated);
+  }
+
+  async mover(tenantId: string, id: string, stage: string) {
+    const lead = await this.leadDoTenant(tenantId, id);
+    await this.etapaDoFunilAtual(lead.funilId, stage);
+    const actor = await this.tecnico.contexto(tenantId);
+    const moved = (await this.leads.updateStage(id, { stage }, actor)) as LeadInterno;
+    return respostaPublica(moved);
+  }
+
+  private async leadDoTenant(tenantId: string, id: string) {
+    const lead = await this.prisma.lead.findFirst({
+      where: { id, tenantId, perdidoAt: null, tipo: ContatoTipo.lead },
+      select: { id: true, funilId: true },
+    });
+    if (!lead) throw new NotFoundException('Lead não encontrado.');
+    return lead;
+  }
+
+  private async etapaDoFunilAtual(funilId: string | null, stage: string) {
+    if (!funilId) throw new BadRequestException('Etapa do funil inválida.');
+    const etapa = await this.prisma.funilEtapa.findFirst({
+      where: { funilId, slug: stage, active: true },
+      select: { id: true },
+    });
+    if (!etapa) throw new BadRequestException('Etapa do funil inválida.');
+  }
+
   private async funilComercialComEtapas(tenantId: string, stage?: string) {
     const funil = await this.prisma.funil.findFirst({
       where: { tenantId, tipo: FunilTipo.comercial, ativo: true },
@@ -91,6 +165,53 @@ export class ApiLeadsService {
       throw new BadRequestException('Etapa do funil inválida.');
     }
   }
+}
+
+const leadApiSelect = {
+  id: true,
+  nome: true,
+  telefone: true,
+  email: true,
+  origem: true,
+  interesse: true,
+  cidade: true,
+  bairro: true,
+  stage: true,
+  funilId: true,
+  prioridade: true,
+  corretorId: true,
+  corretor: { select: { name: true } },
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.LeadSelect;
+
+function filtroLeads(tenantId: string, query: ListarLeadsApiDto): Prisma.LeadWhereInput {
+  const search = query.search?.trim();
+  return {
+    tenantId,
+    tipo: ContatoTipo.lead,
+    perdidoAt: null,
+    ...(query.stage ? { stage: query.stage } : {}),
+    ...(query.origem ? { origem: query.origem } : {}),
+    ...(search
+      ? {
+          OR: [
+            { nome: { contains: search, mode: 'insensitive' } },
+            { email: { contains: search, mode: 'insensitive' } },
+            { telefone: { contains: search, mode: 'insensitive' } },
+            { cidade: { contains: search, mode: 'insensitive' } },
+            { bairro: { contains: search, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  };
+}
+
+function ordemLead(sort: ListarLeadsApiDto['sort']): Prisma.LeadOrderByWithRelationInput {
+  if (sort === 'created_asc') return { createdAt: 'asc' };
+  if (sort === 'nome_asc') return { nome: 'asc' };
+  if (sort === 'nome_desc') return { nome: 'desc' };
+  return { createdAt: 'desc' };
 }
 
 export function respostaPublica(lead: LeadInterno) {
