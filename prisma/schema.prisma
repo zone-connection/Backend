@@ -189,6 +189,7 @@ model Tenant {
   equipes           Equipe[]
   leads             Lead[]
   integracaoChamadas IntegracaoChamada[]
+  apiAutorizacoes ApiAutorizacao[]
   interessesEmpreendimento LeadEmpreendimentoInteresse[]
   construtoras      Construtora[]
   empreendimentos   Empreendimento[]
@@ -4785,4 +4786,81 @@ model WhatsappNotification {
   @@index([status, attempts])
   @@index([tenantId, userId])
   @@map("whatsapp_notifications")
+}
+
+enum ApiAplicacaoStatus {
+  ativa
+  inativa
+}
+
+enum ApiAutorizacaoStatus {
+  ativa
+  revogada
+}
+
+/// Aplicação externa (Client ID). O segredo só existe como hash.
+model ApiAplicacao {
+  id              String              @id @default(uuid())
+  nome            String
+  descricao       String              @default("")
+  status          ApiAplicacaoStatus  @default(ativa)
+  clientId         String              @unique
+  segredoHash      String
+  /// Incrementa na rotação. Tokens antigos deixam de valer.
+  credencialVersao Int                 @default(1)
+  autorizacoes     ApiAutorizacao[]
+  auditorias      ApiAuditoria[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("api_aplicacoes")
+}
+
+/// Autorização de uma aplicação sobre um único Tenant, com escopos.
+model ApiAutorizacao {
+  id           String                @id @default(uuid())
+  aplicacaoId  String
+  aplicacao    ApiAplicacao          @relation(fields: [aplicacaoId], references: [id], onDelete: Cascade)
+  tenantId     String
+  tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scopes       String[]              @default([])
+  status       ApiAutorizacaoStatus  @default(ativa)
+  revokedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([aplicacaoId, tenantId])
+  @@index([tenantId, status])
+  @@map("api_autorizacoes")
+}
+
+/// Registro de request da API v1. Sem segredo, token ou corpo.
+model ApiAuditoria {
+  id          String   @id @default(uuid())
+  aplicacaoId String?
+  aplicacao   ApiAplicacao? @relation(fields: [aplicacaoId], references: [id], onDelete: SetNull)
+  tenantId    String?
+  method      String
+  path        String
+  statusCode  Int
+  duracaoMs   Int
+  requestId   String
+
+  createdAt DateTime @default(now())
+
+  @@index([aplicacaoId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("api_auditorias")
+}
+
+/// Contador de falhas do OAuth, compartilhado entre instâncias via PostgreSQL.
+model ApiOauthTentativa {
+  chave        String    @id
+  falhas       Int       @default(0)
+  bloqueadoAte DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  @@map("api_oauth_tentativas")
 }

@@ -54,6 +54,7 @@ import { validateEnv } from './config/env.validation';
 import { THROTTLE } from './config/security.constants';
 import { PrismaSchemaExceptionFilter } from './common/filters/prisma-schema.filter';
 import { IntegracoesModule } from './integracoes/integracoes.module';
+import { ApiV1Module } from './api-v1/api-v1.module';
 import { EvolutionModule } from './evolution/evolution.module';
 
 @Module({
@@ -94,6 +95,7 @@ import { EvolutionModule } from './evolution/evolution.module';
     SuporteModule,
     MelhoriasModule,
     IntegracoesModule,
+    ApiV1Module,
     PlatformFornecedorContratosModule,
     EquipesModule,
     AnaliseModule,

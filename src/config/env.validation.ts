@@ -45,6 +45,20 @@ export function validateEnv(config: Record<string, unknown>) {
     }
   }
 
+  const apiJwt = String(config.API_JWT_SECRET ?? '');
+  if (apiJwt) {
+    if (apiJwt.length < MIN_SECRET_LENGTH) {
+      errors.push(
+        `API_JWT_SECRET deve ter ao menos ${MIN_SECRET_LENGTH} caracteres.`,
+      );
+    }
+    if (apiJwt === accessSecret || apiJwt === refreshSecret) {
+      errors.push(
+        'API_JWT_SECRET deve ser diferente de JWT_ACCESS_SECRET e JWT_REFRESH_SECRET.',
+      );
+    }
+  }
+
   if (accessSecret && accessSecret === refreshSecret) {
     errors.push(
       'JWT_ACCESS_SECRET e JWT_REFRESH_SECRET devem ser diferentes: com segredos iguais, um access token vale como refresh token.',
