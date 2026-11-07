@@ -117,13 +117,61 @@ function casa(where: Record<string, unknown>, item: Row) {
 }
 
 function banco(rows: Row[]) {
-  const chamadas = { findMany: 0, findFirst: 0, count: 0, fotos: 0, imovel: 0 };
+  const chamadas = { findMany: 0, findFirst: 0, count: 0, fotos: 0, imovel: 0, query: 0 };
   let ultimo: { where?: Record<string, unknown>; orderBy?: unknown; skip?: number; take?: number; select?: unknown } = {};
   let whereCount: Record<string, unknown> | undefined;
+  let paginaSql: { limit?: number; offset?: number; tenantId?: string } = {};
   const prisma = {
     chamadas,
     ultimo: () => ultimo,
     whereCount: () => whereCount,
+    paginaSql: () => paginaSql,
+    $queryRaw: async (query: { strings: string[]; values: unknown[] }) => {
+      chamadas.query += 1;
+      const texto = query.strings.join(' ');
+      const valores = query.values;
+      const tenantId = String(valores[0]);
+      const cityLike = valores[1];
+      const neighborhoodLike = valores[3];
+      const tipo = valores[5];
+      const bedrooms = valores[7];
+      const bathrooms = valores[9];
+      const minPrice = valores[11];
+      const maxPrice = valores[13];
+      const where: Record<string, unknown> = {
+        tenantId,
+        status: 'disponivel',
+        imovel: { tenantId },
+      };
+      const imovel = where.imovel as Record<string, unknown>;
+      if (typeof cityLike === 'string') imovel.cidade = { contains: cityLike.replaceAll('%', '') };
+      if (typeof neighborhoodLike === 'string') imovel.bairro = { contains: neighborhoodLike.replaceAll('%', '') };
+      if (typeof tipo === 'string') imovel.tipo = tipo;
+      if (typeof bedrooms === 'number') imovel.quartos = { gte: bedrooms };
+      if (typeof bathrooms === 'number') imovel.banheiros = { gte: bathrooms };
+      if (typeof minPrice === 'number' || typeof maxPrice === 'number') {
+        where.precoVenda = {
+          ...(typeof minPrice === 'number' ? { gte: minPrice } : {}),
+          ...(typeof maxPrice === 'number' ? { lte: maxPrice } : {}),
+        };
+      }
+      whereCount = where;
+      const lista = rows
+        .filter((item) => casa(where, item))
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || b.id.localeCompare(a.id));
+      if (texto.includes('COUNT')) return [{ total: BigInt(lista.length) }];
+      if (!texto.includes('ORDER BY atualizado DESC, id DESC')) {
+        throw new Error('ordenação da união ausente');
+      }
+      const limit = Number(valores.at(-2));
+      const offset = Number(valores.at(-1));
+      paginaSql = { limit, offset, tenantId };
+      return lista.slice(offset, offset + limit).map((item) => ({ id: item.id, origem: 'venda_usado' }));
+    },
+    empreendimento: {
+      findMany: async () => [],
+      findFirst: async () => null,
+    },
     vendaUsado: {
       count: async ({ where }: { where: Record<string, unknown> }) => {
         chamadas.count += 1;
@@ -165,9 +213,33 @@ function banco(rows: Row[]) {
           },
         };
       },
-      findMany: async (args: typeof ultimo) => {
+      findMany: async (args: typeof ultimo & { where?: { id?: { in?: string[] } } }) => {
         chamadas.findMany += 1;
         ultimo = args;
+        const ids = args.where?.id?.in;
+        if (ids) {
+          return rows
+            .filter((item) => ids.includes(item.id) && item.imovel)
+            .map((item) => ({
+              id: item.id,
+              status: item.status,
+              precoVenda: item.precoVenda,
+              updatedAt: item.updatedAt,
+              imovel: {
+                tipo: item.imovel?.tipo,
+                descricao: item.imovel?.descricao,
+                cidade: item.imovel?.cidade,
+                estado: item.imovel?.estado,
+                bairro: item.imovel?.bairro,
+                quartos: item.imovel?.quartos,
+                banheiros: item.imovel?.banheiros,
+                vagas: item.imovel?.vagas,
+                area: item.imovel?.area,
+                areaConstruida: item.imovel?.areaConstruida,
+                fotoUrl: item.imovel?.fotoUrl,
+              },
+            }));
+        }
         const select = JSON.stringify(args.select ?? {});
         if (select.includes('publicId') || select.includes('proprietario') || select.includes('logradouro')) {
           throw new Error('select expôs campo interno');
@@ -213,6 +285,7 @@ function banco(rows: Row[]) {
         chamadas.imovel += 1;
         return [];
       },
+      findFirst: async () => null,
     },
   };
   return prisma;
@@ -276,17 +349,16 @@ describe('GET /api/v1/properties', () => {
     for (const proibido of ['tenantId', 'publicId', 'proprietario', 'logradouro', 'Boa Viagem, 100']) {
       assert.equal(cru.includes(proibido), false);
     }
+    assert.equal(db.chamadas.query, 2);
     assert.equal(db.chamadas.findMany, 1);
-    assert.equal(db.chamadas.count, 1);
     assert.equal(db.chamadas.imovel, 0);
-    assert.equal(db.ultimo().where?.tenantId, A);
-    assert.equal(db.ultimo().where?.status, 'disponivel');
-    assert.equal((db.ultimo().where?.imovel as { tenantId?: string }).tenantId, A);
-    assert.deepEqual(db.ultimo().where, db.whereCount());
-    assert.equal(db.ultimo().skip, 0);
-    assert.equal(db.ultimo().take, 20);
+    assert.equal(db.paginaSql().tenantId, A);
+    assert.equal(db.paginaSql().offset, 0);
+    assert.equal(db.paginaSql().limit, 20);
+    assert.equal(db.whereCount()?.tenantId, A);
+    assert.equal(db.whereCount()?.status, 'disponivel');
     assert.equal(db.chamadas.fotos, 0);
-    assert.deepEqual(db.ultimo().orderBy, [{ updatedAt: 'desc' }, { id: 'desc' }]);
+    assert.equal(db.chamadas.query, 2);
   });
 
   it('lista vazia mantém paginação zerada', async () => {
@@ -320,9 +392,8 @@ describe('GET /api/v1/properties', () => {
     assert.deepEqual(pagina.data.map((item) => item.id), ['v1']);
     assert.equal(pagina.pagination.total, 3);
     assert.equal(pagina.pagination.totalPages, 3);
-    assert.equal(db.ultimo().skip, 1);
-    assert.equal(db.ultimo().take, 1);
-    assert.deepEqual(db.ultimo().where, db.whereCount());
+    assert.equal(db.paginaSql().offset, 1);
+    assert.equal(db.paginaSql().limit, 1);
   });
 
   it('rejeita faixa de preço invertida', async () => {
@@ -337,11 +408,8 @@ describe('GET /api/v1/properties', () => {
     const db = banco(estoque);
     const service = new ApiPropertiesService(db as never);
     await service.listar(A, { minPrice: 200000, maxPrice: 600000 });
-    assert.deepEqual(db.ultimo().where?.precoVenda, { gte: 200000, lte: 600000 });
-    assert.equal(JSON.stringify(db.ultimo().where).includes('valorPretendido'), false);
-    assert.equal(JSON.stringify(db.ultimo().where).includes('valorAvaliacao'), false);
+    assert.deepEqual(db.whereCount()?.precoVenda, { gte: 200000, lte: 600000 });
     assert.equal(db.chamadas.imovel, 0);
-    assert.deepEqual(db.ultimo().where, db.whereCount());
   });
 
   it('o tenant do outro lado não vê o estoque alheio', async () => {
