@@ -4,11 +4,21 @@ import {
   DEFAULT_CAPTATION_FUNNEL_STAGES,
   DEFAULT_DOCUMENTACAO_STATUS1,
   DEFAULT_DOCUMENTACAO_STATUS2,
+  DEFAULT_EMPREENDIMENTO_TIPOS,
   DEFAULT_FUNNEL_STAGES,
   DEFAULT_POS_VENDA_FUNNEL_STAGES,
   DEFAULT_VENDA_USADOS_FUNNEL_STAGES,
   defaultStagesForTipo,
 } from './catalog.defaults';
+
+describe('tipos padrão de empreendimento', () => {
+  it('segue as finalidades da API e deixa o tenant criar outros', () => {
+    assert.deepEqual(
+      DEFAULT_EMPREENDIMENTO_TIPOS.map((item) => item.label),
+      ['Venda', 'Aluguel', 'Lançamento', 'Sala comercial'],
+    );
+  });
+});
 
 describe('etapas padrão por tipo de funil', () => {
   it('comercial mantém o funil de vendas atual', () => {

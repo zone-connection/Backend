@@ -333,11 +333,12 @@ export const DEFAULT_MOTIVOS_PERDA: readonly DefaultCatalogLabel[] = [
   { label: 'Sem interesse', color: 'bg-indigo-100 text-indigo-700' },
 ] as const;
 
+/** Finalidades da API pública (purpose). O tenant pode criar outros tipos. */
 export const DEFAULT_EMPREENDIMENTO_TIPOS: readonly DefaultCatalogLabel[] = [
-  { label: 'Vertical', color: 'bg-blue-100 text-blue-700' },
-  { label: 'Casa', color: 'bg-emerald-100 text-emerald-700' },
-  { label: 'Loteamento', color: 'bg-amber-100 text-amber-700' },
-  { label: 'Comercial', color: 'bg-violet-100 text-violet-700' },
+  { label: 'Venda', color: 'bg-blue-100 text-blue-700' },
+  { label: 'Aluguel', color: 'bg-lime-100 text-lime-800' },
+  { label: 'Lançamento', color: 'bg-sky-100 text-sky-700' },
+  { label: 'Sala comercial', color: 'bg-violet-100 text-violet-700' },
 ] as const;
 
 export const DEFAULT_EMPREENDIMENTO_STATUS: readonly DefaultCatalogLabel[] = [
