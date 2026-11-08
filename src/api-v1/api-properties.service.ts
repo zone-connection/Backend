@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, VendaUsadoStatus } from '@prisma/client';
+import { FunilEtapaPapel, Prisma, VendaUsadoStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListarPropertiesApiDto } from './dto/listar-properties-api.dto';
 
@@ -410,6 +410,7 @@ function filtroCaptacao(tenantId: string, id?: string): Prisma.ImovelWhereInput 
         tenantId,
         canceladoPeloProprietario: false,
         motivoPerda: '',
+        funilEtapa: { papel: { in: [FunilEtapaPapel.captado, FunilEtapaPapel.venda] } },
       },
     },
   };
@@ -450,6 +451,8 @@ function uniao(tenantId: string, query: ListarPropertiesApiDto) {
     INNER JOIN LATERAL (
       SELECT COALESCE(c."valorAvaliacao", c."valorPretendido") AS preco
       FROM captacoes c
+      INNER JOIN funil_etapas fe ON fe.id = c."funilEtapaId"
+        AND fe.papel::text IN ('captado', 'venda')
       WHERE c."imovelId" = i.id
         AND c."tenantId" = i."tenantId"
         AND c."canceladoPeloProprietario" = false

@@ -345,8 +345,7 @@ export class CaptacaoService {
       },
       include: imovelInclude,
     });
-    const ligado = await this.espelharNoCatalogo(created);
-    return this.exposeImovel(ligado);
+    return this.exposeImovel(created);
   }
 
   async updateImovel(id: string, dto: UpdateImovelDto, user: AuthenticatedUser) {
@@ -407,7 +406,7 @@ export class CaptacaoService {
       },
       include: imovelInclude,
     });
-    const ligado = await this.espelharNoCatalogo(updated);
+    const ligado = await this.sincronizarCatalogoSeLigado(updated);
     return this.exposeImovel(ligado);
   }
 
@@ -561,7 +560,7 @@ export class CaptacaoService {
       },
       include: imovelInclude,
     });
-    const ligado = await this.espelharNoCatalogo(updated);
+    const ligado = await this.sincronizarCatalogoSeLigado(updated);
     return this.exposeImovel(ligado);
   }
 
@@ -618,6 +617,14 @@ export class CaptacaoService {
       imagemUrl: imagens[0]?.url ?? imovel.fotoUrl,
       imagens,
     };
+  }
+
+  /** Atualiza a ficha do catálogo só depois que a captação já entrou na lista de imóveis. */
+  private async sincronizarCatalogoSeLigado<
+    T extends { id: string; tenantId: string; empreendimentoId?: string | null },
+  >(imovel: T): Promise<T> {
+    if (!imovel.empreendimentoId) return imovel;
+    return this.espelharNoCatalogo(imovel);
   }
 
   private async espelharNoCatalogo<T extends { id: string; tenantId: string; empreendimentoId?: string | null }>(
@@ -1718,6 +1725,13 @@ export class CaptacaoService {
     if (!item) return;
     const preco =
       toMoneyNumber(item.valorAvaliacao) ?? toMoneyNumber(item.valorPretendido);
+    const noCatalogo = await this.espelharNoCatalogo(item.imovel);
+    if (preco != null && noCatalogo.empreendimentoId) {
+      await this.prisma.empreendimento.update({
+        where: { id: noCatalogo.empreendimentoId },
+        data: { valorReferencia: preco },
+      });
+    }
     if (item.imovel.vendaUsado) {
       if (preco != null && item.imovel.vendaUsado.precoVenda == null) {
         await this.prisma.vendaUsado.update({

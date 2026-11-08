@@ -367,10 +367,7 @@ describe('CaptacaoService — ficha do imóvel', () => {
     ]);
     assert.equal(saved.data?.suites, 1);
     assert.equal(saved.data?.vagas, 2);
-    assert.equal(catalogo.data?.externalKey, 'captacao-imovel-i1');
-    assert.equal(catalogo.data?.vagas, 2);
-    assert.equal(catalogo.data?.cidade, 'Recife');
-    assert.deepEqual(catalogo.data?.tags, ['Captação']);
+    assert.equal(catalogo.data, undefined);
   });
 });
 
