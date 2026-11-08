@@ -8,7 +8,7 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
-import { LEAD_INTERESSES, LEAD_PRIORIDADES } from '../../leads/lead.constants';
+import { LEAD_CATEGORIAS, LEAD_INTERESSES, LEAD_PRIORIDADES } from '../../leads/lead.constants';
 
 export class AtualizarLeadApiDto {
   @IsOptional()
@@ -39,6 +39,11 @@ export class AtualizarLeadApiDto {
   @IsOptional()
   @IsIn(LEAD_INTERESSES, { message: 'Interesse inválido.' })
   interesse?: string;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined && value !== '')
+  @IsIn(LEAD_CATEGORIAS, { message: 'Categoria inválida. Use aluguel ou potencial.' })
+  categoria?: 'aluguel' | 'potencial' | null;
 
   @IsOptional()
   @IsString()

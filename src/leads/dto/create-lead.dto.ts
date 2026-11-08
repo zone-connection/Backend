@@ -16,7 +16,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { LEAD_INTERESSES, LEAD_PRIORIDADES, CONTATO_TIPOS } from '../lead.constants';
+import { LEAD_CATEGORIAS, LEAD_INTERESSES, LEAD_PRIORIDADES, CONTATO_TIPOS } from '../lead.constants';
 import { LeadProspeccaoDto } from './lead-prospeccao.dto';
 
 export class CreateLeadDto {
@@ -51,6 +51,11 @@ export class CreateLeadDto {
 
   @IsIn(LEAD_INTERESSES, { message: 'Interesse inválido.' })
   interesse!: string;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined && value !== '')
+  @IsIn(LEAD_CATEGORIAS, { message: 'Categoria inválida. Use aluguel ou potencial.' })
+  categoria?: 'aluguel' | 'potencial' | null;
 
   @IsString()
   @MaxLength(80)

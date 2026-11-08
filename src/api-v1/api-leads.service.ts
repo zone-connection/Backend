@@ -14,6 +14,13 @@ import type { CriarLeadApiDto } from './dto/criar-lead-api.dto';
 import type { AtualizarLeadApiDto } from './dto/atualizar-lead-api.dto';
 import type { ListarLeadsApiDto } from './dto/listar-leads-api.dto';
 
+function categoriaCsv(valor: string | undefined) {
+  const texto = valor?.trim() ?? '';
+  if (!texto) return undefined;
+  if (texto === 'aluguel' || texto === 'potencial') return texto;
+  throw new BadRequestException('Categoria inválida. Use aluguel ou potencial.');
+}
+
 function lerCsvBaseFria(csv: string) {
   const linhas = csv.replace(/^\uFEFF/, '').split(/\r?\n/).filter((linha) => linha.trim());
   if (linhas.length < 2) {
@@ -38,6 +45,7 @@ function lerCsvBaseFria(csv: string) {
       cidade: registro.cidade || 'Não informado',
       bairro: registro.bairro || undefined,
       interesse: registro.interesse || 'Comprar',
+      categoria: categoriaCsv(registro.categoria),
       origem: registro.origem || 'base-fria',
       prioridade: registro.prioridade || undefined,
     };
@@ -54,6 +62,7 @@ type LeadInterno = {
   email: string;
   origem: string;
   interesse: string;
+  categoria: 'aluguel' | 'potencial' | null;
   cidade: string;
   bairro: string;
   stage: string;
@@ -81,6 +90,7 @@ export class ApiLeadsService {
       nome: body.nome,
       telefone: body.telefone,
       interesse: body.interesse,
+      categoria: body.categoria,
       cidade: body.cidade,
       bairro: body.bairro,
       email: body.email,
@@ -211,6 +221,7 @@ const leadApiSelect = {
   email: true,
   origem: true,
   interesse: true,
+  categoria: true,
   cidade: true,
   bairro: true,
   stage: true,
@@ -230,6 +241,7 @@ function filtroLeads(tenantId: string, query: ListarLeadsApiDto): Prisma.LeadWhe
     perdidoAt: null,
     ...(query.stage ? { stage: query.stage } : {}),
     ...(query.origem ? { origem: query.origem } : {}),
+    ...(query.categoria ? { categoria: query.categoria } : {}),
     ...(search
       ? {
           OR: [
@@ -259,6 +271,7 @@ export function respostaPublica(lead: LeadInterno) {
     email: lead.email,
     origem: lead.origem,
     interesse: lead.interesse,
+    categoria: lead.categoria,
     cidade: lead.cidade,
     bairro: lead.bairro,
     stage: lead.stage,

@@ -31,6 +31,7 @@ export const CAMPOS_PUBLICOS_LEAD = [
   'email',
   'origem',
   'interesse',
+  'categoria',
   'cidade',
   'bairro',
   'prioridade',

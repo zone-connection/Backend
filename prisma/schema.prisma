@@ -682,6 +682,8 @@ model Lead {
   email      String
   origem     String
   interesse  String // Comprar (New Palace trabalha só com vendas)
+  /// Marca do contato para o integrador: aluguel ou potencial. Não é etapa de funil.
+  categoria  LeadCategoria?
   cidade     String
   bairro     String
   stage      String      @default("novo")
@@ -2124,15 +2126,18 @@ enum FunilEtapaPapel {
   concluido
   aprovado
   reprovado
-  /// Papéis estáveis para o integrador. O nome visível da etapa pode ser outro.
+  /// Papéis estáveis da etapa. O nome visível pode ser outro.
   prospeccao_ativa
   frio
   qualificado
   agendado
   agendado_compra
   agendado_venda
-  lead_aluguel
-  leads_em_potencial
+}
+
+enum LeadCategoria {
+  aluguel
+  potencial
 }
 
 enum ImovelFinalidade {

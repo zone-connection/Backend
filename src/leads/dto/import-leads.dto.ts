@@ -18,6 +18,7 @@ import {
 } from 'class-validator';
 import {
   CONTATO_TIPOS,
+  LEAD_CATEGORIAS,
   LEAD_INTERESSES,
   LEAD_PRIORIDADES,
 } from '../lead.constants';
@@ -50,6 +51,11 @@ export class ImportLeadItemDto {
   @IsOptional()
   @IsIn(LEAD_INTERESSES, { message: 'Interesse inválido.' })
   interesse?: string;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined && value !== '')
+  @IsIn(LEAD_CATEGORIAS, { message: 'Categoria inválida. Use aluguel ou potencial.' })
+  categoria?: 'aluguel' | 'potencial' | null;
 
   @IsOptional()
   @IsString()

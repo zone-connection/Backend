@@ -18,8 +18,8 @@ class ImportarCsvApiDto {
 }
 
 export const MODELO_CSV_BASE_FRIA = [
-  'nome,telefone,email,cidade,bairro,interesse,origem,prioridade',
-  'Ana Souza,(81) 98888-7777,ana@email.com,Recife,Boa Viagem,Comprar,base-fria,Média',
+  'nome,telefone,email,cidade,bairro,interesse,origem,prioridade,categoria',
+  'Ana Souza,(81) 98888-7777,ana@email.com,Recife,Boa Viagem,Comprar,base-fria,Média,potencial',
 ].join('\n');
 
 @Public()

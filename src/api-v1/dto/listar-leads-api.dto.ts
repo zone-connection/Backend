@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { LEAD_CATEGORIAS } from '../../leads/lead.constants';
 
 export const LEADS_API_SORTS = [
   'created_desc',
@@ -38,6 +39,10 @@ export class ListarLeadsApiDto {
   @IsString()
   @MaxLength(60)
   origem?: string;
+
+  @IsOptional()
+  @IsIn(LEAD_CATEGORIAS, { message: 'Categoria inválida. Use aluguel ou potencial.' })
+  categoria?: 'aluguel' | 'potencial';
 
   @IsOptional()
   @IsIn(LEADS_API_SORTS, {

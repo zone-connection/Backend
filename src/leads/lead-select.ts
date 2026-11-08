@@ -9,6 +9,7 @@ export const leadSelect = {
   email: true,
   origem: true,
   interesse: true,
+  categoria: true,
   cidade: true,
   bairro: true,
   stage: true,
