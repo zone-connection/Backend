@@ -14,7 +14,7 @@ import type { CriarLeadApiDto } from './dto/criar-lead-api.dto';
 import type { AtualizarLeadApiDto } from './dto/atualizar-lead-api.dto';
 import type { ListarLeadsApiDto } from './dto/listar-leads-api.dto';
 
-function categoriaCsv(valor: string | undefined) {
+function categoriaCsv(valor: string | undefined): 'aluguel' | 'potencial' | undefined {
   const texto = valor?.trim() ?? '';
   if (!texto) return undefined;
   if (texto === 'aluguel' || texto === 'potencial') return texto;
