@@ -310,11 +310,27 @@ export class CatalogService {
       },
     ];
     for (const group of defaults) {
-      const count = await this.prisma.catalogItem.count({
+      const existing = await this.prisma.catalogItem.findMany({
         where: { tenantId, type: group.type },
+        select: { label: true, sortOrder: true },
       });
-      if (count > 0) continue;
-      for (const [index, item] of group.items.entries()) {
+      const known = new Set(
+        existing.map((row) => row.label.trim().toLocaleLowerCase('pt-BR')),
+      );
+      const missing =
+        group.type === CatalogType.empreendimento_tipo
+          ? group.items.filter(
+              (item) => !known.has(item.label.toLocaleLowerCase('pt-BR')),
+            )
+          : existing.length > 0
+            ? []
+            : [...group.items];
+      let sortOrder = existing.reduce(
+        (max, row) => Math.max(max, row.sortOrder),
+        -1,
+      );
+      for (const item of missing) {
+        sortOrder += 1;
         await this.prisma.catalogItem.create({
           data: {
             tenantId,
@@ -322,7 +338,7 @@ export class CatalogService {
             label: item.label,
             slug: slugify(item.label),
             color: item.color,
-            sortOrder: index,
+            sortOrder,
             active: true,
           },
         });

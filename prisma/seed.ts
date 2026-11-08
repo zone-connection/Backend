@@ -55,10 +55,10 @@ const DEFAULT_TAGS = [
 ] as const;
 
 const DEFAULT_EMPREENDIMENTO_TIPOS = [
-  { label: 'Vertical', color: 'bg-blue-100 text-blue-700' },
-  { label: 'Casa', color: 'bg-emerald-100 text-emerald-700' },
-  { label: 'Loteamento', color: 'bg-amber-100 text-amber-700' },
-  { label: 'Comercial', color: 'bg-violet-100 text-violet-700' },
+  { label: 'Venda', color: 'bg-blue-100 text-blue-700' },
+  { label: 'Aluguel', color: 'bg-lime-100 text-lime-800' },
+  { label: 'Lançamento', color: 'bg-sky-100 text-sky-700' },
+  { label: 'Sala comercial', color: 'bg-violet-100 text-violet-700' },
 ] as const;
 
 const DEFAULT_EMPREENDIMENTO_STATUS = [
