@@ -14,6 +14,7 @@ const B = '22222222-2222-4222-8222-222222222222';
 type Imovel = {
   tenantId: string;
   tipo: string;
+  finalidade: 'venda' | 'aluguel' | 'lancamento' | 'sala_comercial';
   descricao: string;
   cidade: string;
   estado: string;
@@ -50,6 +51,7 @@ function imovel(partial: Partial<Imovel> = {}): Imovel {
   return {
     tenantId: A,
     tipo: 'apartamento',
+    finalidade: 'venda' as const,
     descricao: 'Apartamento com varanda',
     cidade: 'Recife',
     estado: 'PE',
@@ -134,10 +136,11 @@ function banco(rows: Row[]) {
       const cityLike = valores[1];
       const neighborhoodLike = valores[3];
       const tipo = valores[5];
-      const bedrooms = valores[7];
-      const bathrooms = valores[9];
-      const minPrice = valores[11];
-      const maxPrice = valores[13];
+      const purpose = valores[7];
+      const bedrooms = valores[9];
+      const bathrooms = valores[11];
+      const minPrice = valores[13];
+      const maxPrice = valores[15];
       const where: Record<string, unknown> = {
         tenantId,
         status: 'disponivel',
@@ -147,6 +150,7 @@ function banco(rows: Row[]) {
       if (typeof cityLike === 'string') imovel.cidade = { contains: cityLike.replaceAll('%', '') };
       if (typeof neighborhoodLike === 'string') imovel.bairro = { contains: neighborhoodLike.replaceAll('%', '') };
       if (typeof tipo === 'string') imovel.tipo = tipo;
+      if (typeof purpose === 'string') imovel.finalidade = purpose;
       if (typeof bedrooms === 'number') imovel.quartos = { gte: bedrooms };
       if (typeof bathrooms === 'number') imovel.banheiros = { gte: bathrooms };
       if (typeof minPrice === 'number' || typeof maxPrice === 'number') {
@@ -193,6 +197,7 @@ function banco(rows: Row[]) {
           updatedAt: item.updatedAt,
           imovel: {
             tipo: item.imovel.tipo,
+            finalidade: item.imovel.finalidade,
             descricao: item.imovel.descricao,
             cidade: item.imovel.cidade,
             estado: item.imovel.estado,
@@ -227,6 +232,7 @@ function banco(rows: Row[]) {
               updatedAt: item.updatedAt,
               imovel: {
                 tipo: item.imovel?.tipo,
+                finalidade: item.imovel?.finalidade,
                 descricao: item.imovel?.descricao,
                 cidade: item.imovel?.cidade,
                 estado: item.imovel?.estado,
@@ -261,6 +267,7 @@ function banco(rows: Row[]) {
           imovel: item.imovel
             ? {
                 tipo: item.imovel.tipo,
+                finalidade: item.imovel.finalidade,
                 descricao: item.imovel.descricao,
                 cidade: item.imovel.cidade,
                 estado: item.imovel.estado,

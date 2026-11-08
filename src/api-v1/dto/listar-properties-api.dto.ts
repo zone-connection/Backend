@@ -9,7 +9,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { CaptacaoImovelTipo } from '@prisma/client';
+import { CaptacaoImovelTipo, ImovelFinalidade } from '@prisma/client';
 
 function vazioComoAusente({ value }: { value: unknown }) {
   if (typeof value === 'string' && value.trim() === '') return undefined;
@@ -36,6 +36,13 @@ export class ListarPropertiesApiDto {
       'Tipo inválido. Use apartamento, casa, terreno, sala_comercial, loja, galpao, fazenda, chacara ou outro.',
   })
   type?: CaptacaoImovelTipo;
+
+  @IsOptional()
+  @Transform(vazioComoAusente)
+  @IsEnum(ImovelFinalidade, {
+    message: 'Finalidade inválida. Use venda, aluguel, lancamento ou sala_comercial.',
+  })
+  purpose?: ImovelFinalidade;
 
   @IsOptional()
   @Transform(vazioComoAusente)

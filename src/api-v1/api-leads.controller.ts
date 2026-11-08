@@ -74,7 +74,7 @@ export class ApiLeadsController {
   }
 
   @Post(':id/move')
-  @ApiScopes('funnels:write')
+  @ApiScopes('leads:update')
   mover(
     @ApiTenant() api: ApiRequestContext,
     @Param('id', ParseUUIDPipe) id: string,

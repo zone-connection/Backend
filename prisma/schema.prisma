@@ -1242,6 +1242,7 @@ model Empreendimento {
   cidade      String?
   endereco    String?
   tipo        String?
+  finalidade  ImovelFinalidade @default(lancamento)
   status      String?
   previsaoEntrega DateTime? @db.Date
   tags        String[] @default([])
@@ -2123,6 +2124,22 @@ enum FunilEtapaPapel {
   concluido
   aprovado
   reprovado
+  /// Papéis estáveis para o integrador. O nome visível da etapa pode ser outro.
+  prospeccao_ativa
+  frio
+  qualificado
+  agendado
+  agendado_compra
+  agendado_venda
+  lead_aluguel
+  leads_em_potencial
+}
+
+enum ImovelFinalidade {
+  venda
+  aluguel
+  lancamento
+  sala_comercial
 }
 
 /// Tipo de operação do funil. Um funil ativo por (tenant, tipo).
@@ -2556,6 +2573,7 @@ model Imovel {
   proprietarioId  String
   proprietario    Proprietario       @relation(fields: [proprietarioId], references: [id], onDelete: Restrict)
   tipo            CaptacaoImovelTipo
+  finalidade      ImovelFinalidade   @default(venda)
   cep             String             @default("")
   logradouro      String             @default("")
   numero          String             @default("")

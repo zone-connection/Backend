@@ -5,6 +5,7 @@ import { ListarPropertiesApiDto } from './dto/listar-properties-api.dto';
 
 const imovelPublico = {
   tipo: true,
+  finalidade: true,
   descricao: true,
   cidade: true,
   estado: true,
@@ -30,7 +31,7 @@ type VendaRow = Prisma.VendaUsadoGetPayload<{ select: typeof vendaSelect }>;
 type Ficha = {
   id: string;
   sourceType: 'venda_usado' | 'captacao' | 'empreendimento';
-  purpose: 'venda';
+  purpose: 'venda' | 'aluguel' | 'lancamento' | 'sala_comercial';
   propertyType: string;
   description: string | null;
   price: string | null;
@@ -66,7 +67,7 @@ function respostaVenda(row: VendaRow): Ficha {
   return fichaBase({
     id: row.id,
     sourceType: 'venda_usado',
-    purpose: 'venda',
+    purpose: imovel.finalidade,
     propertyType: imovel.tipo,
     description: texto(imovel.descricao),
     price: decimal(row.precoVenda),
@@ -185,7 +186,7 @@ function respostaCaptacao(row: CaptacaoRow) {
   return {
     id: row.id,
     sourceType: 'captacao' as const,
-    purpose: 'venda' as const,
+    purpose: row.finalidade,
     propertyType: row.tipo,
     description: texto(row.descricao),
     price: decimal(ultima?.valorAvaliacao ?? ultima?.valorPretendido ?? null),
@@ -216,6 +217,7 @@ const empreendimentoSelect = {
   id: true,
   nome: true,
   tipo: true,
+  finalidade: true,
   cidade: true,
   quartos: true,
   banheiros: true,
@@ -234,7 +236,7 @@ function respostaEmpreendimento(row: EmpreendimentoRow) {
   return {
     id: row.id,
     sourceType: 'empreendimento' as const,
-    purpose: 'venda' as const,
+    purpose: row.finalidade,
     propertyType: texto(row.tipo) ?? 'empreendimento',
     description: texto(row.nome),
     price: decimal(row.valorReferencia),
@@ -385,7 +387,7 @@ function semGaleria(ficha: {
   features: Ficha['features'] & { suites: number | null; amenities: { unit: string[]; building: string[] } };
   id: string;
   sourceType: Ficha['sourceType'];
-  purpose: 'venda';
+  purpose: Ficha['purpose'];
   propertyType: string;
   description: string | null;
   price: string | null;
@@ -418,6 +420,7 @@ function parametros(query: ListarPropertiesApiDto) {
     cityLike: query.city?.trim() ? `%${query.city.trim()}%` : null,
     neighborhoodLike: query.neighborhood?.trim() ? `%${query.neighborhood.trim()}%` : null,
     tipo: query.type ?? null,
+    purpose: query.purpose ?? null,
     bedrooms: query.bedrooms ?? null,
     bathrooms: query.bathrooms ?? null,
     minPrice: query.minPrice ?? null,
@@ -436,6 +439,7 @@ function uniao(tenantId: string, query: ListarPropertiesApiDto) {
       AND (${p.cityLike}::text IS NULL OR i.cidade ILIKE ${p.cityLike})
       AND (${p.neighborhoodLike}::text IS NULL OR i.bairro ILIKE ${p.neighborhoodLike})
       AND (${p.tipo}::text IS NULL OR i.tipo::text = ${p.tipo})
+      AND (${p.purpose}::text IS NULL OR i.finalidade::text = ${p.purpose})
       AND (${p.bedrooms}::int IS NULL OR i.quartos >= ${p.bedrooms}::int)
       AND (${p.bathrooms}::int IS NULL OR i.banheiros >= ${p.bathrooms}::int)
       AND (${p.minPrice}::numeric IS NULL OR v."precoVenda" >= ${p.minPrice}::numeric)
@@ -458,6 +462,7 @@ function uniao(tenantId: string, query: ListarPropertiesApiDto) {
       AND (${p.cityLike}::text IS NULL OR i.cidade ILIKE ${p.cityLike})
       AND (${p.neighborhoodLike}::text IS NULL OR i.bairro ILIKE ${p.neighborhoodLike})
       AND (${p.tipo}::text IS NULL OR i.tipo::text = ${p.tipo})
+      AND (${p.purpose}::text IS NULL OR i.finalidade::text = ${p.purpose})
       AND (${p.bedrooms}::int IS NULL OR i.quartos >= ${p.bedrooms}::int)
       AND (${p.bathrooms}::int IS NULL OR i.banheiros >= ${p.bathrooms}::int)
       AND (${p.minPrice}::numeric IS NULL OR cap.preco >= ${p.minPrice}::numeric)
@@ -478,6 +483,7 @@ function uniao(tenantId: string, query: ListarPropertiesApiDto) {
       AND (${p.cityLike}::text IS NULL OR e.cidade ILIKE ${p.cityLike})
       AND (${p.neighborhoodLike}::text IS NULL)
       AND (${p.tipo}::text IS NULL OR lower(coalesce(e.tipo, '')) = lower(${p.tipo}))
+      AND (${p.purpose}::text IS NULL OR e.finalidade::text = ${p.purpose})
       AND (${p.bedrooms}::int IS NULL OR e.quartos >= ${p.bedrooms}::int)
       AND (${p.bathrooms}::int IS NULL OR e.banheiros >= ${p.bathrooms}::int)
       AND (${p.minPrice}::numeric IS NULL OR e."valorReferencia" >= ${p.minPrice}::numeric)

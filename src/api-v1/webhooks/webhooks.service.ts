@@ -69,12 +69,21 @@ export class WebhookDestinosService {
     return process.env.WEBHOOK_ALLOW_HTTP === 'true' && process.env.NODE_ENV === 'test';
   }
 
+  private async urlAceita(url: string) {
+    try {
+      return await validarUrlWebhook(url, {
+        allowHttp: this.httpLiberado(),
+        allowLoopback: this.httpLiberado(),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'URL inválida.';
+      throw new BadRequestException(message);
+    }
+  }
+
   async criar(tenantId: string, aplicacaoId: string, url: string, eventos: string[]) {
     this.validarEventos(eventos);
-    const destinoUrl = await validarUrlWebhook(url, {
-      allowHttp: this.httpLiberado(),
-      allowLoopback: this.httpLiberado(),
-    });
+    const destinoUrl = await this.urlAceita(url);
     const segredo = gerarSegredoWebhook();
     const row = await this.prisma.apiWebhookDestino.create({
       data: {
@@ -110,12 +119,7 @@ export class WebhookDestinosService {
   ) {
     await this.buscar(tenantId, aplicacaoId, id);
     if (patch.events) this.validarEventos(patch.events);
-    const url = patch.url
-      ? await validarUrlWebhook(patch.url, {
-          allowHttp: this.httpLiberado(),
-          allowLoopback: this.httpLiberado(),
-        })
-      : undefined;
+    const url = patch.url ? await this.urlAceita(patch.url) : undefined;
     const row = await this.prisma.apiWebhookDestino.update({
       where: { id },
       data: {
