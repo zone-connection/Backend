@@ -57,6 +57,7 @@ const docSelect = {
   dataAnalise: true,
   dataVenda: true,
   vgv: true,
+  propostaId: true,
   obs: true,
   temEntrada: true,
   valorEntrada: true,
@@ -70,6 +71,9 @@ const docSelect = {
   empreendimento: { select: { id: true, nome: true, cidade: true, cor: true } },
   corretor: userMini,
   gerente: userMini,
+  proposta: {
+    select: { id: true, codigo: true, valor: true, status: true, clienteNome: true },
+  },
   lead: {
     select: {
       id: true,
@@ -252,6 +256,30 @@ export class DocumentacaoService {
     return rows.map(mapRow);
   }
 
+  private async resolvePropostaId(tenantId: string, propostaId?: string | null) {
+    if (!propostaId) return null;
+    const proposta = await this.prisma.proposta.findFirst({
+      where: { id: propostaId, tenantId },
+      select: { id: true },
+    });
+    if (!proposta) {
+      throw new BadRequestException('Proposta não encontrada.');
+    }
+    return proposta.id;
+  }
+
+  private exigirPropostaNaVenda(
+    vgv: number | null | undefined,
+    dataVenda: Date | string | null | undefined,
+    propostaId: string | null | undefined,
+  ) {
+    if (vgv != null && vgv > 0 && dataVenda && !propostaId) {
+      throw new BadRequestException(
+        'Vincule uma proposta para lançar a venda com VGV e data de venda.',
+      );
+    }
+  }
+
   async create(dto: CreateDocumentacaoDto, requester: AuthenticatedUser) {
     const guided = await this.fichaGuiadaAtiva(requester);
     if (requester.role === Role.corretor && !guided) {
@@ -301,6 +329,11 @@ export class DocumentacaoService {
     );
     const createdAt = parseOptionalCreatedAt(dto.createdAt);
     const linked = await this.resolveLinkedLead(tenantId, dto.leadId);
+    const propostaId = await this.resolvePropostaId(tenantId, dto.propostaId);
+    const dataVenda =
+      parseOptionalDate(dto.dataVenda) ??
+      (isStatusVendido(status2) ? todayCivilDate() : null);
+    this.exigirPropostaNaVenda(dto.vgv ?? null, dataVenda, propostaId);
 
     const created = await this.prisma.documentacao.create({
       data: {
@@ -322,10 +355,9 @@ export class DocumentacaoService {
         corretorId,
         gerenteId,
         dataAnalise,
-        dataVenda:
-          parseOptionalDate(dto.dataVenda) ??
-          (isStatusVendido(status2) ? todayCivilDate() : null),
+        dataVenda,
         vgv: dto.vgv ?? null,
+        propostaId,
         obs: dto.obs?.trim() || null,
         temEntrada: dto.temEntrada ?? false,
         valorEntrada: dto.temEntrada ? (dto.valorEntrada ?? null) : null,
@@ -360,6 +392,7 @@ export class DocumentacaoService {
         status1: true,
         status2: true,
         vgv: true,
+        propostaId: true,
         autorId: true,
       },
     });
@@ -489,6 +522,12 @@ export class DocumentacaoService {
       data.dataVenda = parseOptionalDate(dto.dataVenda) ?? null;
     }
     if (dto.vgv !== undefined) data.vgv = dto.vgv;
+    if (dto.propostaId !== undefined) {
+      const propostaId = await this.resolvePropostaId(tenantId, dto.propostaId);
+      data.proposta = propostaId
+        ? { connect: { id: propostaId } }
+        : { disconnect: true };
+    }
 
     const status2Atual =
       typeof data.status2 === 'string' ? data.status2 : existing.status2;
@@ -524,6 +563,17 @@ export class DocumentacaoService {
       const createdAt = parseOptionalCreatedAt(dto.createdAt);
       if (createdAt) data.createdAt = createdAt;
     }
+
+    const vgvFinal = dto.vgv !== undefined ? dto.vgv : existing.vgv;
+    const dataVendaFinal =
+      dto.dataVenda !== undefined
+        ? parseOptionalDate(dto.dataVenda)
+        : existing.dataVenda;
+    const propostaFinal =
+      dto.propostaId !== undefined
+        ? await this.resolvePropostaId(tenantId, dto.propostaId)
+        : existing.propostaId;
+    this.exigirPropostaNaVenda(vgvFinal, dataVendaFinal, propostaFinal);
 
     const updated = await this.prisma.documentacao.update({
       where: { id },

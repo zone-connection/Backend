@@ -125,6 +125,9 @@ export class FunisService {
   }
 
   async create(dto: CreateFunilDto, requester: AuthenticatedUser) {
+    throw new BadRequestException(
+      'A imobiliária usa um único funil comercial. Crie ou edite as etapas desse funil.',
+    );
     const tenantId = requireTenantId(requester);
     const name = dto.name.trim();
     if (!name) throw new BadRequestException('Informe o nome do funil.');
@@ -183,6 +186,11 @@ export class FunisService {
   }
 
   async update(id: string, dto: UpdateFunilDto, requester: AuthenticatedUser) {
+    if (dto.tipo !== undefined) {
+      throw new BadRequestException(
+        'O tipo do funil não pode ser alterado.',
+      );
+    }
     const tenantId = requireTenantId(requester);
     const owned = await this.ensureOwned(id, tenantId);
 
@@ -268,6 +276,9 @@ export class FunisService {
   }
 
   async ativar(id: string, requester: AuthenticatedUser) {
+    throw new BadRequestException(
+      'Não é possível trocar o funil em uso.',
+    );
     const tenantId = requireTenantId(requester);
     const funil = await this.ensureOwned(id, tenantId);
 
@@ -311,6 +322,7 @@ export class FunisService {
     destinoFunilId: string,
     requester: AuthenticatedUser,
   ) {
+    throw new BadRequestException('A migração de leads entre funis não está disponível.');
     const tenantId = requireTenantId(requester);
     const origem = await this.ensureOwned(id, tenantId);
     if (origem.tipo !== FunilTipo.comercial) {
@@ -669,6 +681,9 @@ export class FunisService {
    * Restaura etapas padrão no funil (reativa/atualiza por slug; não apaga custom).
    */
   async installDefaults(funilId: string, requester: AuthenticatedUser) {
+    throw new BadRequestException(
+      'As etapas padrão não podem ser restauradas. Edite as etapas do funil comercial.',
+    );
     const tenantId = requireTenantId(requester);
     const owned = await this.ensureOwned(funilId, tenantId);
     const stages = defaultStagesForTipo(owned.tipo);
@@ -1184,6 +1199,9 @@ export class FunisService {
   }
 
   async recoverOrphanStages(funilId: string, requester: AuthenticatedUser) {
+    throw new BadRequestException(
+      'A recuperação de etapas dos leads não está disponível.',
+    );
     const tenantId = requireTenantId(requester);
     const owned = await this.ensureOwned(funilId, tenantId);
     if (owned.tipo !== FunilTipo.comercial) {

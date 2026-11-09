@@ -1350,6 +1350,8 @@ model Documentacao {
   dataVenda   DateTime?
   /// VGV em reais (inteiro).
   vgv Int?
+  propostaId String?
+  proposta   Proposta? @relation(fields: [propostaId], references: [id], onDelete: SetNull)
   obs String?
 
   temEntrada    Boolean @default(false)
@@ -1371,6 +1373,7 @@ model Documentacao {
   @@index([corretorId])
   @@index([gerenteId])
   @@index([createdAt])
+  @@index([propostaId])
   @@map("documentacoes")
 }
 
@@ -1649,6 +1652,7 @@ model Proposta {
   notificacoes Notificacao[]
   vinculos     PropostaVinculo[]
   historico    PropostaHistorico[]
+  documentacoes Documentacao[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
