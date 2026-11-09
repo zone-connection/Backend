@@ -37,6 +37,28 @@ const userMini = {
   select: { id: true, name: true, cor: true, role: true },
 } as const;
 
+const JORNADA_ETAPAS = [
+  'contrato',
+  'assinatura',
+  'obra',
+  'chaves',
+  'posVenda',
+] as const;
+
+function jornadaSanitizada(valor: Record<string, string | null>) {
+  const limpa: Record<string, string | null> = {};
+  for (const etapa of JORNADA_ETAPAS) {
+    const data = valor[etapa];
+    if (data == null || data === '') {
+      limpa[etapa] = null;
+      continue;
+    }
+    const instante = new Date(data);
+    limpa[etapa] = Number.isNaN(instante.getTime()) ? null : instante.toISOString();
+  }
+  return limpa;
+}
+
 const docSelect = {
   id: true,
   leadId: true,
@@ -63,6 +85,7 @@ const docSelect = {
   temFgts: true,
   valorFgts: true,
   temDependente: true,
+  jornada: true,
   createdAt: true,
   updatedAt: true,
   autor: userMini,
@@ -520,6 +543,10 @@ export class DocumentacaoService {
       data.valorFgts = dto.valorFgts;
     }
     if (dto.temDependente !== undefined) data.temDependente = dto.temDependente;
+    if (dto.jornada !== undefined) {
+      data.jornada =
+        dto.jornada == null ? Prisma.JsonNull : jornadaSanitizada(dto.jornada);
+    }
     if (dto.createdAt !== undefined) {
       const createdAt = parseOptionalCreatedAt(dto.createdAt);
       if (createdAt) data.createdAt = createdAt;
