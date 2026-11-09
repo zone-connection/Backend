@@ -16,6 +16,7 @@ import { CreatePropostaDto } from "./dto/create-proposta.dto";
 import { UpdatePropostaDto } from "./dto/update-proposta.dto";
 import { QueryPropostaDto } from "./dto/query-proposta.dto";
 import { QueryPropostasVinculadasDto } from "./dto/query-propostas-vinculadas.dto";
+import { PropostaHistoricoService } from "./proposta-historico.service";
 
 const userMini = { select: { id: true, name: true } } as const;
 
@@ -189,6 +190,7 @@ export class PropostasService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly teamScope: TeamScopeService,
+    private readonly historico: PropostaHistoricoService,
   ) {}
 
   async list(query: QueryPropostaDto, requester: AuthenticatedUser) {
@@ -369,6 +371,15 @@ export class PropostasService {
       corretorId = individual ? requester.id : corretorId || lead.corretorId;
       construtoraId = construtoraId || lead.construtoraId;
       empreendimentoId = empreendimentoId || lead.empreendimentoId;
+      if (!construtoraId || !empreendimentoId) {
+        const doc = await this.prisma.documentacao.findFirst({
+          where: { tenantId, leadId: dto.leadId },
+          orderBy: { updatedAt: "desc" },
+          select: { construtoraId: true, empreendimentoId: true },
+        });
+        construtoraId = construtoraId || doc?.construtoraId || null;
+        empreendimentoId = empreendimentoId || doc?.empreendimentoId || null;
+      }
     }
 
     if (corretorId) {
@@ -384,7 +395,7 @@ export class PropostasService {
     const status = dto.status ?? PropostaStatus.rascunho;
     const codigo = await this.nextCodigo(tenantId);
 
-    return this.prisma.proposta.create({
+    const criada = await this.prisma.proposta.create({
       data: {
         tenantId,
         codigo,
@@ -421,6 +432,9 @@ export class PropostasService {
       },
       select: propostaSelect,
     });
+    await this.garantirVinculo(tenantId, criada.id, empreendimentoId, requester);
+    await this.registrarStatus(tenantId, criada.id, status, requester);
+    return criada;
   }
 
   async update(
@@ -542,10 +556,65 @@ export class PropostasService {
       }
     }
 
-    return this.prisma.proposta.update({
+    const salva = await this.prisma.proposta.update({
       where: { id },
       data,
       select: propostaSelect,
+    });
+    if (dto.empreendimentoId) {
+      await this.garantirVinculo(tenantId, id, dto.empreendimentoId, requester);
+    }
+    if (dto.status !== undefined && dto.status !== existing.status) {
+      await this.registrarStatus(tenantId, id, dto.status, requester);
+    }
+    return salva;
+  }
+
+  private async garantirVinculo(
+    tenantId: string,
+    propostaId: string,
+    empreendimentoId: string | null,
+    requester: AuthenticatedUser,
+  ) {
+    if (!empreendimentoId) return;
+    const imovel = await this.prisma.imovel.findFirst({
+      where: { tenantId, empreendimentoId },
+      select: { id: true, proprietarioId: true },
+    });
+    const ja = await this.prisma.propostaVinculo.findFirst({
+      where: imovel
+        ? { propostaId, imovelId: imovel.id, removidoEm: null }
+        : { propostaId, empreendimentoId, removidoEm: null },
+      select: { id: true },
+    });
+    if (ja) return;
+    await this.prisma.propostaVinculo.create({
+      data: {
+        tenantId,
+        propostaId,
+        imovelId: imovel?.id ?? null,
+        empreendimentoId: imovel ? null : empreendimentoId,
+        proprietarioId: imovel?.proprietarioId ?? null,
+        corretorId: requester.id,
+        corretorNome: requester.name?.trim() || "Corretor",
+      },
+    });
+  }
+
+  private registrarStatus(
+    tenantId: string,
+    propostaId: string,
+    status: PropostaStatus,
+    requester: AuthenticatedUser,
+  ) {
+    return this.historico.append({
+      tenantId,
+      propostaId,
+      tipo: "status",
+      payload: { status },
+      atorTipo: "corretor",
+      atorId: requester.id,
+      atorNome: requester.name ?? null,
     });
   }
 

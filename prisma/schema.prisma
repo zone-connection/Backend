@@ -2133,6 +2133,8 @@ enum FunilEtapaPapel {
   agendado
   agendado_compra
   agendado_venda
+  /// Ao entrar, abre o cadastro de proposta do lead.
+  proposta
 }
 
 enum LeadCategoria {

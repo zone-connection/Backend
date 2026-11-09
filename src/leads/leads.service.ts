@@ -1217,6 +1217,20 @@ export class LeadsService {
         vgv: doc.vgv,
       });
     }
+    const propostas =
+      leadIds.length === 0
+        ? []
+        : await this.prisma.proposta.groupBy({
+            by: ['leadId'],
+            where: { tenantId, leadId: { in: leadIds } },
+            _count: { _all: true },
+          });
+    const propostasPorLead = new Map(
+      propostas
+        .filter((row) => row.leadId)
+        .map((row) => [row.leadId as string, row._count._all]),
+    );
+
     const vendaSlugs = [...monCtx.etapasBySlug.values()]
       .filter((etapa) => etapa.papel === FunilEtapaPapel.venda)
       .map((etapa) => etapa.slug);
@@ -1232,6 +1246,7 @@ export class LeadsService {
           documentacaoStatus2:
             fromBatch?.status2 ?? fromNested?.status2 ?? null,
           documentacaoVgv: fromBatch?.vgv ?? fromNested?.vgv ?? null,
+          propostasCount: propostasPorLead.get(lead.id) ?? 0,
           podeRedistribuir: !leadImpedeRedistribuicao({
             stage: lead.stage,
             vendaSlugs,
