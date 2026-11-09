@@ -106,6 +106,11 @@ export class CreateDocumentacaoDto {
   vgv?: number | null;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Proposta inválida.' })
+  propostaId?: string | null;
+
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   obs?: string | null;

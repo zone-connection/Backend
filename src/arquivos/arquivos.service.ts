@@ -102,6 +102,15 @@ export class ArquivosService {
         throw new ForbiddenException('Sem acesso a este registro.');
       }
     }
+    if (
+      entityType === ArquivoVinculoTipo.financeiro_comissao &&
+      isCorretorLike(user.role)
+    ) {
+      const comissao = found as { corretorId: string };
+      if (comissao.corretorId !== user.id) {
+        throw new ForbiddenException('Sem acesso a este comprovante.');
+      }
+    }
     return { tenantId, label: this.entityLabel(entityType, found) };
   }
 
@@ -180,7 +189,7 @@ export class ArquivosService {
       case ArquivoVinculoTipo.financeiro_comissao:
         return this.prisma.financeiroComissao.findFirst({
           where: { id: entityId, tenantId },
-          select: { id: true, cliente: true },
+          select: { id: true, cliente: true, corretorId: true },
         });
       default:
         return null;
