@@ -86,6 +86,16 @@ export class DocumentacaoController {
     return this.documentacaoService.create(dto, requester);
   }
 
+  @Patch(':id/jornada')
+  @Roles(Role.admin, Role.analista, Role.gerente, Role.corretor, Role.treinee)
+  marcarJornada(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateDocumentacaoDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.documentacaoService.marcarJornada(id, dto.jornada ?? {}, requester);
+  }
+
   @Patch(':id')
   @Roles(Role.admin, Role.analista, Role.gerente, Role.corretor, Role.treinee)
   update(

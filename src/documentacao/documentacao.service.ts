@@ -566,6 +566,27 @@ export class DocumentacaoService {
     return updated;
   }
 
+  async marcarJornada(
+    id: string,
+    jornada: Record<string, string | null>,
+    requester: AuthenticatedUser,
+  ) {
+    const tenantId = requireTenantId(requester);
+    const existing = await this.prisma.documentacao.findFirst({
+      where: { id, tenantId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Documentação não encontrada.');
+    }
+    await this.assertCanView(id, tenantId, requester);
+    return this.prisma.documentacao.update({
+      where: { id },
+      data: { jornada: jornadaSanitizada(jornada) },
+      select: docSelect,
+    });
+  }
+
   async remove(id: string, requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
     const existing = await this.prisma.documentacao.findFirst({
