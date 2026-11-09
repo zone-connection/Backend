@@ -4,6 +4,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -138,6 +139,10 @@ export class UpdateDocumentacaoDto {
   @IsOptional()
   @IsBoolean()
   temDependente?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  jornada?: Record<string, string | null> | null;
 
   /** Data de cadastro retroativa (ISO). */
   @IsOptional()

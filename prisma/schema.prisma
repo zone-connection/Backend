@@ -1364,6 +1364,9 @@ model Documentacao {
   valorFgts     Int?
   temDependente Boolean @default(false)
 
+  /// Datas em que cada etapa da jornada da venda foi marcada.
+  jornada Json?
+
   comissoes FinanceiroComissao[]
 
   createdAt DateTime @default(now())
