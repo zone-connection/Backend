@@ -19,7 +19,6 @@ import {
   leadLoteCopy,
   leadPoolCopy,
   DEFAULT_CRM_ORIGIN,
-  pickPublicFrontendUrl,
   type LeadNotifySnapshot,
 } from './lead-notify.messages';
 import { isPhoneOwnedByAnotherTenant } from './lead-notify-phone';
@@ -421,11 +420,7 @@ export class LeadNotifyService {
   }
 
   private crmUrl(leadId?: string | null): string | null {
-    const base = pickPublicFrontendUrl(
-      this.config.get<string>('FRONTEND_URL'),
-      this.config.get<string>('CRM_PUBLIC_URL'),
-    );
-    return `${base}${leadCrmPath(leadId)}`;
+    return `${DEFAULT_CRM_ORIGIN}${leadCrmPath(leadId)}`;
   }
 
   /**
