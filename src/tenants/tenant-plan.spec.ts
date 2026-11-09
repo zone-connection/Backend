@@ -42,12 +42,12 @@ describe('módulos de operação no plano', () => {
     assert.equal(next.comercial, true);
   });
 
-  it('não aplica ocultar Clientes do menu no tenant (é preferência por usuário)', () => {
+  it('preserva ocultar Clientes para os usuários, sem afetar o admin', () => {
     const next = normalizeModulesForPlano(TenantPlano.ouro, {
       hideClientesNav: true,
       captacao: true,
     });
-    assert.equal(next.hideClientesNav, undefined);
+    assert.equal(next.hideClientesNav, true);
     assert.equal(next.captacao, true);
   });
 
