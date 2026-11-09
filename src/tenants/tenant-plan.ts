@@ -112,7 +112,9 @@ function withNavPrefs(
   normalized: Record<string, boolean>,
   raw: Record<string, boolean>,
 ): Record<string, boolean> {
-  // hideClientesNav era tenant-wide; o menu agora é preferência por usuário no frontend.
+  if (typeof raw[HIDE_CLIENTES_NAV_KEY] === 'boolean') {
+    normalized[HIDE_CLIENTES_NAV_KEY] = raw[HIDE_CLIENTES_NAV_KEY];
+  }
   if (typeof raw[ADMIN_VER_CLIENTES_CORRETOR_KEY] === 'boolean') {
     normalized[ADMIN_VER_CLIENTES_CORRETOR_KEY] =
       raw[ADMIN_VER_CLIENTES_CORRETOR_KEY];
