@@ -362,7 +362,7 @@ export class LeadNotifyService {
       }),
       this.prisma.tenant.findUnique({
         where: { id: params.tenantId },
-        select: { name: true, logoUrl: true },
+        select: { name: true },
       }),
     ]);
     const to = resolveNotifyEmail(user ?? {});
@@ -386,7 +386,7 @@ export class LeadNotifyService {
       html: formatLeadEmailHtml({
         ...params.email,
         brandName: tenant?.name,
-        logoUrl: tenant?.logoUrl?.trim() || DEFAULT_BRAND_LOGO_URL,
+        logoUrl: DEFAULT_BRAND_LOGO_URL,
       }),
     });
     this.logger.log(`E-mail de lead enviado user=${params.userId} to=${to}`);
