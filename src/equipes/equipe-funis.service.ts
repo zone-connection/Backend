@@ -79,6 +79,9 @@ export class EquipeFunisService {
     dto: PutEquipeFunisDto,
     requester: AuthenticatedUser,
   ) {
+    throw new BadRequestException(
+      'Funis não são mais atribuídos a equipes. Toda a imobiliária usa o funil comercial.',
+    );
     if (requester.role !== Role.admin) {
       throw new ForbiddenException(
         'Somente o administrador pode alterar os funis da equipe.',
