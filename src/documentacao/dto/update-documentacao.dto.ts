@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -106,6 +107,7 @@ export class UpdateDocumentacaoDto {
   @ValidateIf((_, v) => v !== null && v !== undefined)
   @Transform(toOptionalInt)
   @IsInt({ message: 'VGV inválido.' })
+  @Max(2147483647, { message: 'VGV passa do limite permitido.' })
   @Min(0, { message: 'VGV não pode ser negativo.' })
   vgv?: number | null;
 

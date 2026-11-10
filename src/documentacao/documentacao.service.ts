@@ -292,6 +292,16 @@ export class DocumentacaoService {
     return proposta.id;
   }
 
+  private vendaSemPropostaPronta = false;
+
+  private async garantirVendaSemProposta() {
+    if (this.vendaSemPropostaPronta) return;
+    await this.prisma.$executeRawUnsafe(
+      `ALTER TABLE "documentacoes" ADD COLUMN IF NOT EXISTS "vendaSemProposta" BOOLEAN NOT NULL DEFAULT false`,
+    );
+    this.vendaSemPropostaPronta = true;
+  }
+
   private exigirPropostaNaVenda(
     vgv: number | null | undefined,
     dataVenda: Date | string | null | undefined,
@@ -366,6 +376,7 @@ export class DocumentacaoService {
       dto.vendaSemProposta,
     );
 
+    await this.garantirVendaSemProposta();
     const created = await this.prisma.documentacao.create({
       data: {
         tenantId,
@@ -624,6 +635,7 @@ export class DocumentacaoService {
       vendaSemPropostaFinal,
     );
 
+    await this.garantirVendaSemProposta();
     const updated = await this.prisma.documentacao.update({
       where: { id },
       data,
