@@ -128,61 +128,6 @@ export class FunisService {
     throw new BadRequestException(
       'A imobiliária usa um único funil comercial. Crie ou edite as etapas desse funil.',
     );
-    const tenantId = requireTenantId(requester);
-    const name = dto.name.trim();
-    if (!name) throw new BadRequestException('Informe o nome do funil.');
-    const tipo = dto.tipo ?? FunilTipo.comercial;
-
-    const clash = await this.prisma.funil.findUnique({
-      where: { tenantId_name: { tenantId, name } },
-    });
-    if (clash) {
-      throw new ConflictException('Já existe um funil com este nome.');
-    }
-
-    const padrao = defaultStagesForTipo(tipo);
-    const etapasInput =
-      dto.etapas && dto.etapas.length > 0
-        ? dto.etapas
-        : dto.usarPadrao === false
-          ? [
-              {
-                label: padrao[0]!.label,
-                color: padrao[0]!.color,
-                papel: FunilEtapaPapel.inicial,
-              },
-            ]
-          : padrao.map((s) => ({
-              label: s.label,
-              color: s.color,
-              sortOrder: s.sortOrder,
-              papel: s.papel ?? null,
-            }));
-
-    const etapasData = this.buildEtapasCreate(etapasInput);
-
-    const ativar = dto.ativar === true;
-    const funil = await this.prisma.$transaction(async (tx) => {
-      if (ativar) {
-        await tx.funil.updateMany({
-          where: whereDeactivateActiveOfTipo(tenantId, tipo),
-          data: { ativo: false },
-        });
-      }
-      const count = await tx.funil.count({ where: { tenantId, tipo } });
-      return tx.funil.create({
-        data: {
-          tenantId,
-          name,
-          tipo,
-          ativo: ativar || count === 0,
-          etapas: { create: etapasData },
-        },
-        select: funilSelect,
-      });
-    });
-
-    return funil;
   }
 
   async update(id: string, dto: UpdateFunilDto, requester: AuthenticatedUser) {
@@ -279,21 +224,6 @@ export class FunisService {
     throw new BadRequestException(
       'Não é possível trocar o funil em uso.',
     );
-    const tenantId = requireTenantId(requester);
-    const funil = await this.ensureOwned(id, tenantId);
-
-    await this.prisma.$transaction([
-      this.prisma.funil.updateMany({
-        where: whereDeactivateActiveOfTipo(tenantId, funil.tipo, id),
-        data: { ativo: false },
-      }),
-      this.prisma.funil.update({
-        where: { id },
-        data: { ativo: true },
-      }),
-    ]);
-
-    return this.findOne(id, requester);
   }
 
   /**
@@ -323,75 +253,6 @@ export class FunisService {
     requester: AuthenticatedUser,
   ) {
     throw new BadRequestException('A migração de leads entre funis não está disponível.');
-    const tenantId = requireTenantId(requester);
-    const origem = await this.ensureOwned(id, tenantId);
-    if (origem.tipo !== FunilTipo.comercial) {
-      throw new BadRequestException(
-        'Só é possível migrar leads de um funil comercial.',
-      );
-    }
-    if (id === destinoFunilId) {
-      throw new BadRequestException('Escolha um funil de destino diferente.');
-    }
-
-    const destino = await this.prisma.funil.findFirst({
-      where: { id: destinoFunilId, tenantId, tipo: FunilTipo.comercial },
-      select: funilSelect,
-    });
-    if (!destino) {
-      throw new NotFoundException('Funil de destino não encontrado.');
-    }
-
-    const stage = this.firstStageSlug(destino);
-    const timing = await this.monitoramento.stageChangeData(
-      tenantId,
-      stage,
-      new Date(),
-      destino.id,
-    );
-    const ativosWhere = {
-      tenantId,
-      funilId: origem.id,
-      perdidoAt: null,
-    };
-    const result = await this.prisma.lead.updateMany({
-      where: ativosWhere,
-      data: {
-        funilId: destino.id,
-        ...timing,
-        stage,
-      },
-    });
-    const ignoradosPerdidos = await this.prisma.lead.count({
-      where: {
-        tenantId,
-        funilId: origem.id,
-        perdidoAt: { not: null },
-      },
-    });
-
-    if (result.count > 0 && !destino.ativo) {
-      await this.prisma.funil.updateMany({
-        where: whereDeactivateActiveOfTipo(
-          tenantId,
-          FunilTipo.comercial,
-          destino.id,
-        ),
-        data: { ativo: false },
-      });
-      await this.prisma.funil.update({
-        where: { id: destino.id },
-        data: { ativo: true },
-      });
-    }
-
-    return {
-      ok: true as const,
-      migrados: result.count,
-      ignoradosPerdidos,
-      destinoFunilId: destino.id,
-      stage,
-    };
   }
 
   async remove(id: string, requester: AuthenticatedUser) {
@@ -684,91 +545,6 @@ export class FunisService {
     throw new BadRequestException(
       'As etapas padrão não podem ser restauradas. Edite as etapas do funil comercial.',
     );
-    const tenantId = requireTenantId(requester);
-    const owned = await this.ensureOwned(funilId, tenantId);
-    const stages = defaultStagesForTipo(owned.tipo);
-
-    for (const stage of stages) {
-      const papel = stage.papel ?? null;
-      const existing = await this.prisma.funilEtapa.findFirst({
-        where: { funilId, slug: stage.slug },
-      });
-      if (existing) {
-        if (papel) {
-          await this.clearPapelOnOthers(
-            this.prisma,
-            funilId,
-            papel as FunilEtapaPapel,
-            existing.id,
-          );
-        }
-        await this.prisma.funilEtapa.update({
-          where: { id: existing.id },
-          data: {
-            label: stage.label,
-            color: stage.color,
-            sortOrder: stage.sortOrder,
-            active: true,
-            papel,
-          },
-        });
-        continue;
-      }
-      try {
-        if (papel) {
-          await this.clearPapelOnOthers(
-            this.prisma,
-            funilId,
-            papel as FunilEtapaPapel,
-            null,
-          );
-        }
-        await this.prisma.funilEtapa.create({
-          data: {
-            funilId,
-            label: stage.label,
-            slug: stage.slug,
-            color: stage.color,
-            sortOrder: stage.sortOrder,
-            active: true,
-            papel,
-          },
-        });
-      } catch (err) {
-        if (
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === 'P2002'
-        ) {
-          const clash = await this.prisma.funilEtapa.findFirst({
-            where: { funilId, label: stage.label },
-          });
-          if (clash) {
-            if (papel) {
-              await this.clearPapelOnOthers(
-                this.prisma,
-                funilId,
-                papel as FunilEtapaPapel,
-                clash.id,
-              );
-            }
-            await this.prisma.funilEtapa.update({
-              where: { id: clash.id },
-              data: {
-                slug: stage.slug,
-                color: stage.color,
-                sortOrder: stage.sortOrder,
-                active: true,
-                papel,
-              },
-            });
-          }
-        } else {
-          throw err;
-        }
-      }
-    }
-
-    return this.findOne(funilId, requester);
   }
 
   /** Usado por CatalogService / leads — etapas ativas do funil em uso. */
@@ -1202,19 +978,6 @@ export class FunisService {
     throw new BadRequestException(
       'A recuperação de etapas dos leads não está disponível.',
     );
-    const tenantId = requireTenantId(requester);
-    const owned = await this.ensureOwned(funilId, tenantId);
-    if (owned.tipo !== FunilTipo.comercial) {
-      throw new BadRequestException(
-        'Recuperar etapas dos leads aplica-se somente ao funil comercial.',
-      );
-    }
-    const funil = await this.prisma.funil.findFirst({
-      where: { id: funilId },
-      select: funilSelect,
-    });
-    if (!funil) throw new NotFoundException('Funil não encontrado.');
-    return this.attachOrphanStages(tenantId, funil);
   }
 
   private async uniqueFunilName(tenantId: string, base: string) {
