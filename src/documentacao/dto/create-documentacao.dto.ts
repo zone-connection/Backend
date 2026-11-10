@@ -111,6 +111,10 @@ export class CreateDocumentacaoDto {
   propostaId?: string | null;
 
   @IsOptional()
+  @IsBoolean()
+  vendaSemProposta?: boolean;
+
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   obs?: string | null;
