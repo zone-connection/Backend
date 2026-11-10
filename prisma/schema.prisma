@@ -1360,6 +1360,8 @@ model Documentacao {
   vgv Int?
   propostaId String?
   proposta   Proposta? @relation(fields: [propostaId], references: [id], onDelete: SetNull)
+  /// Quando ativo, a venda pode ser lançada sem proposta vinculada.
+  vendaSemProposta Boolean @default(false)
   obs String?
 
   temEntrada    Boolean @default(false)

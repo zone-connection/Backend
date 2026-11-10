@@ -80,6 +80,7 @@ const docSelect = {
   dataVenda: true,
   vgv: true,
   propostaId: true,
+  vendaSemProposta: true,
   obs: true,
   temEntrada: true,
   valorEntrada: true,
@@ -295,7 +296,9 @@ export class DocumentacaoService {
     vgv: number | null | undefined,
     dataVenda: Date | string | null | undefined,
     propostaId: string | null | undefined,
+    vendaSemProposta?: boolean,
   ) {
+    if (vendaSemProposta) return;
     if (vgv != null && vgv > 0 && dataVenda && !propostaId) {
       throw new BadRequestException(
         'Vincule uma proposta para lançar a venda com VGV e data de venda.',
@@ -356,7 +359,12 @@ export class DocumentacaoService {
     const dataVenda =
       parseOptionalDate(dto.dataVenda) ??
       (isStatusVendido(status2) ? todayCivilDate() : null);
-    this.exigirPropostaNaVenda(dto.vgv ?? null, dataVenda, propostaId);
+    this.exigirPropostaNaVenda(
+      dto.vgv ?? null,
+      dataVenda,
+      propostaId,
+      dto.vendaSemProposta,
+    );
 
     const created = await this.prisma.documentacao.create({
       data: {
@@ -381,6 +389,7 @@ export class DocumentacaoService {
         dataVenda,
         vgv: dto.vgv ?? null,
         propostaId,
+        vendaSemProposta: dto.vendaSemProposta ?? false,
         obs: dto.obs?.trim() || null,
         temEntrada: dto.temEntrada ?? false,
         valorEntrada: dto.temEntrada ? (dto.valorEntrada ?? null) : null,
@@ -416,6 +425,7 @@ export class DocumentacaoService {
         status2: true,
         vgv: true,
         propostaId: true,
+        vendaSemProposta: true,
         autorId: true,
       },
     });
@@ -551,6 +561,9 @@ export class DocumentacaoService {
         ? { connect: { id: propostaId } }
         : { disconnect: true };
     }
+    if (dto.vendaSemProposta !== undefined) {
+      data.vendaSemProposta = dto.vendaSemProposta;
+    }
 
     const status2Atual =
       typeof data.status2 === 'string' ? data.status2 : existing.status2;
@@ -600,7 +613,16 @@ export class DocumentacaoService {
       dto.propostaId !== undefined
         ? await this.resolvePropostaId(tenantId, dto.propostaId)
         : existing.propostaId;
-    this.exigirPropostaNaVenda(vgvFinal, dataVendaFinal, propostaFinal);
+    const vendaSemPropostaFinal =
+      dto.vendaSemProposta !== undefined
+        ? dto.vendaSemProposta
+        : existing.vendaSemProposta;
+    this.exigirPropostaNaVenda(
+      vgvFinal,
+      dataVendaFinal,
+      propostaFinal,
+      vendaSemPropostaFinal,
+    );
 
     const updated = await this.prisma.documentacao.update({
       where: { id },
