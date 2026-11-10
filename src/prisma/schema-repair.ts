@@ -114,7 +114,8 @@ const ROLETA_STATEMENTS = [
     ALTER TABLE "leads"
       ADD COLUMN IF NOT EXISTS "roletaAtribuidoAt" TIMESTAMP(3),
       ADD COLUMN IF NOT EXISTS "roletaPrazoAt" TIMESTAMP(3),
-      ADD COLUMN IF NOT EXISTS "roletaRedistribuido" BOOLEAN NOT NULL DEFAULT false
+      ADD COLUMN IF NOT EXISTS "roletaRedistribuido" BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "historicoPendente" BOOLEAN NOT NULL DEFAULT false
   `,
   `CREATE INDEX IF NOT EXISTS "leads_roletaPrazoAt_idx" ON "leads"("roletaPrazoAt")`,
   `

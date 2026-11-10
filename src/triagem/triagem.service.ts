@@ -251,6 +251,7 @@ export class TriagemService {
         ...(shouldUpdateStage && targetStage ? { stage: targetStage } : {}),
         ...timing,
         lastTriagemAt: now,
+        historicoPendente: dto.automatico === true,
       },
     });
 

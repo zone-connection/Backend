@@ -722,6 +722,8 @@ model Lead {
   roletaPrazoAt DateTime?
   /// Já passou de um integrante da roleta por tempo esgotado.
   roletaRedistribuido Boolean @default(false)
+  /// O último avanço de etapa foi registrado automaticamente pelo sistema.
+  historicoPendente Boolean @default(false)
 
   /// Pool da equipe (admin distribuiu à equipe; gerente ainda não atribuiu corretor).
   equipeId String?

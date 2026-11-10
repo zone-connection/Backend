@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsIn,
   IsOptional,
   IsString,
@@ -35,4 +36,9 @@ export class CreateTriagemDto {
   @IsString()
   @MaxLength(60)
   stageAnterior?: string;
+
+  /** Relato gerado pelo sistema ao pular o formulário de histórico. */
+  @IsOptional()
+  @IsBoolean()
+  automatico?: boolean;
 }
