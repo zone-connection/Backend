@@ -25,6 +25,7 @@ const POS_VENDA_STATEMENTS = [
   `ALTER TYPE "FunilEtapaPapel" ADD VALUE IF NOT EXISTS 'reprovado'`,
   `ALTER TYPE "FunilEtapaPapel" ADD VALUE IF NOT EXISTS 'proposta'`,
   `ALTER TABLE "documentacoes" ADD COLUMN IF NOT EXISTS "jornada" JSONB`,
+  `ALTER TABLE "documentacoes" ADD COLUMN IF NOT EXISTS "vendaSemProposta" BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TYPE "FunilTipo" ADD VALUE IF NOT EXISTS 'pos_venda'`,
   `
     ALTER TABLE "vendas_usado"
