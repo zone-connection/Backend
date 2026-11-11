@@ -83,6 +83,18 @@ export class LeadsController {
     return this.leadsService.distribuirResumo(requester);
   }
 
+  /** Recebidos (createdAt) e distribuídos (atribuição a corretor) no intervalo. */
+  @Get('indicadores-periodo')
+  @UseGuards(RolesGuard)
+  @Roles(Role.admin, Role.gerente)
+  indicadoresPeriodo(
+    @Query('inicio') inicio: string,
+    @Query('fim') fim: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.leadsService.indicadoresPeriodo(requester, inicio, fim);
+  }
+
   @Post('distribuir/equipes')
   @UseGuards(RolesGuard)
   @Roles(Role.admin, Role.gerente)
