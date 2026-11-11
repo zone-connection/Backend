@@ -1680,8 +1680,28 @@ export class FinanceiroService {
     const rows = await this.prisma.financeiroComissao.findMany({
       where,
       orderBy: { dataVenda: "desc" },
+      include: { notaFiscal: true },
     });
-    return rows.map((row) => this.mapComissao(row, requester));
+    return rows.map((row) => ({
+      ...this.mapComissao(row, requester),
+      notaFiscal: row.notaFiscal
+        ? {
+            id: row.notaFiscal.id,
+            numero: row.notaFiscal.numero,
+            cliente: row.notaFiscal.cliente,
+            vgv: row.notaFiscal.vgv == null ? null : Number(row.notaFiscal.vgv),
+            corretor: row.notaFiscal.corretor,
+            construtora: row.notaFiscal.construtora,
+            empreendimento: row.notaFiscal.empreendimento,
+            torreBloco: row.notaFiscal.torreBloco,
+            dataEmissao: row.notaFiscal.dataEmissao
+              ? isoDateOnly(row.notaFiscal.dataEmissao)
+              : null,
+            arquivoUrl: row.notaFiscal.arquivoUrl,
+            arquivoNome: row.notaFiscal.arquivoNome,
+          }
+        : null,
+    }));
   }
 
   async createComissao(dto: CreateComissaoDto, requester: AuthenticatedUser) {
@@ -1741,6 +1761,7 @@ export class FinanceiroService {
         ),
         status: dto.status ?? FinanceiroComissaoStatus.pendente,
         observacao: (dto.observacao ?? '').trim(),
+        ...(dto.notaFiscalId ? { notaFiscalId: dto.notaFiscalId } : {}),
         ...values,
         ...premiacao,
       },
@@ -1876,6 +1897,7 @@ export class FinanceiroService {
         ),
         status: dto.status ?? FinanceiroComissaoStatus.pendente,
         observacao: (dto.observacao ?? "").trim(),
+        ...(dto.notaFiscalId ? { notaFiscalId: dto.notaFiscalId } : {}),
         ...values,
         ...premiacao,
       },
@@ -2018,6 +2040,9 @@ export class FinanceiroService {
         ...(dto.status ? { status: dto.status } : {}),
         ...(dto.observacao !== undefined
           ? { observacao: dto.observacao.trim() }
+          : {}),
+        ...(dto.notaFiscalId !== undefined
+          ? { notaFiscalId: dto.notaFiscalId || null }
           : {}),
       },
     });

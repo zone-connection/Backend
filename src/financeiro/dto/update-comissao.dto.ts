@@ -116,4 +116,9 @@ export class UpdateComissaoDto extends PremiacaoComissaoDto {
   @IsString()
   @MaxLength(2000)
   observacao?: string;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== '')
+  @IsUUID()
+  notaFiscalId?: string | null;
 }

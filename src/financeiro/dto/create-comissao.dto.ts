@@ -72,4 +72,8 @@ export class CreateComissaoDto extends PremiacaoComissaoDto {
   @IsString()
   @MaxLength(2000)
   observacao?: string;
+
+  @IsOptional()
+  @IsUUID()
+  notaFiscalId?: string;
 }

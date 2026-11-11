@@ -444,6 +444,38 @@ export async function ensureComissaoIssSchema(prisma: PrismaService) {
       ADD COLUMN IF NOT EXISTS "percentualIss" DECIMAL(7, 4) NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS "valorIss" DECIMAL(18, 2) NOT NULL DEFAULT 0
   `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "financeiro_notas_fiscais" (
+      "id" TEXT NOT NULL,
+      "tenantId" TEXT NOT NULL,
+      "numero" TEXT NOT NULL,
+      "cliente" TEXT NOT NULL DEFAULT '',
+      "vgv" DECIMAL(18, 2),
+      "corretor" TEXT NOT NULL DEFAULT '',
+      "construtora" TEXT NOT NULL DEFAULT '',
+      "empreendimento" TEXT NOT NULL DEFAULT '',
+      "torreBloco" TEXT NOT NULL DEFAULT '',
+      "dataEmissao" TIMESTAMP(3),
+      "arquivoUrl" TEXT NOT NULL DEFAULT '',
+      "arquivoNome" TEXT NOT NULL DEFAULT '',
+      "arquivoPublicId" TEXT NOT NULL DEFAULT '',
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "financeiro_notas_fiscais_pkey" PRIMARY KEY ("id")
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "financeiro_comissoes"
+      ADD COLUMN IF NOT EXISTS "notaFiscalId" TEXT
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "financeiro_comissoes_notaFiscalId_idx"
+      ON "financeiro_comissoes"("notaFiscalId")
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "financeiro_notas_fiscais_tenantId_idx"
+      ON "financeiro_notas_fiscais"("tenantId")
+  `);
 }
 
 export async function ensureLeadAtribuicaoSchema(prisma: PrismaService) {

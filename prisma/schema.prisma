@@ -219,6 +219,7 @@ model Tenant {
   financeiroMovimentos    FinanceiroMovimento[]
   financeiroTitulos       FinanceiroTitulo[]
   financeiroComissoes     FinanceiroComissao[]
+  financeiroNotasFiscais  FinanceiroNotaFiscal[]
   financeiroDespesaTipos       FinanceiroDespesaTipo[]
   financeiroDespesas           FinanceiroDespesa[]
   financeiroRecebimentoTipos   FinanceiroRecebimentoTipo[]
@@ -3838,6 +3839,8 @@ model FinanceiroComissao {
   valorPremiacaoRestante          Decimal @default(0) @db.Decimal(18, 2)
   status          FinanceiroComissaoStatus @default(pendente)
   observacao      String                   @default("")
+  notaFiscalId    String?
+  notaFiscal      FinanceiroNotaFiscal?   @relation(fields: [notaFiscalId], references: [id], onDelete: SetNull)
   titulos         FinanceiroTitulo[]
 
   createdAt DateTime @default(now())
@@ -3850,7 +3853,34 @@ model FinanceiroComissao {
   @@index([corretorId])
   @@index([gerenteId])
   @@index([equipeId])
+  @@index([notaFiscalId])
   @@map("financeiro_comissoes")
+}
+
+/// Nota fiscal da venda, vinculável a um ou mais lançamentos de comissão.
+model FinanceiroNotaFiscal {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  numero          String
+  cliente         String   @default("")
+  vgv             Decimal? @db.Decimal(18, 2)
+  corretor        String   @default("")
+  construtora     String   @default("")
+  empreendimento  String   @default("")
+  torreBloco      String   @default("")
+  dataEmissao     DateTime?
+  arquivoUrl      String   @default("")
+  arquivoNome     String   @default("")
+  arquivoPublicId String   @default("")
+  comissoes       FinanceiroComissao[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, numero])
+  @@map("financeiro_notas_fiscais")
 }
 
 /// Tipo de acordo comercial plataforma ↔ imobiliária.

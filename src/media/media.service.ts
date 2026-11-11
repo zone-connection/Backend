@@ -200,7 +200,13 @@ export class MediaService {
     const document =
       /\.(pdf|docx?|xlsx?|pptx?|txt|zip)$/.test(name) ||
       mime === 'application/pdf' ||
+      mime === 'application/msword' ||
+      mime === 'application/vnd.ms-powerpoint' ||
+      mime === 'application/vnd.ms-excel' ||
       mime.includes('officedocument') ||
+      mime.includes('wordprocessingml') ||
+      mime.includes('presentationml') ||
+      mime.includes('spreadsheetml') ||
       mime === 'text/plain' ||
       mime === 'application/zip';
     if (!video && !image && !document) {
