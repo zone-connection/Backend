@@ -72,6 +72,13 @@ export class CreateComissaoVendaAvulsaDto extends PremiacaoComissaoDto {
   @Max(100)
   percentualTributos!: number;
 
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  percentualIss?: number;
+
   @Type(() => Number)
   @IsNumber()
   @Min(0)

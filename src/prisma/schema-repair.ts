@@ -377,6 +377,14 @@ export async function ensureRuntimeSchema(prisma: PrismaService) {
     );
   }
   try {
+    await ensureComissaoIssSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar o ISS da comissão.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
+  try {
     await ensureLeadAtribuicaoSchema(prisma);
   } catch (err) {
     logger.error(
@@ -427,6 +435,14 @@ export async function ensureMfaSchema(prisma: PrismaService) {
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "user_mfa_audit_pkey" PRIMARY KEY ("id")
     )
+  `);
+}
+
+export async function ensureComissaoIssSchema(prisma: PrismaService) {
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "financeiro_comissoes"
+      ADD COLUMN IF NOT EXISTS "percentualIss" DECIMAL(7, 4) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS "valorIss" DECIMAL(18, 2) NOT NULL DEFAULT 0
   `);
 }
 

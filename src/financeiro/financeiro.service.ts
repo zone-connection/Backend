@@ -1964,6 +1964,7 @@ export class FinanceiroService {
     const percentages = {
       percentualImobiliaria:
         dto.percentualImobiliaria ?? Number(existing.percentualImobiliaria),
+      percentualIss: dto.percentualIss ?? Number(existing.percentualIss ?? 0),
       percentualTributos:
         dto.percentualTributos ?? Number(existing.percentualTributos),
       percentualCorretor:
@@ -4234,6 +4235,8 @@ export class FinanceiroService {
       vgv: Number(row.vgv),
       percentualImobiliaria: Number(row.percentualImobiliaria),
       comissaoBruta: Number(row.comissaoBruta),
+      percentualIss: Number(row.percentualIss ?? 0),
+      valorIss: Number(row.valorIss ?? 0),
       percentualTributos: Number(row.percentualTributos),
       valorTributos: Number(row.valorTributos),
       comissaoLiquida: Number(row.comissaoLiquida),
@@ -4262,6 +4265,8 @@ export class FinanceiroService {
       const {
         percentualImobiliaria: _percentualImobiliaria,
         comissaoBruta: _comissaoBruta,
+        percentualIss: _percentualIss,
+        valorIss: _valorIss,
         percentualTributos: _percentualTributos,
         valorTributos: _valorTributos,
         comissaoLiquida: _comissaoLiquida,
@@ -4302,6 +4307,7 @@ export class FinanceiroService {
     vgv: number,
     input: {
       percentualImobiliaria: number;
+      percentualIss?: number;
       percentualTributos: number;
       percentualCorretor: number;
       percentualGerente: number;
@@ -4327,10 +4333,11 @@ export class FinanceiroService {
     const comissaoBruta = money(
       vgvDecimal.mul(percent(input.percentualImobiliaria)),
     );
-    const valorTributos = money(
-      comissaoBruta.mul(percent(input.percentualTributos)),
-    );
-    const comissaoLiquida = money(comissaoBruta.minus(valorTributos));
+    const percentualIss = input.percentualIss ?? 0;
+    const valorIss = money(comissaoBruta.mul(percent(percentualIss)));
+    const aposIss = money(comissaoBruta.minus(valorIss));
+    const valorTributos = money(aposIss.mul(percent(input.percentualTributos)));
+    const comissaoLiquida = money(aposIss.minus(valorTributos));
     const valorCorretor = money(
       comissaoLiquida.mul(percent(input.percentualCorretor)),
     );
@@ -4351,6 +4358,8 @@ export class FinanceiroService {
       vgv: vgvDecimal,
       percentualImobiliaria: input.percentualImobiliaria,
       comissaoBruta,
+      percentualIss,
+      valorIss,
       percentualTributos: input.percentualTributos,
       valorTributos,
       comissaoLiquida,
@@ -4431,6 +4440,7 @@ export class FinanceiroService {
     valorSocios: Prisma.Decimal | number;
     valorCorretor: Prisma.Decimal | number;
     valorGerente: Prisma.Decimal | number;
+    valorIss?: Prisma.Decimal | number;
     valorTributos: Prisma.Decimal | number;
     valorPremiacaoCorretor?: Prisma.Decimal | number;
     valorPremiacaoImposto?: Prisma.Decimal | number;
@@ -4485,6 +4495,15 @@ export class FinanceiroService {
         categoria: "Comissão gerente",
         centro: "Comissão gerente",
         parceiroNome: row.gerente.trim() || "Gerente",
+      },
+      {
+        papel: "iss",
+        label: "ISS",
+        tipo: FinanceiroTituloTipo.pagar,
+        valor: money(row.valorIss),
+        categoria: "ISS",
+        centro: "Impostos",
+        parceiroNome: "ISS",
       },
       {
         papel: "tributos",
@@ -4599,6 +4618,7 @@ export class FinanceiroService {
     valorSocios: Prisma.Decimal | number;
     valorCorretor: Prisma.Decimal | number;
     valorGerente: Prisma.Decimal | number;
+    valorIss?: Prisma.Decimal | number;
     valorTributos: Prisma.Decimal | number;
     valorPremiacaoCorretor?: Prisma.Decimal | number;
     valorPremiacaoImposto?: Prisma.Decimal | number;

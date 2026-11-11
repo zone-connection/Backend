@@ -3811,6 +3811,8 @@ model FinanceiroComissao {
   vgv                   Decimal                  @db.Decimal(18, 2)
   percentualImobiliaria Decimal                  @db.Decimal(7, 4)
   comissaoBruta         Decimal                  @db.Decimal(18, 2)
+  percentualIss         Decimal                  @default(0) @db.Decimal(7, 4)
+  valorIss              Decimal                  @default(0) @db.Decimal(18, 2)
   percentualTributos    Decimal                  @db.Decimal(7, 4)
   valorTributos         Decimal                  @db.Decimal(18, 2)
   comissaoLiquida       Decimal                  @db.Decimal(18, 2)
