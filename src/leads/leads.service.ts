@@ -520,6 +520,71 @@ export class LeadsService {
     };
   }
 
+  /**
+   * Recebidos: leads criados no intervalo (inclui os que depois foram perdidos).
+   * Distribuídos: leads atribuídos a um corretor nesse intervalo.
+   */
+  async indicadoresPeriodo(
+    requester: AuthenticatedUser,
+    inicio: string,
+    fim: string,
+  ) {
+    const tenantId = requireTenantId(requester);
+    if (requester.role !== Role.admin && requester.role !== Role.gerente) {
+      throw new ForbiddenException(
+        'Somente admin e gerente acompanham esses indicadores.',
+      );
+    }
+    const start = new Date(inicio);
+    const end = new Date(fim);
+    if (
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime()) ||
+      start > end
+    ) {
+      throw new BadRequestException('Período inválido.');
+    }
+
+    const [recebidos, perdas, distribuidos] = await Promise.all([
+      this.prisma.lead.count({
+        where: {
+          tenantId,
+          tipo: ContatoTipo.lead,
+          createdAt: { gte: start, lte: end },
+        },
+      }),
+      this.prisma.lead.count({
+        where: {
+          tenantId,
+          tipo: ContatoTipo.lead,
+          perdidoAt: { gte: start, lte: end },
+        },
+      }),
+      this.prisma.leadReatribuicao.findMany({
+        where: {
+          tenantId,
+          toCorretorId: { not: null },
+          createdAt: { gte: start, lte: end },
+          acao: {
+            in: [
+              LeadAtribuicaoAcao.entrada,
+              LeadAtribuicaoAcao.distribuicao,
+              LeadAtribuicaoAcao.reatribuicao,
+              LeadAtribuicaoAcao.roleta,
+              LeadAtribuicaoAcao.redistribuicao,
+              LeadAtribuicaoAcao.caca,
+            ],
+          },
+          lead: { tipo: ContatoTipo.lead },
+        },
+        distinct: ['leadId'],
+        select: { leadId: true },
+      }),
+    ]);
+
+    return { recebidos, distribuidos: distribuidos.length, perdas };
+  }
+
   /** Admin/gerente: aloca leads sem dono (pool do admin) para o pool das equipes. */
   async distribuirEquipes(
     dto: DistribuirEquipesDto,
