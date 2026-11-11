@@ -112,6 +112,10 @@ export class CreateComissaoVendaAvulsaDto extends PremiacaoComissaoDto {
   @MaxLength(2000)
   observacao?: string;
 
+  @IsOptional()
+  @IsUUID()
+  notaFiscalId?: string;
+
   /** Quando true, cria uma ficha vendida em Documentação. Padrão: não cria. */
   @IsOptional()
   @IsBoolean()
