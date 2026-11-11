@@ -114,6 +114,12 @@ export const leadSelect = {
   triagemOrigemHerdada: true,
   createdAt: true,
   updatedAt: true,
+  reatribuicoes: {
+    where: { acao: 'entrada' },
+    orderBy: { createdAt: 'asc' },
+    take: 1,
+    select: { actor: { select: { role: true } } },
+  },
   metaLink: {
     select: {
       leadgenId: true,
