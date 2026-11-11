@@ -78,6 +78,13 @@ export class UpdateComissaoDto extends PremiacaoComissaoDto {
   @IsNumber()
   @Min(0)
   @Max(100)
+  percentualIss?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
   percentualCorretor?: number;
 
   @IsOptional()
