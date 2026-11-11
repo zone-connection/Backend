@@ -2164,11 +2164,11 @@ export class FinanceiroService {
     const semComissao = <T extends { descricao: string; categoria: string; centro: string; titulo?: { comissaoId: string | null } | null }>(
       rows: T[],
     ) => rows.filter((r) => !this.isMovimentoComissao(r));
-    const receitasMes = sumTipo(movMes, FinanceiroMovimentoTipo.entrada);
-    const despesasMes = sumTipo(
-      semComissao(movMes),
-      FinanceiroMovimentoTipo.saida,
-    );
+    const receitasMes =
+      sumTipo(movMes, FinanceiroMovimentoTipo.entrada) + aReceberValor;
+    const despesasMes =
+      sumTipo(semComissao(movMes), FinanceiroMovimentoTipo.saida) +
+      aPagarValor;
     const receitasAnt = sumTipo(movAnt, FinanceiroMovimentoTipo.entrada);
     const despesasAnt = sumTipo(
       semComissao(movAnt),
@@ -2194,9 +2194,20 @@ export class FinanceiroService {
           (r) => this.classifyDespesaBucket(resolvedNatureza(r)) === bucket,
         )
         .reduce((s, r) => s + r.valor, 0);
-    const despesasFixaMes = sumNatureza(movMes, "fixa");
-    const despesasVariavelMes = sumNatureza(movMes, "variavel");
-    const despesasOutrosMes = sumNatureza(movMes, "outros");
+    const pagarNoPeriodo = titulosPagar.filter((t) =>
+      noPeriodoVisao(t.vencimento, y, mesFiltro),
+    );
+    const somaPagar = (bucket: "fixa" | "variavel" | "outros") =>
+      pagarNoPeriodo
+        .filter(
+          (t) => this.classifyDespesaBucket(t.natureza) === bucket,
+        )
+        .reduce((s, t) => s + t.valor, 0);
+    const despesasFixaMes = sumNatureza(movMes, "fixa") + somaPagar("fixa");
+    const despesasVariavelMes =
+      sumNatureza(movMes, "variavel") + somaPagar("variavel");
+    const despesasOutrosMes =
+      sumNatureza(movMes, "outros") + somaPagar("outros");
 
     const mapPipelineItem = (row: (typeof movMes)[number]) => ({
       id: row.id,
@@ -2221,26 +2232,30 @@ export class FinanceiroService {
       (s, t) => s + t.valor,
       0,
     );
+    const tituloPipeline = (row: (typeof pagarNoPeriodo)[number]) => ({
+      id: row.id,
+      descricao: row.descricao,
+      valor: row.valor,
+      data: isoDateOnly(row.vencimento),
+      centro: row.centro || row.categoria || "",
+      parceiro: row.parceiroNome,
+      status: row.status,
+    });
+    const pipelineDoBucket = (bucket: "fixa" | "variavel" | "outros") =>
+      [
+        ...saidasMes
+          .filter((r) => this.classifyDespesaBucket(resolvedNatureza(r)) === bucket)
+          .map(mapPipelineItem),
+        ...pagarNoPeriodo
+          .filter((t) => this.classifyDespesaBucket(t.natureza) === bucket)
+          .map(tituloPipeline),
+      ]
+        .sort((a, b) => b.valor - a.valor)
+        .slice(0, 40);
     const despesasPipeline = {
-      fixas: saidasMes
-        .filter((r) => this.classifyDespesaBucket(resolvedNatureza(r)) === "fixa")
-        .sort((a, b) => b.valor - a.valor)
-        .slice(0, 40)
-        .map(mapPipelineItem),
-      variaveis: saidasMes
-        .filter(
-          (r) => this.classifyDespesaBucket(resolvedNatureza(r)) === "variavel",
-        )
-        .sort((a, b) => b.valor - a.valor)
-        .slice(0, 40)
-        .map(mapPipelineItem),
-      outros: saidasMes
-        .filter(
-          (r) => this.classifyDespesaBucket(resolvedNatureza(r)) === "outros",
-        )
-        .sort((a, b) => b.valor - a.valor)
-        .slice(0, 40)
-        .map(mapPipelineItem),
+      fixas: pipelineDoBucket("fixa"),
+      variaveis: pipelineDoBucket("variavel"),
+      outros: pipelineDoBucket("outros"),
       comissoes: [
         ...comissoesAReceberMes.map((row) => ({
           id: row.id,
@@ -3180,6 +3195,7 @@ export class FinanceiroService {
           valor: true,
           vencimento: true,
           comissaoId: true,
+          natureza: true,
         },
       }),
       this.prisma.financeiroMovimento.findMany({
@@ -3233,23 +3249,37 @@ export class FinanceiroService {
           r.tipo === FinanceiroMovimentoTipo.saida &&
           !this.isMovimentoComissao(r),
       );
+      const pagarMes = titulosAbertos.filter(
+        (t) =>
+          t.tipo === FinanceiroTituloTipo.pagar &&
+          isoDateOnly(t.vencimento).slice(0, 7) === key,
+      );
+      const somaPagar = (bucket: "fixa" | "variavel") =>
+        pagarMes
+          .filter((t) => this.classifyDespesaBucket(t.natureza) === bucket)
+          .reduce((s, t) => s + t.valor, 0);
+      const aReceberMes = aReceberPorMes.get(key) ?? 0;
+      const aPagarMes = aPagarPorMes.get(key) ?? 0;
       return {
         mes,
-        receitas: rows
-          .filter((r) => r.tipo === FinanceiroMovimentoTipo.entrada)
-          .reduce((s, r) => s + r.valor, 0),
-        despesas: saidas.reduce((s, r) => s + r.valor, 0),
-        variaveis: saidas
-          .filter(
-            (r) =>
-              this.classifyDespesaBucket(resolvedNatureza(r)) === "variavel",
-          )
-          .reduce((s, r) => s + r.valor, 0),
-        fixas: saidas
-          .filter(
-            (r) => this.classifyDespesaBucket(resolvedNatureza(r)) === "fixa",
-          )
-          .reduce((s, r) => s + r.valor, 0),
+        receitas:
+          rows
+            .filter((r) => r.tipo === FinanceiroMovimentoTipo.entrada)
+            .reduce((s, r) => s + r.valor, 0) + aReceberMes,
+        despesas: saidas.reduce((s, r) => s + r.valor, 0) + aPagarMes,
+        variaveis:
+          saidas
+            .filter(
+              (r) =>
+                this.classifyDespesaBucket(resolvedNatureza(r)) === "variavel",
+            )
+            .reduce((s, r) => s + r.valor, 0) + somaPagar("variavel"),
+        fixas:
+          saidas
+            .filter(
+              (r) => this.classifyDespesaBucket(resolvedNatureza(r)) === "fixa",
+            )
+            .reduce((s, r) => s + r.valor, 0) + somaPagar("fixa"),
         comissoesAReceber: comissaoPorMes.get(key) ?? 0,
         aReceber: aReceberPorMes.get(key) ?? 0,
         aPagar: aPagarPorMes.get(key) ?? 0,
