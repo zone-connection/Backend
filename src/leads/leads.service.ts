@@ -205,7 +205,7 @@ export class LeadsService {
         nome: dto.nome.trim(),
         telefone,
         email,
-        origem: dto.origem.trim(),
+        origem: dto.origem?.trim() || '',
         interesse: dto.interesse,
         categoria: dto.categoria || null,
         cidade: dto.cidade.trim(),
