@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Param,
+  StreamableFile,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -128,6 +129,27 @@ export class TreinamentoController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.treinamento.createLink(dto, requester);
+  }
+
+  @Get('links/:id/arquivo')
+  @Roles(
+    Role.super_admin,
+    Role.admin,
+    Role.gerente,
+    Role.corretor,
+    Role.analista,
+    Role.treinee,
+  )
+  async arquivo(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    const file = await this.treinamento.readArquivo(id, requester);
+    const nome = file.filename.replace(/["\r\n]/g, '');
+    return new StreamableFile(file.buffer, {
+      type: file.contentType,
+      disposition: `inline; filename="${nome}"`,
+    });
   }
 
   @Patch('links/:id')

@@ -450,6 +450,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         telefone: true,
         origem: true,
         cidade: true,
+        interesse: true,
         origemAtrasoLiberacao: true,
       },
     });
@@ -545,6 +546,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         telefone: lead.telefone,
         origem: lead.origem,
         cidade: lead.cidade,
+        interesse: lead.interesse,
       },
     };
   }
@@ -802,6 +804,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         telefone: true,
         origem: true,
         cidade: true,
+        interesse: true,
         stage: true,
         funilId: true,
         corretorId: true,
@@ -902,6 +905,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         telefone: lead.telefone,
         origem: lead.origem,
         cidade: lead.cidade,
+        interesse: lead.interesse,
       },
     };
   }

@@ -4,6 +4,7 @@ export type LeadNotifySnapshot = {
   telefone: string;
   origem: string;
   cidade: string;
+  interesse?: string | null;
 };
 
 export const DEFAULT_CRM_ORIGIN = 'https://www.zoneconnection.com.br';
@@ -184,10 +185,15 @@ export function leadChegouWhatsApp(quantidade = 1): string {
     : 'Um lead chegou para você.';
 }
 
+function leadResumoSemContato(lead: LeadNotifySnapshot) {
+  const interesse = lead.interesse?.trim();
+  return interesse ? `${lead.nome} · ${interesse}` : lead.nome;
+}
+
 export function leadAtribuidoCopy(lead: LeadNotifySnapshot) {
   return {
     titulo: `Novo lead atribuído — ${lead.nome}`,
-    corpo: `${lead.nome} · ${lead.telefone} · ${lead.origem} · ${lead.cidade}`,
+    corpo: leadResumoSemContato(lead),
     whatsappTitulo: 'Novo lead atribuído a você',
   };
 }
@@ -195,7 +201,7 @@ export function leadAtribuidoCopy(lead: LeadNotifySnapshot) {
 export function leadPoolCopy(lead: LeadNotifySnapshot) {
   return {
     titulo: `Novo lead no pool — ${lead.nome}`,
-    corpo: `${lead.nome} · ${lead.telefone} · ${lead.origem} · ${lead.cidade}`,
+    corpo: leadResumoSemContato(lead),
     whatsappTitulo: 'Novo lead no pool (sem corretor)',
   };
 }

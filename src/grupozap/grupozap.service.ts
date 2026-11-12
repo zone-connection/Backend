@@ -304,6 +304,7 @@ export class GrupoZapService {
           telefone: created.telefone,
           origem: created.origem,
           cidade: created.cidade,
+          interesse: created.interesse,
           corretorId: null,
         },
       });
@@ -524,7 +525,7 @@ export class GrupoZapService {
             ? { corretorId: corretorDaImobiliaria.id }
             : {}),
         },
-        select: { id: true, nome: true, telefone: true, origem: true, cidade: true },
+        select: { id: true, nome: true, telefone: true, origem: true, cidade: true, interesse: true },
       });
 
       await tx.leadGrupoZapLink.create({

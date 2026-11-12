@@ -223,6 +223,20 @@ export class TreinamentoService {
     });
   }
 
+  async readArquivo(id: string, requester: AuthenticatedUser) {
+    const tenantId = requireTenantId(requester);
+    const link = await this.prisma.treinamentoLink.findFirst({
+      where: { id, tenantId },
+      select: { url: true, titulo: true },
+    });
+    if (!link) throw new NotFoundException('Arquivo não encontrado.');
+    if (!link.url.includes('res.cloudinary.com')) {
+      throw new BadRequestException('Este material não é um arquivo do sistema.');
+    }
+    const file = await this.media.downloadDelivery(link.url);
+    return { ...file, titulo: link.titulo };
+  }
+
   async removeLink(id: string, requester: AuthenticatedUser) {
     this.assertCanManage(requester);
     const tenantId = requireTenantId(requester);

@@ -20,7 +20,9 @@ describe('lead-notify messages', () => {
       origem: 'Facebook Ads',
       cidade: 'São Paulo',
     };
-    const copy = leadAtribuidoCopy(lead);
+    const copy = leadAtribuidoCopy({ ...lead, interesse: 'Comprar' });
+    assert.equal(copy.corpo, 'Ana Silva · Comprar');
+    assert.doesNotMatch(copy.corpo, /99999/);
     const text = formatLeadWhatsApp({
       titulo: copy.whatsappTitulo,
       lead,
