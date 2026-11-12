@@ -2949,6 +2949,7 @@ export class LeadsService {
     telefone: string;
     origem: string;
     cidade: string;
+    interesse?: string | null;
     corretorId: string | null;
   }): LeadNotifySnapshot & { corretorId: string | null } {
     return {
@@ -2957,6 +2958,7 @@ export class LeadsService {
       telefone: lead.telefone,
       origem: lead.origem,
       cidade: lead.cidade,
+      interesse: lead.interesse,
       corretorId: lead.corretorId,
     };
   }

@@ -292,6 +292,48 @@ export class MediaService {
     await Promise.all(publicIds.map((id) => this.destroy(id)));
   }
 
+  /** Baixa um arquivo do Cloudinary com URL assinada. O navegador recebe 401 no link cru. */
+  async downloadDelivery(url: string): Promise<{
+    buffer: Buffer;
+    contentType: string;
+    filename: string;
+  }> {
+    this.ensureConfigured();
+    const target = this.signedDeliveryUrl(url) ?? url;
+    const response = await fetch(target);
+    if (!response.ok) {
+      this.logger.warn(
+        `Cloudinary recusou o arquivo (${response.status}) ${url}`,
+      );
+      throw new ServiceUnavailableException(
+        'Não foi possível abrir o arquivo do treinamento.',
+      );
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const filename = decodeURIComponent(
+      url.split('?')[0]?.split('/').pop() || 'arquivo',
+    );
+    const contentType =
+      response.headers.get('content-type')?.split(';')[0]?.trim() ||
+      'application/octet-stream';
+    return { buffer, contentType, filename };
+  }
+
+  private signedDeliveryUrl(url: string): string | null {
+    const match = url.match(
+      /res\.cloudinary\.com\/[^/]+\/(raw|image|video)\/upload\/(?:s--[^/]+--\/)?(?:v\d+\/)?(.+)$/i,
+    );
+    if (!match) return null;
+    const resourceType = match[1].toLowerCase() as 'raw' | 'image' | 'video';
+    const publicId = decodeURIComponent(match[2].split('?')[0]);
+    return cloudinary.url(publicId, {
+      resource_type: resourceType,
+      type: 'upload',
+      sign_url: true,
+      secure: true,
+    });
+  }
+
   folder(
     tenantId: string,
     kind: 'empreendimentos' | 'construtoras' | 'avatars' | 'imoveis' | 'tenants',
