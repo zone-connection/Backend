@@ -43,11 +43,10 @@ export class CreateLeadDto {
   @MaxLength(255)
   email?: string | null;
 
-  @IsOptional()
-  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
   @IsString()
+  @MinLength(1, { message: 'Informe a origem do lead.' })
   @MaxLength(60)
-  origem?: string | null;
+  origem!: string;
 
   @IsIn(LEAD_INTERESSES, { message: 'Interesse inválido.' })
   interesse!: string;
