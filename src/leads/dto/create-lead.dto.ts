@@ -43,10 +43,10 @@ export class CreateLeadDto {
   @MaxLength(255)
   email?: string | null;
 
+  @IsOptional()
   @IsString()
-  @MinLength(1, { message: 'Informe a origem do lead.' })
   @MaxLength(60)
-  origem!: string;
+  origem?: string;
 
   @IsIn(LEAD_INTERESSES, { message: 'Interesse inválido.' })
   interesse!: string;
