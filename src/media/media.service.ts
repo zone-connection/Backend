@@ -292,46 +292,90 @@ export class MediaService {
     await Promise.all(publicIds.map((id) => this.destroy(id)));
   }
 
-  /** Baixa um arquivo do Cloudinary com URL assinada. O navegador recebe 401 no link cru. */
+  /** Baixa um arquivo do Cloudinary. O link público devolve 401 no navegador. */
   async downloadDelivery(url: string): Promise<{
     buffer: Buffer;
     contentType: string;
     filename: string;
   }> {
     this.ensureConfigured();
-    const target = this.signedDeliveryUrl(url) ?? url;
-    const response = await fetch(target);
-    if (!response.ok) {
-      this.logger.warn(
-        `Cloudinary recusou o arquivo (${response.status}) ${url}`,
-      );
-      throw new ServiceUnavailableException(
-        'Não foi possível abrir o arquivo do treinamento.',
-      );
-    }
-    const buffer = Buffer.from(await response.arrayBuffer());
     const filename = decodeURIComponent(
       url.split('?')[0]?.split('/').pop() || 'arquivo',
     );
-    const contentType =
-      response.headers.get('content-type')?.split(';')[0]?.trim() ||
-      'application/octet-stream';
-    return { buffer, contentType, filename };
+    let lastStatus = 0;
+    for (const target of this.deliveryCandidates(url)) {
+      const response = await fetch(target, { redirect: 'follow' });
+      if (!response.ok) {
+        lastStatus = response.status;
+        continue;
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const contentType =
+        response.headers.get('content-type')?.split(';')[0]?.trim() ||
+        'application/octet-stream';
+      if (contentType.includes('json') || contentType.includes('html')) {
+        lastStatus = response.status;
+        continue;
+      }
+      return { buffer, contentType, filename };
+    }
+    this.logger.warn(
+      `Cloudinary recusou o arquivo (${lastStatus || 'sem resposta'}) ${url}`,
+    );
+    throw new ServiceUnavailableException(
+      'Não foi possível abrir o arquivo do treinamento.',
+    );
   }
 
-  private signedDeliveryUrl(url: string): string | null {
+  private deliveryCandidates(url: string): string[] {
+    const parsed = this.parseDeliveryUrl(url);
+    const candidates = [url];
+    if (!parsed) return candidates;
+    const { resourceType, publicId } = parsed;
+    const dot = publicId.lastIndexOf('.');
+    const format = dot > 0 ? publicId.slice(dot + 1) : '';
+    const idWithoutFormat = format ? publicId.slice(0, dot) : publicId;
+    candidates.push(
+      cloudinary.url(publicId, {
+        resource_type: resourceType,
+        type: 'upload',
+        sign_url: true,
+        secure: true,
+      }),
+    );
+    if (format) {
+      candidates.push(
+        cloudinary.utils.private_download_url(idWithoutFormat, format, {
+          resource_type: resourceType,
+          type: 'upload',
+          attachment: true,
+          expires_at: Math.floor(Date.now() / 1000) + 120,
+        }),
+      );
+      candidates.push(
+        cloudinary.utils.private_download_url(publicId, format, {
+          resource_type: resourceType,
+          type: 'upload',
+          attachment: true,
+          expires_at: Math.floor(Date.now() / 1000) + 120,
+        }),
+      );
+    }
+    return [...new Set(candidates)];
+  }
+
+  private parseDeliveryUrl(url: string): {
+    resourceType: 'raw' | 'image' | 'video';
+    publicId: string;
+  } | null {
     const match = url.match(
       /res\.cloudinary\.com\/[^/]+\/(raw|image|video)\/upload\/(?:s--[^/]+--\/)?(?:v\d+\/)?(.+)$/i,
     );
     if (!match) return null;
-    const resourceType = match[1].toLowerCase() as 'raw' | 'image' | 'video';
-    const publicId = decodeURIComponent(match[2].split('?')[0]);
-    return cloudinary.url(publicId, {
-      resource_type: resourceType,
-      type: 'upload',
-      sign_url: true,
-      secure: true,
-    });
+    return {
+      resourceType: match[1].toLowerCase() as 'raw' | 'image' | 'video',
+      publicId: decodeURIComponent(match[2].split('?')[0]),
+    };
   }
 
   folder(
