@@ -94,7 +94,7 @@ export class ApiLeadsService {
       cidade: body.cidade,
       bairro: body.bairro,
       email: body.email,
-      origem: body.origem,
+      origem: body.origem?.trim() || 'Não informado',
       stage: body.stage,
       prioridade: body.prioridade,
     };
