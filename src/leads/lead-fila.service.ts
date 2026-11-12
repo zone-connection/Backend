@@ -422,7 +422,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
   async atribuirNaTransacao(
     tx: Prisma.TransactionClient,
     params: { tenantId: string; leadId: string; origem?: string | null },
-  ): Promise<Atribuicao & { lead?: { id: string; nome: string; telefone: string; origem: string; cidade: string } }> {
+  ): Promise<Atribuicao & { lead?: { id: string; nome: string; telefone: string; origem: string; cidade: string; interesse?: string | null } }> {
     const locked = await tx.$queryRaw<
       Array<{ id: string; ativa: boolean; redistribuirMinutos: number | null }>
     >`
@@ -784,7 +784,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
       leadId: string;
       now: Date;
     },
-  ): Promise<Atribuicao & { lead?: { id: string; nome: string; telefone: string; origem: string; cidade: string } }> {
+  ): Promise<Atribuicao & { lead?: { id: string; nome: string; telefone: string; origem: string; cidade: string; interesse?: string | null } }> {
     await tx.$queryRaw`
       SELECT id FROM lead_fila_configs WHERE id = ${params.configId} FOR UPDATE
     `;
