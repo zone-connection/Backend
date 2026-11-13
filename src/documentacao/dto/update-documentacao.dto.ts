@@ -1,23 +1,35 @@
 import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
+  IsIn,
   IsInt,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   MinLength,
   ValidateIf,
 } from 'class-validator';
 
+/** Campos Int em reais: aceita decimal (centavos) e arredonda. */
 function toOptionalInt({ value }: { value: unknown }) {
   if (value === undefined) return undefined;
   if (value === null || value === '') return null;
-  return Number(value);
+  const n = Number(value);
+  if (!Number.isFinite(n)) return value;
+  return Math.round(n);
 }
 
 export class UpdateDocumentacaoDto {
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Lead/cliente inválido.' })
+  leadId?: string | null;
+
   @IsOptional()
   @IsString()
   @MinLength(2, { message: 'O nome deve ter ao menos 2 caracteres.' })
@@ -39,6 +51,25 @@ export class UpdateDocumentacaoDto {
   @MinLength(1, { message: 'Informe a fonte.' })
   @MaxLength(80)
   fonte?: string;
+
+  @IsOptional()
+  @IsIn(['lancamento', 'usado'], { message: 'Origem inválida.' })
+  origem?: 'lancamento' | 'usado';
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Proprietário inválido.' })
+  proprietarioId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Interessado inválido.' })
+  interessadoId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  matricula?: string | null;
 
   @IsOptional()
   @IsString({ message: 'Status 1 inválido.' })
@@ -76,11 +107,57 @@ export class UpdateDocumentacaoDto {
   @ValidateIf((_, v) => v !== null && v !== undefined)
   @Transform(toOptionalInt)
   @IsInt({ message: 'VGV inválido.' })
+  @Max(2147483647, { message: 'VGV passa do limite permitido.' })
   @Min(0, { message: 'VGV não pode ser negativo.' })
   vgv?: number | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsUUID('4', { message: 'Proposta inválida.' })
+  propostaId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  vendaSemProposta?: boolean;
 
   @IsOptional()
   @IsString()
   @MaxLength(2000)
   obs?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  temEntrada?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Transform(toOptionalInt)
+  @IsInt({ message: 'Valor de entrada inválido.' })
+  @Min(0, { message: 'Valor de entrada não pode ser negativo.' })
+  valorEntrada?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  temFgts?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Transform(toOptionalInt)
+  @IsInt({ message: 'Valor de FGTS inválido.' })
+  @Min(0, { message: 'Valor de FGTS não pode ser negativo.' })
+  valorFgts?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  temDependente?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  jornada?: Record<string, string | null> | null;
+
+  /** Data de cadastro retroativa (ISO). */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @IsDateString({}, { message: 'Data de cadastro inválida.' })
+  createdAt?: string | null;
 }

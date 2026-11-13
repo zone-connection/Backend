@@ -7,9 +7,10 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Role, FunilTipo } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -18,7 +19,9 @@ import { FunisService } from './funis.service';
 import {
   CreateFunilDto,
   CreateFunilEtapaDto,
+  QueryFunisDto,
   ReorderFunilEtapasDto,
+  MigrarLeadsFunilDto,
   UpdateFunilDto,
   UpdateFunilEtapaDto,
 } from './dto/funil.dto';
@@ -29,19 +32,28 @@ export class FunisController {
   constructor(private readonly funisService: FunisService) {}
 
   @Get()
-  @Roles(Role.admin, Role.gerente, Role.corretor, Role.analista)
-  list(@CurrentUser() requester: AuthenticatedUser) {
-    return this.funisService.list(requester);
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.analista, Role.super_admin)
+  list(
+    @CurrentUser() requester: AuthenticatedUser,
+    @Query() query: QueryFunisDto,
+  ) {
+    return this.funisService.list(requester, query);
   }
 
   @Get('ativo')
-  @Roles(Role.admin, Role.gerente, Role.corretor, Role.analista)
-  getAtivo(@CurrentUser() requester: AuthenticatedUser) {
-    return this.funisService.getAtivo(requester);
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.analista, Role.super_admin)
+  getAtivo(
+    @CurrentUser() requester: AuthenticatedUser,
+    @Query() query: QueryFunisDto,
+  ) {
+    return this.funisService.getAtivo(
+      requester,
+      query.tipo ?? FunilTipo.comercial,
+    );
   }
 
   @Get(':id')
-  @Roles(Role.admin, Role.gerente, Role.corretor, Role.analista)
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.analista, Role.super_admin)
   findOne(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() requester: AuthenticatedUser,
@@ -50,7 +62,7 @@ export class FunisController {
   }
 
   @Post()
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   create(
     @Body() dto: CreateFunilDto,
     @CurrentUser() requester: AuthenticatedUser,
@@ -59,7 +71,7 @@ export class FunisController {
   }
 
   @Patch(':id')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateFunilDto,
@@ -68,8 +80,18 @@ export class FunisController {
     return this.funisService.update(id, dto, requester);
   }
 
+  @Post(':id/migrar-leads')
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
+  migrarLeads(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: MigrarLeadsFunilDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.funisService.migrarLeads(id, dto.destinoFunilId, requester);
+  }
+
   @Post(':id/ativar')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   ativar(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() requester: AuthenticatedUser,
@@ -78,7 +100,7 @@ export class FunisController {
   }
 
   @Delete(':id')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   remove(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() requester: AuthenticatedUser,
@@ -87,7 +109,7 @@ export class FunisController {
   }
 
   @Post(':id/etapas')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   addEtapa(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateFunilEtapaDto,
@@ -97,7 +119,7 @@ export class FunisController {
   }
 
   @Patch(':id/etapas/reorder')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   reorderEtapas(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ReorderFunilEtapasDto,
@@ -107,7 +129,7 @@ export class FunisController {
   }
 
   @Patch(':funilId/etapas/:etapaId')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   updateEtapa(
     @Param('funilId', ParseUUIDPipe) funilId: string,
     @Param('etapaId', ParseUUIDPipe) etapaId: string,
@@ -118,7 +140,7 @@ export class FunisController {
   }
 
   @Delete(':funilId/etapas/:etapaId')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   removeEtapa(
     @Param('funilId', ParseUUIDPipe) funilId: string,
     @Param('etapaId', ParseUUIDPipe) etapaId: string,
@@ -128,11 +150,20 @@ export class FunisController {
   }
 
   @Post(':id/etapas-padrao')
-  @Roles(Role.admin, Role.gerente)
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
   installDefaults(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.funisService.installDefaults(id, requester);
+  }
+
+  @Post(':id/recuperar-etapas')
+  @Roles(Role.admin, Role.gerente, Role.super_admin)
+  recoverOrphanStages(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.funisService.recoverOrphanStages(id, requester);
   }
 }

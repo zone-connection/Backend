@@ -31,6 +31,14 @@ export class AnaliseController {
     return this.analiseService.list(query, requester);
   }
 
+  @Get('resumo')
+  resumo(
+    @Query() query: QueryAnaliseDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.analiseService.resumo(query, requester);
+  }
+
   @Get(':id')
   findOne(
     @Param('id', ParseUUIDPipe) id: string,

@@ -8,6 +8,11 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+/**
+ * Formato documentado do webhook Page/leadgen.
+ * O POST /api/webhooks/meta NÃO valida este DTO (ver MetaController):
+ * o pipe global rejeitaria campos extras que a Meta envia em campanhas reais.
+ */
 export class MetaLeadgenValueDto {
   @IsOptional()
   leadgen_id?: string | number;
