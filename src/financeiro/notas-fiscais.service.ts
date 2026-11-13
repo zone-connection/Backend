@@ -27,12 +27,41 @@ export class NotasFiscaisService {
     private readonly media: MediaService,
   ) {}
 
-  async list(requester: AuthenticatedUser, q?: string) {
+  async list(
+    requester: AuthenticatedUser,
+    query: {
+      q?: string;
+      periodo?: 'mes' | 'trimestre' | 'ano' | 'tudo';
+      de?: string;
+      ate?: string;
+      corretor?: string;
+      construtora?: string;
+      empreendimento?: string;
+      arquivo?: 'com' | 'sem';
+    } = {},
+  ) {
     const tenantId = resolveFinanceiroTenantId(requester);
-    const term = (q ?? '').trim();
+    const term = (query.q ?? '').trim();
+    const emissao = this.emissaoRange(query.periodo, query.de, query.ate);
+    const vgvTerm = term.replace(/\./g, '').replace(',', '.');
+    const vgvNumero = /^\d+(\.\d+)?$/.test(vgvTerm)
+      ? new Prisma.Decimal(vgvTerm)
+      : null;
     const rows = await this.prisma.financeiroNotaFiscal.findMany({
       where: {
         tenantId,
+        ...(query.corretor?.trim()
+          ? { corretor: query.corretor.trim() }
+          : {}),
+        ...(query.construtora?.trim()
+          ? { construtora: query.construtora.trim() }
+          : {}),
+        ...(query.empreendimento?.trim()
+          ? { empreendimento: query.empreendimento.trim() }
+          : {}),
+        ...(query.arquivo === 'com' ? { NOT: { arquivoUrl: '' } } : {}),
+        ...(query.arquivo === 'sem' ? { arquivoUrl: '' } : {}),
+        ...(emissao ? { dataEmissao: emissao } : {}),
         ...(term
           ? {
               OR: [
@@ -42,13 +71,70 @@ export class NotasFiscaisService {
                 { construtora: { contains: term, mode: 'insensitive' } },
                 { empreendimento: { contains: term, mode: 'insensitive' } },
                 { torreBloco: { contains: term, mode: 'insensitive' } },
+                ...(vgvNumero ? [{ vgv: vgvNumero }] : []),
               ],
             }
           : {}),
       },
       orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { comissoes: true } } },
     });
     return rows.map((row) => this.toDto(row));
+  }
+
+  async opcoes(requester: AuthenticatedUser) {
+    const tenantId = resolveFinanceiroTenantId(requester);
+    const rows = await this.prisma.financeiroNotaFiscal.findMany({
+      where: { tenantId },
+      select: { corretor: true, construtora: true, empreendimento: true },
+    });
+    const unique = (values: string[]) =>
+      [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort(
+        (a, b) => a.localeCompare(b, 'pt-BR'),
+      );
+    return {
+      corretores: unique(rows.map((row) => row.corretor)),
+      construtoras: unique(rows.map((row) => row.construtora)),
+      empreendimentos: unique(rows.map((row) => row.empreendimento)),
+    };
+  }
+
+  private emissaoRange(
+    periodo?: 'mes' | 'trimestre' | 'ano' | 'tudo',
+    de?: string,
+    ate?: string,
+  ): Prisma.DateTimeFilter | undefined {
+    const now = new Date();
+    let gte: Date | undefined;
+    let lte: Date | undefined;
+    if (periodo && periodo !== 'tudo') {
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      if (periodo === 'mes') {
+        gte = new Date(year, month, 1);
+        lte = new Date(year, month + 1, 0, 23, 59, 59, 999);
+      } else if (periodo === 'trimestre') {
+        const startMonth = Math.floor(month / 3) * 3;
+        gte = new Date(year, startMonth, 1);
+        lte = new Date(year, startMonth + 3, 0, 23, 59, 59, 999);
+      } else {
+        gte = new Date(year, 0, 1);
+        lte = new Date(year, 11, 31, 23, 59, 59, 999);
+      }
+    }
+    if (de) {
+      const from = new Date(`${de}T00:00:00`);
+      gte = gte && gte > from ? gte : from;
+    }
+    if (ate) {
+      const to = new Date(`${ate}T23:59:59.999`);
+      lte = lte && lte < to ? lte : to;
+    }
+    if (!gte && !lte) return undefined;
+    return {
+      ...(gte ? { gte } : {}),
+      ...(lte ? { lte } : {}),
+    };
   }
 
   async create(
@@ -154,6 +240,7 @@ export class NotasFiscaisService {
     dataEmissao: Date | null;
     arquivoUrl: string;
     arquivoNome: string;
+    _count?: { comissoes: number };
   }) {
     return {
       id: row.id,
@@ -169,6 +256,7 @@ export class NotasFiscaisService {
         : null,
       arquivoUrl: row.arquivoUrl,
       arquivoNome: row.arquivoNome,
+      vinculada: (row._count?.comissoes ?? 0) > 0,
     };
   }
 }

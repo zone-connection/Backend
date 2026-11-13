@@ -20,6 +20,7 @@ import { FinanceiroPermsGuard } from '../common/guards/financeiro-perms.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { DOCUMENT_MAX_BYTES } from '../media/media.constants';
+import { QueryNotasFiscaisDto } from './dto/query-notas-fiscais.dto';
 import {
   NotaFiscalInput,
   NotasFiscaisService,
@@ -39,10 +40,19 @@ const roles = [
 export class NotasFiscaisController {
   constructor(private readonly notas: NotasFiscaisService) {}
 
+  @Get('opcoes')
+  @Roles(...roles)
+  opcoes(@CurrentUser() requester: AuthenticatedUser) {
+    return this.notas.opcoes(requester);
+  }
+
   @Get()
   @Roles(...roles)
-  list(@CurrentUser() requester: AuthenticatedUser, @Query('q') q?: string) {
-    return this.notas.list(requester, q);
+  list(
+    @CurrentUser() requester: AuthenticatedUser,
+    @Query() query: QueryNotasFiscaisDto,
+  ) {
+    return this.notas.list(requester, query);
   }
 
   @Post()
