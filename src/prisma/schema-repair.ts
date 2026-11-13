@@ -125,6 +125,7 @@ const ROLETA_STATEMENTS = [
   `
     ALTER TABLE "lead_fila_configs"
       ADD COLUMN IF NOT EXISTS "redistribuirMinutos" INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS "filaEquipes" BOOLEAN NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS "filtroCampanhas" BOOLEAN NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS "outrosCanaisNaFila" BOOLEAN NOT NULL DEFAULT false
   `,

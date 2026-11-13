@@ -219,6 +219,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
 
     return {
       ativa: config.ativa,
+      filaEquipes: config.filaEquipes,
       filtroCampanhas: config.filtroCampanhas,
       outrosCanaisNaFila: config.outrosCanaisNaFila,
       redistribuirMinutos: config.redistribuirMinutos,
@@ -354,16 +355,30 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
 
   async setFiltros(
     user: AuthenticatedUser,
-    filtros: { filtroCampanhas: boolean; outrosCanaisNaFila: boolean },
+    filtros: {
+      filaEquipes?: boolean;
+      filtroCampanhas: boolean;
+      outrosCanaisNaFila: boolean;
+    },
   ) {
     this.assertGestor(user);
     const tenantId = requireTenantId(user);
     const config = await this.ensureConfig(tenantId);
     await this.prisma.leadFilaConfig.update({
       where: { id: config.id },
-      data: filtros,
+      data: {
+        filtroCampanhas: filtros.filtroCampanhas,
+        outrosCanaisNaFila: filtros.outrosCanaisNaFila,
+        ...(typeof filtros.filaEquipes === 'boolean'
+          ? { filaEquipes: filtros.filaEquipes }
+          : {}),
+      },
     });
-    return filtros;
+    return {
+      filaEquipes: filtros.filaEquipes ?? config.filaEquipes,
+      filtroCampanhas: filtros.filtroCampanhas,
+      outrosCanaisNaFila: filtros.outrosCanaisNaFila,
+    };
   }
 
   async listarCampanhas(user: AuthenticatedUser) {
@@ -596,12 +611,13 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         id: string;
         ativa: boolean;
         redistribuirMinutos: number | null;
+        filaEquipes?: boolean;
         filtroCampanhas?: boolean;
         outrosCanaisNaFila?: boolean;
       }>
     >`
       SELECT id, ativa, "redistribuirMinutos",
-        "filtroCampanhas", "outrosCanaisNaFila"
+        "filaEquipes", "filtroCampanhas", "outrosCanaisNaFila"
       FROM lead_fila_configs
       WHERE "tenantId" = ${params.tenantId}
       FOR UPDATE
@@ -650,7 +666,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     });
     const corretores = membros.filter((m) => m.userId && m.user);
     const equipes = membros.filter((m) => m.equipeId && !m.userId);
-    const ordem = [...corretores, ...equipes];
+    const ordem = config.filaEquipes ? equipes : corretores;
     const filtro = Boolean(config.filtroCampanhas);
     const canal = filtro
       ? await classificarLead(tx, lead.id, params.origem ?? lead.origem)

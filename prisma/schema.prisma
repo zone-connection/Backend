@@ -2228,6 +2228,8 @@ model LeadFilaConfig {
   ativa    Boolean  @default(false)
   /// Minutos parado na primeira etapa, sem atividade, até ir ao próximo. 0 desliga.
   redistribuirMinutos Int @default(0)
+  /// Liga a fila de equipes no lugar da fila de corretores.
+  filaEquipes Boolean @default(false)
   /// Liga a elegibilidade por campanha da Meta ou origem OLX.
   filtroCampanhas Boolean @default(false)
   /// Lead de outro canal entra na fila (sem campanha) em vez de ficar no pool do admin.
