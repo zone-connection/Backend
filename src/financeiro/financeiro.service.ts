@@ -1634,6 +1634,8 @@ export class FinanceiroService {
         lead: { select: { corretor: { select: corretorSelect } } },
         gerente: { select: { id: true, name: true } },
         empreendimento: { select: { nome: true } },
+        construtora: { select: { nome: true } },
+        proposta: { select: { unidade: true } },
       },
       orderBy: [{ dataVenda: "desc" }, { createdAt: "desc" }],
     });
@@ -1646,6 +1648,8 @@ export class FinanceiroService {
             documentacaoId: row.id,
             cliente: row.nome,
             empreendimento: row.empreendimento?.nome ?? "",
+            construtora: row.construtora?.nome ?? "",
+            torreBloco: row.proposta?.unidade ?? "",
             dataVenda: isoDateOnly(row.dataVenda ?? row.createdAt),
             vgv: row.vgv!,
             corretorId: corretor?.id ?? null,
