@@ -16,6 +16,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsOptional,
   IsString,
   Max,
   Min,
@@ -55,6 +56,10 @@ class ReordenarDto {
 }
 
 class SetFiltrosDto {
+  @IsOptional()
+  @IsBoolean()
+  filaEquipes?: boolean;
+
   @IsBoolean()
   filtroCampanhas!: boolean;
 
