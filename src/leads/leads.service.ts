@@ -833,19 +833,21 @@ export class LeadsService {
         );
       }
 
+      const usaCampanha = dto.alocacoes.some((item) => item.porCampanha?.length);
       const leads = await this.leadsParaDistribuir(
         tenantId,
         leadWhere,
         selecionados,
-        totalPedido,
+        usaCampanha ? undefined : totalPedido,
       );
-      if (leads.length < totalPedido) {
+      if (!usaCampanha && leads.length < totalPedido) {
         throw new BadRequestException(
           `Há apenas ${leads.length} lead(s) disponíveis para distribuir (pedido: ${totalPedido}).`,
         );
       }
 
       let offset = 0;
+      const usados = new Set<string>();
       const resultado: Array<{
         corretorId: string;
         nome: string;
@@ -858,8 +860,27 @@ export class LeadsService {
       await this.prisma.$transaction(async (tx) => {
         for (const aloc of dto.alocacoes!) {
           if (aloc.quantidade <= 0) continue;
-          const slice = leads.slice(offset, offset + aloc.quantidade);
-          offset += aloc.quantidade;
+          const slice = aloc.porCampanha?.length
+            ? aloc.porCampanha.flatMap((parte) => {
+                if (parte.quantidade <= 0) return [];
+                const compativeis = leads.filter((lead) => {
+                  if (usados.has(lead.id)) return false;
+                  return (
+                    classificarCampanhaLead(lead.origem, lead.metaLink).chave ===
+                    parte.chave
+                  );
+                });
+                if (compativeis.length < parte.quantidade) {
+                  throw new BadRequestException(
+                    `A campanha não tem ${parte.quantidade} lead(s) livres. Há ${compativeis.length}.`,
+                  );
+                }
+                const escolhidos = compativeis.slice(0, parte.quantidade);
+                escolhidos.forEach((lead) => usados.add(lead.id));
+                return escolhidos;
+              })
+            : leads.slice(offset, offset + aloc.quantidade);
+          if (!aloc.porCampanha?.length) offset += aloc.quantidade;
           const corretor = byId.get(aloc.corretorId)!;
           const ids = slice.map((lead) => lead.id);
           if (ids.length !== aloc.quantidade) {
@@ -2941,9 +2962,11 @@ export class LeadsService {
   ): Promise<
     Array<{
       id: string;
+      origem: string | null;
       origemAtrasoLiberacao: AtrasoLiberacaoDestino | null;
       corretorId: string | null;
       equipeId: string | null;
+      metaLink: { campaignId: string | null; campaignName: string | null } | null;
     }>
   > {
     if (leadIds.length > 0) {
@@ -2961,9 +2984,11 @@ export class LeadsService {
         },
         select: {
           id: true,
+          origem: true,
           origemAtrasoLiberacao: true,
           corretorId: true,
           equipeId: true,
+          metaLink: { select: { campaignId: true, campaignName: true } },
         },
       });
       if (found.length !== leadIds.length) {
@@ -2979,9 +3004,11 @@ export class LeadsService {
       where: poolWhere,
       select: {
         id: true,
+        origem: true,
         origemAtrasoLiberacao: true,
         corretorId: true,
         equipeId: true,
+        metaLink: { select: { campaignId: true, campaignName: true } },
       },
       orderBy: { createdAt: 'asc' },
       ...(take != null ? { take } : {}),

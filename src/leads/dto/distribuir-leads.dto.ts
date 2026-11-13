@@ -63,6 +63,13 @@ export class DistribuirCorretorItemDto {
   @IsInt()
   @Min(0)
   quantidade!: number;
+
+  /** Quando presente, só leads dessa campanha entram na quantidade. */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DistribuirCampanhaItemDto)
+  porCampanha?: DistribuirCampanhaItemDto[];
 }
 
 /**
