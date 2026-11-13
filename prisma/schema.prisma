@@ -661,6 +661,8 @@ model Equipe {
   /// Funis de operação configurados para esta equipe (no máximo um por tipo).
   funis EquipeFunil[]
 
+  filaMembros LeadFilaMembro[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2226,6 +2228,10 @@ model LeadFilaConfig {
   ativa    Boolean  @default(false)
   /// Minutos parado na primeira etapa, sem atividade, até ir ao próximo. 0 desliga.
   redistribuirMinutos Int @default(0)
+  /// Liga a elegibilidade por campanha da Meta ou origem OLX.
+  filtroCampanhas Boolean @default(false)
+  /// Lead de outro canal entra na fila (sem campanha) em vez de ficar no pool do admin.
+  outrosCanaisNaFila Boolean @default(false)
   membros  LeadFilaMembro[]
   eventos  LeadFilaEvento[]
 
@@ -2240,19 +2246,39 @@ model LeadFilaMembro {
   tenantId            String
   configId            String
   config              LeadFilaConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
-  userId              String
-  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Preenchido na fila de corretores.
+  userId              String?
+  user                User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Preenchido na fila de equipes. O lead cai no pool da equipe.
+  equipeId            String?
+  equipe              Equipe?        @relation(fields: [equipeId], references: [id], onDelete: Cascade)
   ordem               Int
   ativo               Boolean        @default(true)
   ultimaAtribuicaoAt  DateTime?
+  campanhas           LeadFilaCampanha[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([configId, userId])
+  @@unique([configId, equipeId])
   @@index([configId, ordem])
   @@index([tenantId])
   @@map("lead_fila_membros")
+}
+
+model LeadFilaCampanha {
+  id       String        @id @default(uuid())
+  membroId String
+  membro   LeadFilaMembro @relation(fields: [membroId], references: [id], onDelete: Cascade)
+  /// meta | olx
+  canal    String
+  chave    String
+  nome     String
+
+  @@unique([membroId, chave])
+  @@index([membroId])
+  @@map("lead_fila_campanhas")
 }
 
 model LeadFilaEvento {

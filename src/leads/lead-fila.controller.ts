@@ -10,7 +10,18 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { IsArray, IsBoolean, IsInt, Max, Min, IsUUID } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsString,
+  Max,
+  Min,
+  IsUUID,
+  ValidateNested,
+} from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { LeadFilaService } from './lead-fila.service';
@@ -43,6 +54,37 @@ class ReordenarDto {
   ids!: string[];
 }
 
+class SetFiltrosDto {
+  @IsBoolean()
+  filtroCampanhas!: boolean;
+
+  @IsBoolean()
+  outrosCanaisNaFila!: boolean;
+}
+
+class AddEquipeDto {
+  @IsUUID()
+  equipeId!: string;
+}
+
+class CampanhaVinculoDto {
+  @IsIn(['meta', 'olx'])
+  canal!: 'meta' | 'olx';
+
+  @IsString()
+  chave!: string;
+
+  @IsString()
+  nome!: string;
+}
+
+class SetCampanhasDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CampanhaVinculoDto)
+  campanhas!: CampanhaVinculoDto[];
+}
+
 @Controller('leads/distribuir/fila')
 export class LeadFilaController {
   constructor(private readonly fila: LeadFilaService) {}
@@ -64,6 +106,33 @@ export class LeadFilaController {
   @Get('elegiveis')
   elegiveis(@CurrentUser() user: AuthenticatedUser) {
     return this.fila.elegiveis(user);
+  }
+
+  @Get('campanhas')
+  campanhas(@CurrentUser() user: AuthenticatedUser) {
+    return this.fila.listarCampanhas(user);
+  }
+
+  @Patch('filtros')
+  filtros(@CurrentUser() user: AuthenticatedUser, @Body() dto: SetFiltrosDto) {
+    return this.fila.setFiltros(user, dto);
+  }
+
+  @Post('equipes')
+  adicionarEquipe(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: AddEquipeDto,
+  ) {
+    return this.fila.adicionarEquipe(user, dto.equipeId);
+  }
+
+  @Put('membros/:id/campanhas')
+  campanhasDoMembro(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetCampanhasDto,
+  ) {
+    return this.fila.setCampanhas(user, id, dto.campanhas);
   }
 
   @Patch()
