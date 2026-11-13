@@ -148,7 +148,6 @@ function parseOptionalCreatedAt(value?: string | null): Date | null {
   return date;
 }
 
-@Injectable()
 function classificarCampanhaLead(
   origem: string | null | undefined,
   meta: { campaignId: string | null; campaignName: string | null } | null,
@@ -172,6 +171,7 @@ function classificarCampanhaLead(
   return { chave: 'outro', nome: 'Outros canais', canal: 'outro' };
 }
 
+@Injectable()
 export class LeadsService {
   constructor(
     private readonly prisma: PrismaService,
