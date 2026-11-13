@@ -7,6 +7,7 @@ import {
   IsIn,
   IsInt,
   IsOptional,
+  IsString,
   IsUUID,
   Min,
   ValidateIf,
@@ -14,6 +15,16 @@ import {
 } from 'class-validator';
 
 const LEAD_IDS_MAX = 500;
+
+export class DistribuirCampanhaItemDto {
+  @IsString()
+  chave!: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  quantidade!: number;
+}
 
 export class DistribuirEquipeItemDto {
   @IsUUID('4')
@@ -23,6 +34,13 @@ export class DistribuirEquipeItemDto {
   @IsInt()
   @Min(0)
   quantidade!: number;
+
+  /** Quando presente, só leads dessa campanha entram na quantidade. */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DistribuirCampanhaItemDto)
+  porCampanha?: DistribuirCampanhaItemDto[];
 }
 
 /** Admin/gerente: divide leads do pool do admin entre equipes. */

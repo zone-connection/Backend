@@ -149,6 +149,29 @@ function parseOptionalCreatedAt(value?: string | null): Date | null {
 }
 
 @Injectable()
+function classificarCampanhaLead(
+  origem: string | null | undefined,
+  meta: { campaignId: string | null; campaignName: string | null } | null,
+) {
+  const id = meta?.campaignId?.trim();
+  const nome = meta?.campaignName?.trim();
+  if (id || nome) {
+    return {
+      chave: id ? `meta:${id}` : `meta:nome:${(nome ?? '').toLowerCase()}`,
+      nome: nome || id || 'Meta',
+      canal: 'meta',
+    };
+  }
+  const texto = (origem ?? '').toLowerCase();
+  if (texto.includes('mcmv') && texto.includes('olx')) {
+    return { chave: 'olx:mcmv', nome: 'MCMV OLX', canal: 'olx' };
+  }
+  if (texto.includes('olx')) {
+    return { chave: 'olx:grupo', nome: 'Grupo OLX', canal: 'olx' };
+  }
+  return { chave: 'outro', nome: 'Outros canais', canal: 'outro' };
+}
+
 export class LeadsService {
   constructor(
     private readonly prisma: PrismaService,
@@ -459,10 +482,16 @@ export class LeadsService {
       );
     }
 
-    const disponiveis = await this.prisma.lead.count({
-      where: await this.poolAdminWhere(tenantId),
-    });
-    const [equipes, corretores] = await Promise.all([
+    const poolWhere = await this.poolAdminWhere(tenantId);
+    const [disponiveis, poolCampanhas, equipes, corretores] = await Promise.all([
+      this.prisma.lead.count({ where: poolWhere }),
+      this.prisma.lead.findMany({
+        where: poolWhere,
+        select: {
+          origem: true,
+          metaLink: { select: { campaignId: true, campaignName: true } },
+        },
+      }),
       this.prisma.equipe.findMany({
         where: { tenantId },
         select: {
@@ -502,8 +531,20 @@ export class LeadsService {
       ),
     );
 
+    const campanhasMap = new Map<
+      string,
+      { chave: string; nome: string; canal: string; leads: number }
+    >();
+    for (const lead of poolCampanhas) {
+      const canal = classificarCampanhaLead(lead.origem, lead.metaLink);
+      const atual = campanhasMap.get(canal.chave) ?? { ...canal, leads: 0 };
+      atual.leads += 1;
+      campanhasMap.set(canal.chave, atual);
+    }
+
     return {
       disponiveis,
+      campanhas: [...campanhasMap.values()].sort((a, b) => b.leads - a.leads),
       equipes: equipes.map((e) => ({
         equipeId: e.id,
         nome: e.name,
@@ -616,25 +657,29 @@ export class LeadsService {
       throw new BadRequestException('Uma ou mais equipes são inválidas.');
     }
 
+    const usaCampanha = dto.alocacoes.some((item) => item.porCampanha?.length);
     const leads = await this.prisma.lead.findMany({
       where: await this.poolAdminWhere(tenantId),
       select: {
         id: true,
+        origem: true,
         origemAtrasoLiberacao: true,
         corretorId: true,
         equipeId: true,
+        metaLink: { select: { campaignId: true, campaignName: true } },
       },
       orderBy: { createdAt: 'asc' },
-      take: totalPedido,
+      ...(usaCampanha ? {} : { take: totalPedido }),
     });
 
-    if (leads.length < totalPedido) {
+    if (!usaCampanha && leads.length < totalPedido) {
       throw new BadRequestException(
         `Há apenas ${leads.length} lead(s) disponíveis para distribuir (pedido: ${totalPedido}).`,
       );
     }
 
     let offset = 0;
+    const usados = new Set<string>();
     const resultado: Array<{
       equipeId: string;
       nome: string;
@@ -646,8 +691,27 @@ export class LeadsService {
     await this.prisma.$transaction(async (tx) => {
       for (const aloc of dto.alocacoes) {
         if (aloc.quantidade <= 0) continue;
-        const slice = leads.slice(offset, offset + aloc.quantidade);
-        offset += aloc.quantidade;
+        const slice = aloc.porCampanha?.length
+          ? aloc.porCampanha.flatMap((parte) => {
+              if (parte.quantidade <= 0) return [];
+              const compativeis = leads.filter((lead) => {
+                if (usados.has(lead.id)) return false;
+                return (
+                  classificarCampanhaLead(lead.origem, lead.metaLink).chave ===
+                  parte.chave
+                );
+              });
+              if (compativeis.length < parte.quantidade) {
+                throw new BadRequestException(
+                  `A campanha não tem ${parte.quantidade} lead(s) livres. Há ${compativeis.length}.`,
+                );
+              }
+              const escolhidos = compativeis.slice(0, parte.quantidade);
+              escolhidos.forEach((lead) => usados.add(lead.id));
+              return escolhidos;
+            })
+          : leads.slice(offset, offset + aloc.quantidade);
+        if (!aloc.porCampanha?.length) offset += aloc.quantidade;
         const retrabalhoIds = slice
           .filter((l) => isOrigemRetrabalho(l.origemAtrasoLiberacao))
           .map((l) => l.id);
