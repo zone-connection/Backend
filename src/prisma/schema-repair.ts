@@ -117,10 +117,39 @@ const ROLETA_STATEMENTS = [
       ADD COLUMN IF NOT EXISTS "roletaRedistribuido" BOOLEAN NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS "historicoPendente" BOOLEAN NOT NULL DEFAULT false
   `,
+  `
+    ALTER TABLE "documentacoes"
+      ADD COLUMN IF NOT EXISTS "vendaSemProposta" BOOLEAN NOT NULL DEFAULT false
+  `,
   `CREATE INDEX IF NOT EXISTS "leads_roletaPrazoAt_idx" ON "leads"("roletaPrazoAt")`,
   `
     ALTER TABLE "lead_fila_configs"
-      ADD COLUMN IF NOT EXISTS "redistribuirMinutos" INTEGER NOT NULL DEFAULT 0
+      ADD COLUMN IF NOT EXISTS "redistribuirMinutos" INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS "filtroCampanhas" BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "outrosCanaisNaFila" BOOLEAN NOT NULL DEFAULT false
+  `,
+  `
+    ALTER TABLE "lead_fila_membros"
+      ALTER COLUMN "userId" DROP NOT NULL,
+      ADD COLUMN IF NOT EXISTS "equipeId" TEXT
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS "lead_fila_campanhas" (
+      "id" TEXT NOT NULL,
+      "membroId" TEXT NOT NULL,
+      "canal" TEXT NOT NULL,
+      "chave" TEXT NOT NULL,
+      "nome" TEXT NOT NULL,
+      CONSTRAINT "lead_fila_campanhas_pkey" PRIMARY KEY ("id")
+    )
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS "lead_fila_campanhas_membroId_chave_key"
+      ON "lead_fila_campanhas"("membroId", "chave")
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS "lead_fila_membros_configId_equipeId_key"
+      ON "lead_fila_membros"("configId", "equipeId")
   `,
 ];
 
@@ -392,6 +421,74 @@ export async function ensureRuntimeSchema(prisma: PrismaService) {
       err instanceof Error ? err.stack : err,
     );
   }
+  try {
+    await ensureAssinaturaAvisosSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar os avisos de assinatura.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
+  try {
+    await ensureIntegracaoChamadaSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar o schema de chamadas da integração.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
+}
+
+export async function ensureIntegracaoChamadaSchema(prisma: PrismaService) {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "integracao_chamadas" (
+      "id" TEXT NOT NULL,
+      "tenantId" TEXT NOT NULL,
+      "externalId" TEXT NOT NULL,
+      "leadId" TEXT,
+      "telefone" TEXT NOT NULL DEFAULT '',
+      "funilId" TEXT,
+      "etapaSlug" TEXT,
+      "inicioEm" TIMESTAMP(3),
+      "fimEm" TIMESTAMP(3),
+      "resumo" TEXT NOT NULL DEFAULT '',
+      "transcricao" TEXT NOT NULL DEFAULT '',
+      "resultado" TEXT NOT NULL DEFAULT '',
+      "imoveisOfertados" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "integracao_chamadas_pkey" PRIMARY KEY ("id")
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS "integracao_chamadas_tenantId_externalId_key"
+      ON "integracao_chamadas"("tenantId", "externalId")
+  `);
+  await prisma.$executeRawUnsafe(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'integracao_chamadas_tenantId_fkey'
+      ) THEN
+        ALTER TABLE "integracao_chamadas"
+          ADD CONSTRAINT "integracao_chamadas_tenantId_fkey"
+          FOREIGN KEY ("tenantId") REFERENCES "tenants"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `);
+}
+
+export async function ensureAssinaturaAvisosSchema(prisma: PrismaService) {
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "platform_contratos"
+      ADD COLUMN IF NOT EXISTS "avisoVencimentoEnviadoEm" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "avisoAtrasoEnviadoEm" TIMESTAMP(3)
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "financeiro_titulos"
+      ADD COLUMN IF NOT EXISTS "avisoAtrasoEnviadoEm" TIMESTAMP(3)
+  `);
 }
 
 export async function ensureMfaSchema(prisma: PrismaService) {

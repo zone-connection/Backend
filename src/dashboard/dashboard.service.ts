@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -390,6 +391,80 @@ export class DashboardService {
     };
   }
 
+  /**
+   * Recorta o escopo já autorizado às equipes pedidas.
+   * Sem ids, mantém a visão geral (incluindo pool sem equipe).
+   */
+  private async restringePorEquipes(
+    requester: AuthenticatedUser,
+    equipeIds: string[] | undefined,
+    corretorIds: string[] | null,
+    leadScope: Prisma.LeadWhereInput,
+  ): Promise<{
+    corretorIds: string[] | null;
+    leadScope: Prisma.LeadWhereInput;
+  }> {
+    const ids = [
+      ...new Set((equipeIds ?? []).map((id) => id.trim()).filter(Boolean)),
+    ];
+    if (ids.length === 0) return { corretorIds, leadScope };
+
+    const tenantId = requireTenantId(requester);
+    const equipes = await this.prisma.equipe.findMany({
+      where: {
+        tenantId,
+        id: { in: ids },
+        ...(requester.role === Role.gerente
+          ? { gerenteId: requester.id }
+          : {}),
+      },
+      select: {
+        id: true,
+        gerenteId: true,
+        membros: {
+          where: {
+            role: { in: [Role.corretor, Role.treinee] },
+            tenantId,
+          },
+          select: { id: true },
+        },
+      },
+    });
+    if (equipes.length === 0) {
+      throw new BadRequestException('Equipe não encontrada.');
+    }
+
+    const membros = [
+      ...new Set(
+        equipes.flatMap((equipe) => [
+          equipe.gerenteId,
+          ...equipe.membros.map((membro) => membro.id),
+        ]),
+      ),
+    ];
+    const filtrados = corretorIds
+      ? membros.filter((id) => corretorIds.includes(id))
+      : membros;
+    const equipeIdList = equipes.map((equipe) => equipe.id);
+
+    return {
+      corretorIds: filtrados,
+      leadScope: {
+        AND: [
+          leadScope,
+          {
+            OR: [
+              { equipeId: { in: equipeIdList } },
+              ...(filtrados.length > 0
+                ? [{ corretorId: { in: filtrados } }]
+                : []),
+            ],
+          },
+        ],
+      },
+    };
+  }
+
   async resumoAdmin(
     requester: AuthenticatedUser,
     filtros: {
@@ -398,6 +473,7 @@ export class DashboardService {
       origem?: string;
       operacao?: 'lancamento' | 'usado' | 'captacao';
       granularidade?: PeriodoGranularidade;
+      equipeIds?: string[];
     } = {},
   ) {
     await this.assertDashboardGerencial(requester, [
@@ -423,8 +499,17 @@ export class DashboardService {
       windows.agora.getTime() - diasParado * 24 * 60 * 60 * 1000,
     );
 
-    const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
-    const leadScope = await this.teamScope.leadScope(requester);
+    const visiveis = await this.teamScope.getVisibleCorretorIds(requester);
+    const escopoBase = await this.teamScope.leadScope(requester);
+    const restrito = await this.restringePorEquipes(
+      requester,
+      filtros.equipeIds,
+      visiveis,
+      escopoBase,
+    );
+    const corretorIds = restrito.corretorIds;
+    const leadScope = restrito.leadScope;
+    const filtraEquipe = Boolean(filtros.equipeIds?.length);
     const comissaoPapel = isCorretorLike(requester.role)
       ? 'corretor'
       : requester.role === Role.gerente
@@ -681,11 +766,15 @@ export class DashboardService {
           inicio: { lte: windows.agora },
           fim: { gt: windows.agora },
           periodo: MetaPeriodo.mensal,
-          ...(corretorIds
+          ...(corretorIds || filtraEquipe
             ? {
                 OR: [
-                  { escopo: MetaEscopo.imobiliaria },
-                  { corretorId: { in: corretorIds } },
+                  ...(filtraEquipe
+                    ? []
+                    : [{ escopo: MetaEscopo.imobiliaria }]),
+                  corretorIds
+                    ? { corretorId: { in: corretorIds } }
+                    : { escopo: MetaEscopo.corretor },
                 ],
               }
             : {}),
@@ -2947,6 +3036,7 @@ export class DashboardService {
       operacao?: 'lancamento' | 'usado' | 'captacao';
       granularidade?: PeriodoGranularidade;
       recorte?: 'hoje' | 'semana' | 'mes' | 'vgv';
+      equipeIds?: string[];
     } = {},
   ) {
     await this.assertDashboardGerencial(requester, [
@@ -2966,8 +3056,16 @@ export class DashboardService {
       filtros.operacao === 'lancamento' || filtros.operacao === 'usado'
         ? filtros.operacao
         : undefined;
-    const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
-    const leadScope = await this.teamScope.leadScope(requester);
+    const visiveis = await this.teamScope.getVisibleCorretorIds(requester);
+    const escopoBase = await this.teamScope.leadScope(requester);
+    const restrito = await this.restringePorEquipes(
+      requester,
+      filtros.equipeIds,
+      visiveis,
+      escopoBase,
+    );
+    const corretorIds = restrito.corretorIds;
+    const leadScope = restrito.leadScope;
 
     if (recorte !== 'vgv') {
       const periodo =

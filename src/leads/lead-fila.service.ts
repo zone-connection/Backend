@@ -27,6 +27,48 @@ import { registrarAtribuicoes } from './lead-atribuicao-historico';
 const ELEGIVEIS: Role[] = [Role.corretor, Role.gerente, Role.treinee];
 const ROLETA_INTERVAL_MS = 30_000;
 
+type CanalLead = {
+  tipo: 'meta' | 'olx' | 'outro';
+  chave: string | null;
+  rotulo: string;
+};
+
+function classificarOrigem(origem: string | null | undefined): CanalLead {
+  const texto = (origem ?? '').toLowerCase();
+  if (texto.includes('mcmv') && texto.includes('olx')) {
+    return { tipo: 'olx', chave: 'olx:mcmv', rotulo: 'MCMV OLX' };
+  }
+  if (texto.includes('olx')) {
+    return { tipo: 'olx', chave: 'olx:grupo', rotulo: 'Grupo OLX' };
+  }
+  return { tipo: 'outro', chave: null, rotulo: origem?.trim() || 'outro canal' };
+}
+
+async function classificarLead(
+  tx: Prisma.TransactionClient,
+  leadId: string,
+  origem: string | null | undefined,
+): Promise<CanalLead> {
+  const meta = tx.leadMetaLink
+    ? await tx.leadMetaLink
+        .findUnique({
+          where: { leadId },
+          select: { campaignId: true, campaignName: true },
+        })
+        .catch(() => null)
+    : null;
+  const id = meta?.campaignId?.trim();
+  const nome = meta?.campaignName?.trim();
+  if (id || nome) {
+    return {
+      tipo: 'meta',
+      chave: id ? `meta:${id}` : `meta:nome:${(nome ?? '').toLowerCase()}`,
+      rotulo: nome || id || 'Meta',
+    };
+  }
+  return classificarOrigem(origem);
+}
+
 function houveMovimentoDepois(
   marcos: Array<Date | null | undefined>,
   desde: Date,
@@ -102,6 +144,8 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
           where: { configId: config.id },
           orderBy: { ordem: 'asc' },
           include: {
+            campanhas: { orderBy: { nome: 'asc' } },
+            equipe: { select: { id: true, name: true, status: true } },
             user: {
               select: {
                 id: true,
@@ -156,13 +200,18 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     }
 
     const ativos = membros.filter(
-      (m) => m.ativo && m.user.status === UserStatus.ativo,
+      (m) =>
+        m.ativo &&
+        (m.user
+          ? m.user.status === UserStatus.ativo
+          : m.equipe?.status === UserStatus.ativo),
     );
-    const proximo = ativos[0] ?? null;
+    const proximoCorretor = ativos.find((m) => m.userId) ?? null;
+    const proximoEquipe = ativos.find((m) => m.equipeId && !m.userId) ?? null;
     const cargoCount = { corretor: 0, gerente: 0, treinee: 0 };
     for (const row of porCargo) {
-      const membro = membros.find((m) => m.userId === row.userId);
-      if (!membro) continue;
+      const membro = membros.find((m) => m.userId && m.userId === row.userId);
+      if (!membro?.user) continue;
       if (membro.user.role === Role.corretor) cargoCount.corretor += row._count._all;
       if (membro.user.role === Role.gerente) cargoCount.gerente += row._count._all;
       if (membro.user.role === Role.treinee) cargoCount.treinee += row._count._all;
@@ -170,6 +219,8 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
 
     return {
       ativa: config.ativa,
+      filtroCampanhas: config.filtroCampanhas,
+      outrosCanaisNaFila: config.outrosCanaisNaFila,
       redistribuirMinutos: config.redistribuirMinutos,
       ativos: ativos.length,
       inativos: membros.length - ativos.length,
@@ -177,22 +228,38 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
       falhas,
       semResponsavel,
       porCargo: cargoCount,
-      proximoUserId: proximo?.userId ?? null,
-      membros: membros.map((m, index) => ({
-        id: m.id,
-        userId: m.userId,
-        nome: m.user.name,
-        avatar: m.user.avatar,
-        role: m.user.role,
-        cargo: m.user.cargo,
-        statusConta: m.user.status,
-        ativo: m.ativo && m.user.status === UserStatus.ativo,
-        ativoNaFila: m.ativo,
-        ordem: index + 1,
-        proximo: proximo?.id === m.id,
-        recebidos: recebidos.get(m.userId) ?? 0,
-        ultimaAtribuicaoAt: m.ultimaAtribuicaoAt,
-      })),
+      proximoUserId: proximoCorretor?.userId ?? null,
+      proximoEquipeId: proximoEquipe?.equipeId ?? null,
+      membros: membros.map((m) => {
+        const equipe = Boolean(m.equipeId && !m.userId);
+        const contaAtiva = m.user
+          ? m.user.status === UserStatus.ativo
+          : m.equipe?.status === UserStatus.ativo;
+        return {
+          id: m.id,
+          tipo: equipe ? 'equipe' : 'corretor',
+          userId: m.userId,
+          equipeId: m.equipeId,
+          nome: m.user?.name ?? m.equipe?.name ?? 'Equipe',
+          avatar: m.user?.avatar ?? null,
+          role: m.user?.role ?? 'equipe',
+          cargo: m.user?.cargo ?? null,
+          statusConta: m.user?.status ?? m.equipe?.status ?? UserStatus.inativo,
+          ativo: m.ativo && contaAtiva,
+          ativoNaFila: m.ativo,
+          ordem: m.ordem,
+          proximo: m.userId
+            ? proximoCorretor?.id === m.id
+            : proximoEquipe?.id === m.id,
+          recebidos: m.userId ? (recebidos.get(m.userId) ?? 0) : 0,
+          ultimaAtribuicaoAt: m.ultimaAtribuicaoAt,
+          campanhas: m.campanhas.map((c) => ({
+            chave: c.chave,
+            nome: c.nome,
+            canal: c.canal,
+          })),
+        };
+      }),
     };
   }
 
@@ -283,6 +350,107 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
       data: { redistribuirMinutos: minutos },
     });
     return { redistribuirMinutos: minutos };
+  }
+
+  async setFiltros(
+    user: AuthenticatedUser,
+    filtros: { filtroCampanhas: boolean; outrosCanaisNaFila: boolean },
+  ) {
+    this.assertGestor(user);
+    const tenantId = requireTenantId(user);
+    const config = await this.ensureConfig(tenantId);
+    await this.prisma.leadFilaConfig.update({
+      where: { id: config.id },
+      data: filtros,
+    });
+    return filtros;
+  }
+
+  async listarCampanhas(user: AuthenticatedUser) {
+    this.assertGestor(user);
+    const tenantId = requireTenantId(user);
+    const links = await this.prisma.leadMetaLink.findMany({
+      where: {
+        lead: { tenantId },
+        OR: [{ campaignId: { not: null } }, { campaignName: { not: null } }],
+      },
+      select: { campaignId: true, campaignName: true },
+      take: 500,
+      orderBy: { createdAt: 'desc' },
+    });
+    const vistas = new Map<string, { chave: string; nome: string; canal: 'meta' | 'olx' }>();
+    for (const link of links) {
+      const id = link.campaignId?.trim();
+      const nome = link.campaignName?.trim() || id;
+      if (!nome) continue;
+      const chave = id ? `meta:${id}` : `meta:nome:${nome.toLowerCase()}`;
+      if (!vistas.has(chave)) vistas.set(chave, { chave, nome, canal: 'meta' });
+    }
+    return [
+      { chave: 'olx:grupo', nome: 'Grupo OLX', canal: 'olx' as const },
+      { chave: 'olx:mcmv', nome: 'MCMV OLX', canal: 'olx' as const },
+      ...vistas.values(),
+    ];
+  }
+
+  async adicionarEquipe(user: AuthenticatedUser, equipeId: string) {
+    this.assertGestor(user);
+    const tenantId = requireTenantId(user);
+    const config = await this.ensureConfig(tenantId);
+    const equipe = await this.prisma.equipe.findFirst({
+      where: { id: equipeId, tenantId, status: UserStatus.ativo },
+    });
+    if (!equipe) throw new NotFoundException('Equipe não encontrada.');
+    const max = await this.prisma.leadFilaMembro.aggregate({
+      where: { configId: config.id, equipeId: { not: null } },
+      _max: { ordem: true },
+    });
+    const membro = await this.prisma.leadFilaMembro.create({
+      data: {
+        tenantId,
+        configId: config.id,
+        equipeId,
+        ordem: (max._max.ordem ?? 0) + 1,
+      },
+    });
+    await this.prisma.leadFilaEvento.create({
+      data: {
+        tenantId,
+        configId: config.id,
+        tipo: LeadFilaEventoTipo.membro_add,
+        actorId: user.id,
+        detalhe: equipe.name,
+      },
+    });
+    return membro;
+  }
+
+  async setCampanhas(
+    user: AuthenticatedUser,
+    membroId: string,
+    campanhas: Array<{ chave: string; nome: string; canal: string }>,
+  ) {
+    this.assertGestor(user);
+    const tenantId = requireTenantId(user);
+    const membro = await this.prisma.leadFilaMembro.findFirst({
+      where: { id: membroId, tenantId },
+    });
+    if (!membro) throw new NotFoundException('Integrante não encontrado.');
+    const unicas = new Map<string, { chave: string; nome: string; canal: string }>();
+    for (const item of campanhas) {
+      const chave = item.chave.trim();
+      const nome = item.nome.trim();
+      if (!chave || !nome) continue;
+      if (item.canal !== 'meta' && item.canal !== 'olx') continue;
+      unicas.set(chave, { chave, nome, canal: item.canal });
+    }
+    await this.prisma.leadFilaCampanha.deleteMany({ where: { membroId } });
+    if (unicas.size > 0) {
+      await this.prisma.leadFilaCampanha.createMany({
+        data: [...unicas.values()].map((item) => ({ membroId, ...item })),
+      });
+    }
+    return { ok: true, total: unicas.size };
   }
 
   async adicionar(user: AuthenticatedUser, userId: string) {
@@ -424,9 +592,17 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     params: { tenantId: string; leadId: string; origem?: string | null },
   ): Promise<Atribuicao & { lead?: { id: string; nome: string; telefone: string; origem: string; cidade: string; interesse?: string | null } }> {
     const locked = await tx.$queryRaw<
-      Array<{ id: string; ativa: boolean; redistribuirMinutos: number | null }>
+      Array<{
+        id: string;
+        ativa: boolean;
+        redistribuirMinutos: number | null;
+        filtroCampanhas?: boolean;
+        outrosCanaisNaFila?: boolean;
+      }>
     >`
-      SELECT id, ativa, "redistribuirMinutos" FROM lead_fila_configs
+      SELECT id, ativa, "redistribuirMinutos",
+        "filtroCampanhas", "outrosCanaisNaFila"
+      FROM lead_fila_configs
       WHERE "tenantId" = ${params.tenantId}
       FOR UPDATE
     `;
@@ -460,12 +636,48 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
       where: {
         configId: config.id,
         ativo: true,
-        user: { status: UserStatus.ativo, role: { in: ELEGIVEIS } },
+        OR: [
+          { user: { status: UserStatus.ativo, role: { in: ELEGIVEIS } } },
+          { equipe: { status: UserStatus.ativo } },
+        ],
       },
       orderBy: [{ ordem: 'asc' }, { id: 'asc' }],
-      include: { user: { select: { id: true, equipeId: true } } },
+      include: {
+        user: { select: { id: true, equipeId: true } },
+        equipe: { select: { id: true, name: true } },
+        campanhas: true,
+      },
     });
-    const proximo = membros[0];
+    const corretores = membros.filter((m) => m.userId && m.user);
+    const equipes = membros.filter((m) => m.equipeId && !m.userId);
+    const ordem = [...corretores, ...equipes];
+    const filtro = Boolean(config.filtroCampanhas);
+    const canal = filtro
+      ? await classificarLead(tx, lead.id, params.origem ?? lead.origem)
+      : null;
+    if (filtro && canal?.tipo === 'outro' && !config.outrosCanaisNaFila) {
+      await tx.leadFilaEvento.create({
+        data: {
+          tenantId: params.tenantId,
+          configId: config.id,
+          tipo: LeadFilaEventoTipo.sem_participante,
+          leadId: lead.id,
+          origem: params.origem ?? lead.origem,
+          detalhe: 'outro_canal_pool_admin',
+        },
+      });
+      await tx.lead.update({
+        where: { id: lead.id },
+        data: { filaDistribuidoAt: new Date() },
+      });
+      return { assigned: false, motivo: 'outro_canal' };
+    }
+    const exigeCampanha = filtro && canal?.tipo !== 'outro';
+    const proximo = exigeCampanha
+      ? ordem.find((m) =>
+          (m.campanhas ?? []).some((c) => c.chave === canal?.chave),
+        )
+      : ordem[0];
     if (!proximo) {
       await tx.leadFilaEvento.create({
         data: {
@@ -474,7 +686,9 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
           tipo: LeadFilaEventoTipo.sem_participante,
           leadId: lead.id,
           origem: params.origem ?? lead.origem,
-          detalhe: 'sem_integrantes_ativos',
+          detalhe: exigeCampanha
+            ? `sem_campanha:${canal?.chave ?? ''}`
+            : 'sem_integrantes_ativos',
         },
       });
       await tx.lead.update({
@@ -485,12 +699,13 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
     }
 
     const agora = new Date();
+    const paraEquipe = Boolean(proximo.equipeId && !proximo.userId);
     const minutos = Number(config.redistribuirMinutos ?? 0);
     const claimed = await tx.lead.updateMany({
       where: { id: lead.id, corretorId: null, filaDistribuidoAt: null },
       data: {
-        corretorId: proximo.userId,
-        equipeId: proximo.user.equipeId,
+        corretorId: paraEquipe ? null : proximo.userId,
+        equipeId: paraEquipe ? proximo.equipeId : proximo.user?.equipeId ?? null,
         filaDistribuidoAt: agora,
         roletaAtribuidoAt: agora,
         roletaRedistribuido: false,
@@ -510,8 +725,8 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         tenantId: params.tenantId,
         leadId: lead.id,
         acao: LeadAtribuicaoAcao.roleta,
-        toCorretorId: proximo.userId,
-        toEquipeId: proximo.user.equipeId,
+        toCorretorId: paraEquipe ? null : proximo.userId,
+        toEquipeId: paraEquipe ? proximo.equipeId : proximo.user?.equipeId ?? null,
       },
     ]);
 
@@ -532,14 +747,14 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         configId: config.id,
         tipo: LeadFilaEventoTipo.atribuicao,
         leadId: lead.id,
-        userId: proximo.userId,
+        userId: proximo.userId ?? undefined,
         origem: params.origem ?? lead.origem,
-        detalhe: 'round_robin',
+        detalhe: paraEquipe ? 'round_robin_equipe' : 'round_robin',
       },
     });
     return {
       assigned: true,
-      userId: proximo.userId,
+      userId: proximo.userId ?? undefined,
       lead: {
         id: lead.id,
         nome: lead.nome,
@@ -771,6 +986,40 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
           });
         }
       }
+      const paradosNaEquipe = await this.prisma.lead.findMany({
+        where: {
+          tenantId: config.tenantId,
+          tipo: ContatoTipo.lead,
+          perdidoAt: null,
+          corretorId: null,
+          equipeId: { not: null },
+          roletaPrazoAt: { lte: now },
+          motivoPerda: null,
+        },
+        select: { id: true, origem: true, equipeId: true },
+        take: 40,
+      });
+      for (const lead of paradosNaEquipe) {
+        await this.prisma.lead.update({
+          where: { id: lead.id },
+          data: {
+            equipeId: null,
+            roletaPrazoAt: null,
+            roletaRedistribuido: true,
+          },
+        });
+        await this.prisma.leadFilaEvento.create({
+          data: {
+            tenantId: config.tenantId,
+            configId: config.id,
+            tipo: LeadFilaEventoTipo.redistribuicao,
+            leadId: lead.id,
+            origem: lead.origem,
+            detalhe: 'prazo_equipe_pool_admin',
+          },
+        });
+        moved += 1;
+      }
     }
     return moved;
   }
@@ -842,8 +1091,14 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
       orderBy: [{ ordem: 'asc' }, { id: 'asc' }],
       include: { user: { select: { id: true, equipeId: true } } },
     });
-    const proximo = membros.find((m) => m.userId !== lead.corretorId);
-    if (!proximo) return { assigned: false, motivo: 'sem_proximo' };
+    const proximo = membros.find(
+      (m) => m.userId && m.user && m.userId !== lead.corretorId,
+    );
+    if (!proximo?.userId || !proximo.user) {
+      return { assigned: false, motivo: 'sem_proximo' };
+    }
+    const destinoId = proximo.userId;
+    const destinoEquipeId = proximo.user.equipeId;
 
     const prazo = new Date(params.now.getTime() + params.minutos * 60_000);
     const claimed = await tx.lead.updateMany({
@@ -856,8 +1111,8 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         origemAtrasoLiberacao: null,
       },
       data: {
-        corretorId: proximo.userId,
-        equipeId: proximo.user.equipeId,
+        corretorId: destinoId,
+        equipeId: destinoEquipeId,
         roletaAtribuidoAt: params.now,
         roletaPrazoAt: prazo,
         roletaRedistribuido: true,
@@ -871,9 +1126,9 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         leadId: lead.id,
         acao: LeadAtribuicaoAcao.redistribuicao,
         fromCorretorId: lead.corretorId,
-        toCorretorId: proximo.userId,
+        toCorretorId: destinoId,
         fromEquipeId: lead.equipeId,
-        toEquipeId: proximo.user.equipeId,
+        toEquipeId: destinoEquipeId,
       },
     ]);
 
@@ -891,14 +1146,14 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         configId: params.configId,
         tipo: LeadFilaEventoTipo.redistribuicao,
         leadId: lead.id,
-        userId: proximo.userId,
+        userId: destinoId,
         origem: lead.origem,
         detalhe: 'tempo_esgotado',
       },
     });
     return {
       assigned: true,
-      userId: proximo.userId,
+      userId: destinoId,
       lead: {
         id: lead.id,
         nome: lead.nome,

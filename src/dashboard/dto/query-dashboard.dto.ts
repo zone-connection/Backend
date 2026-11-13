@@ -1,9 +1,10 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Max,
   Min,
@@ -86,4 +87,18 @@ export class QueryDashboardDto {
   @IsOptional()
   @IsIn(['hoje', 'semana', 'mes', 'vgv'])
   recorte?: 'hoje' | 'semana' | 'mes' | 'vgv';
+
+  /**
+   * Uma ou mais equipes. Vazio = visão geral da imobiliária.
+   * Aceita `equipeIds=a&equipeIds=b` ou lista separada por vírgula.
+   */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value == null || value === '') return undefined;
+    const raw = Array.isArray(value) ? value : String(value).split(',');
+    const ids = raw.map((item) => String(item).trim()).filter(Boolean);
+    return ids.length > 0 ? ids : undefined;
+  })
+  @IsUUID('4', { each: true })
+  equipeIds?: string[];
 }
