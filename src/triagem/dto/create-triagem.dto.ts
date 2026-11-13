@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsIn,
   IsOptional,
   IsString,
@@ -26,4 +27,18 @@ export class CreateTriagemDto {
   @IsString()
   @MaxLength(60)
   stage?: string;
+
+  /**
+   * Etapa de origem quando o funil já avançou o lead e o relato é registrado
+   * depois (um único acontecimento com from→to).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  stageAnterior?: string;
+
+  /** Relato gerado pelo sistema ao pular o formulário de histórico. */
+  @IsOptional()
+  @IsBoolean()
+  automatico?: boolean;
 }

@@ -7,23 +7,47 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { LoginFailureReason, Role, User, UserStatus } from '@prisma/client';
+import {
+  CreciProcessoStatus,
+  LoginFailureReason,
+  MfaDecision,
+  Role,
+  User,
+  UserStatus,
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { PresenceService } from '../presence/presence.service';
+import { MediaService } from '../media/media.service';
 import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import {
   tenantBrandingSelect,
+  tenantOzapFlagSelect,
+  withOzapConnectionFlag,
   type TenantBranding,
 } from '../common/utils/tenant-branding';
+import { normalizeCor } from '../common/utils/cor';
+import { MfaService } from './mfa/mfa.service';
 import {
-  FAILED_LOGIN_WINDOW_MS,
+  isDeliverableEmail,
+  parseOptionalNotifyEmail,
+} from '../mailer/mailer.service';
+import {
+  DAILY_FAILURE_WINDOW_MS,
+  DAILY_LOCKOUT_DURATION_MS,
   LOCKOUT_DURATION_MS,
   MAX_FAILED_LOGIN_ATTEMPTS,
   PASSWORD_RESET_TTL_MS,
   SALT_ROUNDS,
 } from '../config/security.constants';
+import { formatLockoutWait, lockoutWaitMinutes } from './login-lockout';
 import { JwtPayload } from './strategies/jwt.strategy';
+import { UpdateAppearanceDto } from './dto/update-appearance.dto';
+import { sanitizeUserPermissions } from '../common/utils/user-permissions';
+import { applyPlanoModules, tenantTemTarefas } from '../tenants/tenant-plan';
+import { isCorretorLike } from '../common/utils/roles';
+import { corretorTemVendaVinculada } from '../common/utils/corretor-venda';
 
 export interface AuthTokens {
   accessToken: string;
@@ -32,11 +56,20 @@ export interface AuthTokens {
 
 export type AuthUserPayload = PublicUser & {
   tenant: TenantBranding | null;
+  temVendaVinculada?: boolean;
+  mfaDecisionPending?: boolean;
+  mfaSetupPending?: boolean;
 };
 
 export interface AuthResult extends AuthTokens {
   user: AuthUserPayload;
 }
+
+export type LoginOutcome =
+  | ({ status: 'authenticated' } & AuthResult)
+  | { status: 'mfa'; mfaToken: string }
+  | { status: 'setup'; setupToken: string }
+  | { status: 'decision'; decisionToken: string };
 
 /** Origem da requisição, usada na trilha de auditoria. */
 export interface RequestContext {
@@ -46,6 +79,14 @@ export interface RequestContext {
 
 /** Mensagem única para qualquer falha de credencial — não revela se o e-mail existe. */
 const GENERIC_CREDENTIALS_ERROR = 'Credenciais inválidas.';
+
+function stripTenantStatus<T extends { status: UserStatus }>(
+  tenant: T,
+): Omit<T, 'status'> {
+  const { status, ...branding } = tenant;
+  void status;
+  return branding;
+}
 
 /**
  * Hash descartável usado quando o e-mail não existe. Comparar contra ele faz
@@ -62,6 +103,9 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly presence: PresenceService,
+    private readonly media: MediaService,
+    private readonly mfa: MfaService,
   ) {}
 
   async login(
@@ -69,18 +113,17 @@ export class AuthService {
     password: string,
     context: RequestContext = {},
     tenantSlug?: string,
-  ): Promise<AuthResult> {
+  ): Promise<LoginOutcome> {
     const normalizedEmail = email.toLowerCase().trim();
 
     // O bloqueio é contado por e-mail na trilha de auditoria — vale também
     // para e-mails inexistentes, então a resposta é idêntica nos dois casos
     // e não dá para descobrir quais contas existem.
-    if (await this.isTemporarilyLocked(normalizedEmail)) {
+    const waitMinutes = await this.lockoutWaitMinutesFor(normalizedEmail);
+    if (waitMinutes !== null) {
       await this.recordAttempt(normalizedEmail, false, context, 'conta_bloqueada');
       throw new ForbiddenException(
-        `Muitas tentativas de acesso. Tente novamente em ${Math.round(
-          LOCKOUT_DURATION_MS / 60000,
-        )} minutos.`,
+        `Muitas tentativas de acesso. Tente novamente em ${formatLockoutWait(waitMinutes)}.`,
       );
     }
 
@@ -111,6 +154,115 @@ export class AuthService {
       );
     }
 
+    await this.assertTenantAllowsAccess(user.tenantId, async () => {
+      await this.recordAttempt(normalizedEmail, false, context, 'usuario_inativo');
+    });
+
+    const gate = this.mfa.gate(user);
+    if (gate === 'codigo') {
+      return {
+        status: 'mfa',
+        mfaToken: await this.mfa.issuePending(user.id, 'mfa_verify'),
+      };
+    }
+    if (gate === 'configurar') {
+      return {
+        status: 'setup',
+        setupToken: await this.mfa.issuePending(user.id, 'mfa_setup'),
+      };
+    }
+    return { status: 'authenticated', ...(await this.finishLogin(user, context)) };
+  }
+
+  async verifyMfa(mfaToken: string, code: string, context: RequestContext = {}) {
+    const user = await this.mfa.readPending(mfaToken, 'mfa_verify');
+    await this.mfa.verifyLoginCode(user, code);
+    return this.finishLogin(user, context);
+  }
+
+  async recoverMfa(mfaToken: string, recoveryCode: string, context: RequestContext = {}) {
+    const user = await this.mfa.readPending(mfaToken, 'mfa_verify');
+    await this.mfa.recover(user, recoveryCode);
+    return this.finishLogin(user, context);
+  }
+
+  async beginMfaSetup(setupToken: string) {
+    const user = await this.mfa.readPending(setupToken, 'mfa_setup');
+    return this.mfa.beginSetup(user);
+  }
+
+  async confirmMfaSetup(setupToken: string, code: string, context: RequestContext = {}) {
+    const user = await this.mfa.readPending(setupToken, 'mfa_setup');
+    const recovery = await this.mfa.confirmSetup(user, code);
+    const session = await this.finishLogin(
+      { ...user, totpEnabledAt: new Date() },
+      context,
+    );
+    return { ...session, recoveryCodes: recovery.recoveryCodes };
+  }
+
+  mfaStatus(userId: string) {
+    return this.mfa.status(userId);
+  }
+
+  async mfaEnable(userId: string) {
+    const user = await this.requireUser(userId);
+    if (user.role === Role.super_admin && user.totpEnabledAt) {
+      throw new BadRequestException('Use a reconfiguração após confirmar o código atual.');
+    }
+    return this.mfa.beginSetup(user);
+  }
+
+  async mfaConfirm(userId: string, code: string) {
+    const user = await this.requireUser(userId);
+    return this.mfa.confirmSetup(user, code);
+  }
+
+  async mfaDisable(userId: string, password: string, code: string) {
+    const user = await this.requireUser(userId);
+    await this.mfa.disable(user, password, code);
+  }
+
+  private async requireUser(userId: string): Promise<User> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('Sessão inválida.');
+    return user;
+  }
+
+  async decideMfaInSession(
+    userId: string,
+    choice: 'manter' | 'recusar',
+    password = '',
+    code = '',
+  ) {
+    const user = await this.requireUser(userId);
+    await this.mfa.decide(user, choice, password, code);
+  }
+
+  async decideMfa(
+    decisionToken: string,
+    choice: 'manter' | 'recusar',
+    password: string,
+    context: RequestContext = {},
+  ): Promise<LoginOutcome | { status: 'setup'; setupToken: string }> {
+    const user = await this.mfa.readPending(decisionToken, 'mfa_decision');
+    await this.mfa.decide(user, choice, password);
+    if (choice === 'recusar') {
+      return this.finishLogin(
+        { ...user, mfaDecision: MfaDecision.recusar },
+        context,
+      ).then((session) => ({ status: 'authenticated' as const, ...session }));
+    }
+    return {
+      status: 'setup',
+      setupToken: await this.mfa.issuePending(user.id, 'mfa_setup'),
+    };
+  }
+
+  private async finishLogin(
+    user: User,
+    context: RequestContext,
+  ): Promise<AuthResult> {
     const tokens = await this.issueTokens(user);
     await this.prisma.user.update({
       where: { id: user.id },
@@ -121,9 +273,32 @@ export class AuthService {
         hashedRefreshToken: await bcrypt.hash(tokens.refreshToken, SALT_ROUNDS),
       },
     });
-    await this.recordAttempt(normalizedEmail, true, context);
-
+    await this.recordAttempt(user.email, true, context);
+    await this.presence.heartbeat(user.id, user.tenantId);
     return { ...tokens, user: await this.toPublicUser(user) };
+  }
+
+  /**
+   * Impede login e renovação de sessão quando a imobiliária foi inativada.
+   * Super admin da plataforma (sem tenant) continua podendo entrar.
+   */
+  private async assertTenantAllowsAccess(
+    tenantId: string | null,
+    onDenied?: () => Promise<void>,
+  ): Promise<void> {
+    if (!tenantId) return;
+
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true },
+    });
+
+    if (!tenant || tenant.status !== UserStatus.ativo) {
+      await onDenied?.();
+      throw new ForbiddenException(
+        'Esta imobiliária está inativa. O acesso foi suspenso.',
+      );
+    }
   }
 
   /** Resolve usuário por e-mail (+ tenantSlug quando o e-mail existe em vários tenants). */
@@ -185,6 +360,7 @@ export class AuthService {
       throw new ForbiddenException('Usuário inativo. Contate o administrador.');
     }
 
+    await this.assertTenantAllowsAccess(user.tenantId);
     const tokenMatches = await bcrypt.compare(
       refreshToken,
       user.hashedRefreshToken,
@@ -219,6 +395,12 @@ export class AuthService {
       where: { id: userId },
       data: { hashedRefreshToken: null },
     });
+    await this.presence.closeOpenSegments(userId);
+  }
+
+  /** Mantém o segmento de sessão ativo enquanto o usuário usa o CRM. */
+  async heartbeat(userId: string, tenantId: string | null): Promise<void> {
+    await this.presence.heartbeat(userId, tenantId);
   }
 
   async me(userId: string): Promise<AuthUserPayload> {
@@ -226,7 +408,15 @@ export class AuthService {
       where: { id: userId },
       select: {
         ...publicUserSelect,
-        tenant: { select: tenantBrandingSelect },
+        mfaDecision: true,
+        totpEnabledAt: true,
+        tenant: {
+          select: {
+            ...tenantBrandingSelect,
+            status: true,
+            ...tenantOzapFlagSelect,
+          },
+        },
       },
     });
 
@@ -238,8 +428,126 @@ export class AuthService {
       throw new ForbiddenException('Usuário inativo. Contate o administrador.');
     }
 
-    const { tenant, ...rest } = user;
-    return { ...rest, tenant };
+    if (
+      user.tenantId &&
+      (!user.tenant || user.tenant.status !== UserStatus.ativo)
+    ) {
+      throw new UnauthorizedException('Sessão inválida.');
+    }
+
+    const { tenant, mfaDecision, totpEnabledAt, ...rest } = user;
+    const branding = tenant ? stripTenantStatus(tenant) : null;
+    return {
+      ...rest,
+      temVendaVinculada: await this.resolveTemVendaVinculada(rest),
+      mfaDecisionPending: false,
+      mfaSetupPending: false,
+      tenant: branding
+        ? {
+            ...withOzapConnectionFlag(branding),
+            modules: applyPlanoModules(branding.plano, branding.modules),
+            tarefasEnabled: tenantTemTarefas(branding),
+          }
+        : null,
+    };
+  }
+
+  /** Atualiza preferências visuais, CRECI e e-mail de avisos do próprio usuário. */
+  async updateAppearance(
+    userId: string,
+    dto: UpdateAppearanceDto,
+  ): Promise<AuthUserPayload> {
+    const creci =
+      dto.creci !== undefined
+        ? dto.creci?.trim()
+          ? dto.creci.trim()
+          : null
+        : undefined;
+    const notifyEmail = this.requireNotifyEmail(dto.notifyEmail);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(dto.corAside !== undefined && {
+          corAside: normalizeCor(dto.corAside),
+        }),
+        ...(dto.corPrincipal !== undefined && {
+          corPrincipal: normalizeCor(dto.corPrincipal),
+        }),
+        ...(dto.corModulo !== undefined && {
+          corModulo: normalizeCor(dto.corModulo),
+        }),
+        ...(creci !== undefined
+          ? {
+              creci,
+              ...(creci ? { creciStatus: CreciProcessoStatus.creci_recebido } : {}),
+            }
+          : {}),
+        ...(notifyEmail !== undefined ? { notifyEmail } : {}),
+      },
+    });
+
+    return this.me(userId);
+  }
+
+  async uploadAvatar(
+    userId: string,
+    rawFile: Express.Multer.File | undefined,
+  ): Promise<AuthUserPayload> {
+    const file = this.media.requireFile(rawFile);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, tenantId: true },
+    });
+    if (!user) {
+      throw new UnauthorizedException('Usuário não encontrado.');
+    }
+
+    const tenantKey = user.tenantId ?? 'platform';
+    const uploaded = await this.media.uploadImage({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      folder: `crm/${tenantKey}/avatars`,
+      publicId: user.id,
+      maxWidth: 1080,
+      maxHeight: 1080,
+      fit: 'cover',
+      minSide: 256,
+    });
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatar: uploaded.url },
+    });
+    return this.me(userId);
+  }
+
+  async removeAvatar(userId: string): Promise<AuthUserPayload> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, tenantId: true, avatar: true },
+    });
+    if (!user) {
+      throw new UnauthorizedException('Usuário não encontrado.');
+    }
+
+    const tenantKey = user.tenantId ?? 'platform';
+    await this.media.destroy(`crm/${tenantKey}/avatars/${user.id}`);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatar: null },
+    });
+    return this.me(userId);
+  }
+
+  private requireNotifyEmail(
+    value: string | null | undefined,
+  ): string | null | undefined {
+    const parsed = parseOptionalNotifyEmail(value);
+    if (parsed && !isDeliverableEmail(parsed)) {
+      throw new BadRequestException('Informe um e-mail de avisos válido.');
+    }
+    return parsed;
   }
 
   async changePassword(
@@ -276,7 +584,7 @@ export class AuthService {
   /**
    * Gera um token de recuperação de senha. A resposta é sempre a mesma,
    * exista o e-mail ou não, para não expor a base de usuários.
-   * Em dev o token volta na resposta; em produção iria por e-mail.
+   * Em dev o token também volta na resposta, para testes locais.
    */
   async forgotPassword(email: string): Promise<{ resetToken?: string }> {
     const normalized = email.toLowerCase().trim();
@@ -334,18 +642,27 @@ export class AuthService {
     });
   }
 
-  /** Conta as falhas recentes do e-mail, existindo ele ou não. */
-  private async isTemporarilyLocked(email: string): Promise<boolean> {
-    const since = new Date(Date.now() - FAILED_LOGIN_WINDOW_MS);
-    const failures = await this.prisma.loginAttempt.count({
+  /**
+   * Bloqueio por e-mail, exista a conta ou não.
+   * 5 falhas em 15 minutos, ou 15 falhas em 24 horas (12 horas parado).
+   */
+  private async lockoutWaitMinutesFor(email: string): Promise<number | null> {
+    const since = new Date(
+      Date.now() - DAILY_FAILURE_WINDOW_MS - DAILY_LOCKOUT_DURATION_MS,
+    );
+    const failures = await this.prisma.loginAttempt.findMany({
       where: {
         email,
         success: false,
         reason: { not: 'conta_bloqueada' },
         createdAt: { gte: since },
       },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
     });
-    return failures >= MAX_FAILED_LOGIN_ATTEMPTS;
+    return lockoutWaitMinutes(
+      failures.map((row) => row.createdAt),
+    );
   }
 
   private async registerFailure(
@@ -408,6 +725,13 @@ export class AuthService {
       role: user.role as Role,
       name: user.name,
       tenantId: user.tenantId,
+      financeiroPerms: {
+        view: user.financeiroCanView !== false,
+        create: user.financeiroCanCreate !== false,
+        edit: user.financeiroCanEdit !== false,
+        delete: user.financeiroCanDelete !== false,
+      },
+      permissions: sanitizeUserPermissions(user.permissions),
     };
 
     const accessExpiresIn = this.config.get<string>(
@@ -437,7 +761,7 @@ export class AuthService {
     const tenant = user.tenantId
       ? await this.prisma.tenant.findUnique({
           where: { id: user.tenantId },
-          select: tenantBrandingSelect,
+          select: { ...tenantBrandingSelect, ...tenantOzapFlagSelect },
         })
       : null;
 
@@ -446,17 +770,54 @@ export class AuthService {
       tenantId: user.tenantId,
       name: user.name,
       email: user.email,
+      notifyEmail: user.notifyEmail,
       phone: user.phone,
       whatsapp: user.whatsapp,
+      dataNascimento: user.dataNascimento,
       cargo: user.cargo,
+      creci: user.creci,
+      cpf: user.cpf,
+      rg: user.rg,
+      endereco: user.endereco,
+      cep: user.cep,
+      creciStatus: user.creciStatus,
       cor: user.cor,
+      corAside: user.corAside,
+      corPrincipal: user.corPrincipal,
+      corModulo: user.corModulo,
       role: user.role,
+      financeiroCanView: user.financeiroCanView,
+      financeiroCanCreate: user.financeiroCanCreate,
+      financeiroCanEdit: user.financeiroCanEdit,
+      financeiroCanDelete: user.financeiroCanDelete,
+      permissions: sanitizeUserPermissions(user.permissions),
       status: user.status,
       avatar: user.avatar,
       lastLoginAt: user.lastLoginAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      tenant,
+      temVendaVinculada: await this.resolveTemVendaVinculada(user),
+      mfaDecisionPending: false,
+      mfaSetupPending: false,
+      tenant: tenant
+        ? {
+            ...withOzapConnectionFlag(tenant),
+            modules: applyPlanoModules(tenant.plano, tenant.modules),
+            tarefasEnabled: tenantTemTarefas(tenant),
+          }
+        : null,
     };
+  }
+
+  private async resolveTemVendaVinculada(user: {
+    id: string;
+    role: Role;
+    tenantId: string | null;
+  }) {
+    if (!isCorretorLike(user.role) || !user.tenantId) return true;
+    return corretorTemVendaVinculada(this.prisma, {
+      tenantId: user.tenantId,
+      userId: user.id,
+    });
   }
 }
