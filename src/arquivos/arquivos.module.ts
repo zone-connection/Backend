@@ -14,6 +14,6 @@ import { R2Service } from './r2.service';
     R2Service,
     { provide: APP_FILTER, useClass: MulterUploadFilter },
   ],
-  exports: [ArquivosService],
+  exports: [ArquivosService, R2Service],
 })
 export class ArquivosModule {}

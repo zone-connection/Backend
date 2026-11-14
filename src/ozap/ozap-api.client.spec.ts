@@ -70,6 +70,42 @@ describe('OzapApiClient.sendText', () => {
     ]);
   });
 
+  it('envia mídia no endpoint send-media', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+
+    const client = new OzapApiClient({
+      get: (key: string) => (key === 'OZAP_API_KEY' ? 'test-key' : undefined),
+    } as never);
+
+    await client.sendChatMedia({
+      instanceId: 1143,
+      chatId: '5511999990001@s.whatsapp.net',
+      type: 'document',
+      fileUrl: 'https://cdn.exemplo.com/a.pdf',
+      caption: 'Segue',
+      filename: 'a.pdf',
+    });
+
+    assert.equal(
+      calls[0]!.url,
+      'https://api.ozaponline.com/api/v1/1143/messages/send-media',
+    );
+    assert.equal(
+      calls[0]!.init.body,
+      JSON.stringify({
+        to: '5511999990001',
+        type: 'document',
+        file_url: 'https://cdn.exemplo.com/a.pdf',
+        caption: 'Segue',
+        filename: 'a.pdf',
+      }),
+    );
+  });
+
   it('GET lista mensagens do chat', async () => {
     globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
       assert.equal(
