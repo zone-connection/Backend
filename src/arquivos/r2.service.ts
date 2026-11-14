@@ -117,6 +117,18 @@ export class R2Service {
     return Buffer.concat(chunks);
   }
 
+  async signedMediaUrl(key: string, contentType: string): Promise<string> {
+    return getSignedUrl(
+      this.requireClient(),
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ResponseContentType: contentType,
+      }),
+      { expiresIn: 900 },
+    );
+  }
+
   async signedGetUrl(key: string, filename: string): Promise<string> {
     const ttl = Number.isFinite(this.ttlSeconds) ? this.ttlSeconds : 300;
     return getSignedUrl(

@@ -8,7 +8,11 @@ import {
   Post,
   Query,
   Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
@@ -103,6 +107,27 @@ export class WhatsappInboxController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.inbox.listMessages(decodeURIComponent(chatId), requester);
+  }
+
+  @Post('chats/:chatId/media')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+    }),
+  )
+  sendMedia(
+    @Param('chatId') chatId: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body('caption') caption: string | undefined,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.inbox.sendMedia(
+      decodeURIComponent(chatId),
+      file,
+      caption,
+      requester,
+    );
   }
 
   @Post('chats/:chatId/messages')

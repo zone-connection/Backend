@@ -109,6 +109,36 @@ export class OzapApiClient {
     });
   }
 
+  async sendChatMedia(params: {
+    instanceId: number;
+    chatId: string;
+    type: 'image' | 'video' | 'document' | 'audio';
+    fileUrl: string;
+    caption?: string;
+    filename?: string;
+    ptt?: boolean;
+    apiKey?: string;
+  }): Promise<void> {
+    const apiKey = this.requireApiKey(params.apiKey);
+    const to = this.phoneDigits(params.chatId);
+    if (!to) {
+      throw new OzapApiError(0, 'Chat do WhatsApp inválido.');
+    }
+    const body: Record<string, string | boolean> = {
+      to,
+      type: params.type,
+      file_url: params.fileUrl,
+    };
+    const caption = params.caption?.trim();
+    if (caption && params.type !== 'audio') body.caption = caption.slice(0, 1024);
+    if (params.filename && params.type === 'document') {
+      body.filename = params.filename.slice(0, 180);
+    }
+    if (params.type === 'audio' && params.ptt) body.ptt = true;
+    const url = `${this.baseUrl()}/api/v1/${params.instanceId}/messages/send-media`;
+    await this.postJson(url, apiKey, body, 20_000);
+  }
+
   async sendChatText(params: {
     instanceId: number;
     chatId: string;
@@ -593,6 +623,7 @@ export class OzapApiClient {
     url: string,
     apiKey: string,
     body: Record<string, string | boolean>,
+    timeoutMs = OZAP_SEND_TIMEOUT_MS,
   ): Promise<void> {
     let response: Response;
     try {
@@ -603,7 +634,7 @@ export class OzapApiClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(OZAP_SEND_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       const timedOut =

@@ -14,6 +14,8 @@ import {
   canSendWhatsappInbox,
   seesAllWhatsappInbox,
 } from '../common/utils/roles';
+import { randomUUID } from 'node:crypto';
+import { R2Service } from '../arquivos/r2.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { isCrmWhatsappLeadNotifyText } from '../lead-notify/lead-notify.messages';
 import { phonesOwnedByOtherTenants } from './ozap-other-tenant';
@@ -58,6 +60,7 @@ export class WhatsappInboxService {
     private readonly ozapApi: OzapApiClient,
     private readonly config: ConfigService,
     private readonly teamScope: TeamScopeService,
+    private readonly r2: R2Service,
   ) {}
 
   async listChats(
@@ -213,6 +216,67 @@ export class WhatsappInboxService {
       return { ok: true as const, aiPaused: true as const };
     } catch (error) {
       this.throwOzap(error);
+    }
+  }
+
+  async sendMedia(
+    chatId: string,
+    file: { buffer: Buffer; mimetype: string; originalname: string; size: number } | undefined,
+    caption: string | undefined,
+    requester: AuthenticatedUser,
+  ) {
+    this.assertCanSend(requester);
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Escolha um arquivo.');
+    }
+    const kind = classifyWhatsappMedia(file.mimetype, file.originalname, file.size);
+    if (!kind.ok) {
+      throw new BadRequestException(kind.message);
+    }
+    const { instanceId, ozapApiKey } = await this.requireInstance(requester);
+    await this.assertCanViewChat(requester, instanceId, chatId);
+    const safeName = (file.originalname || 'arquivo')
+      .replace(/[^\w.\- ]+/g, '')
+      .slice(0, 120) || 'arquivo';
+    const key = `whatsapp/${instanceId}/${randomUUID()}-${safeName}`;
+    await this.r2.putObject(key, file.buffer, kind.mime);
+    try {
+      const fileUrl = await this.r2.signedMediaUrl(key, kind.mime);
+      await this.ozapApi.pauseChat({
+        instanceId,
+        chatId,
+        pausedUntil: IA_PAUSED_UNTIL,
+        apiKey: ozapApiKey,
+      });
+      await this.ozapApi.sendChatMedia({
+        instanceId,
+        chatId,
+        type: kind.type,
+        fileUrl,
+        caption,
+        filename: safeName,
+        apiKey: ozapApiKey,
+      });
+      return { ok: true as const, aiPaused: true as const };
+    } catch (error) {
+      if (error instanceof OzapApiError && error.status === 403) {
+        throw new BadRequestException(
+          'Este número ainda não está liberado para enviar foto, vídeo ou arquivo.',
+        );
+      }
+      if (error instanceof OzapApiError && error.status === 422) {
+        throw new BadRequestException(
+          'O WhatsApp recusou esse arquivo. Confira o formato e tente de novo.',
+        );
+      }
+      if (error instanceof OzapApiError && error.status === 413) {
+        throw new BadRequestException(
+          'Esse arquivo passou do limite do WhatsApp. Foto, vídeo e áudio vão até 16 MB. Os outros arquivos vão até 50 MB.',
+        );
+      }
+      this.throwOzap(error);
+    } finally {
+      await this.r2.deleteObject(key);
     }
   }
 
@@ -826,6 +890,61 @@ export class WhatsappInboxService {
     }
     throw error;
   }
+}
+
+const MEDIA_LIMITS = {
+  image: 16 * 1024 * 1024,
+  video: 16 * 1024 * 1024,
+  audio: 16 * 1024 * 1024,
+  document: 50 * 1024 * 1024,
+} as const;
+
+const MEDIA_TOO_BIG = {
+  image: 'Essa foto passou de 16 MB. Escolha uma imagem menor para enviar no WhatsApp.',
+  video: 'Esse vídeo passou de 16 MB. Envie um vídeo mais curto ou mais leve.',
+  audio: 'Esse áudio passou de 16 MB. Envie um áudio mais curto.',
+  document: 'Esse arquivo passou de 50 MB. Envie uma versão mais leve.',
+} as const;
+
+export function classifyWhatsappMedia(
+  mime: string,
+  filename: string,
+  size: number,
+):
+  | { ok: true; type: 'image' | 'video' | 'audio' | 'document'; mime: string }
+  | { ok: false; message: string } {
+  const type = mime.toLowerCase();
+  const name = filename.toLowerCase();
+  const image =
+    type === 'image/jpeg' ||
+    type === 'image/jpg' ||
+    type === 'image/png' ||
+    type === 'image/webp' ||
+    /\.(jpe?g|png|webp)$/.test(name);
+  const video = type === 'video/mp4' || type === 'video/x-m4v' || /\.(mp4|m4v)$/.test(name);
+  const audio =
+    type === 'audio/mpeg' ||
+    type === 'audio/mp4' ||
+    type === 'audio/aac' ||
+    type === 'audio/ogg' ||
+    type === 'audio/opus' ||
+    /\.(mp3|m4a|aac|ogg|opus)$/.test(name);
+  const kind = image ? 'image' : video ? 'video' : audio ? 'audio' : 'document';
+  if (size > MEDIA_LIMITS[kind]) {
+    return { ok: false, message: MEDIA_TOO_BIG[kind] };
+  }
+  const resolved = image
+    ? type.includes('png')
+      ? 'image/png'
+      : type.includes('webp')
+        ? 'image/webp'
+        : 'image/jpeg'
+    : video
+      ? 'video/mp4'
+      : audio
+        ? type || 'audio/mpeg'
+        : type || 'application/octet-stream';
+  return { ok: true, type: kind, mime: resolved };
 }
 
 export type { OzapChatMessage, OzapInboxChat };
