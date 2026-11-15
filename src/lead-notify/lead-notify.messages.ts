@@ -178,6 +178,32 @@ export function formatLeadEmailHtml(params: {
 </html>`;
 }
 
+export function reengajamentoWhatsApp(params: {
+  nome: string;
+  campanha: string;
+  perdido: boolean;
+}): string {
+  const situacao = params.perdido
+    ? 'Lead anteriormente marcado como perdido.'
+    : 'Lead ativo no seu funil.';
+  const fechamento = params.perdido
+    ? 'O cliente demonstrou um novo interesse ao se inscrever novamente em uma campanha. Entre em contato para verificar essa nova oportunidade!'
+    : 'O cliente demonstrou um novo interesse. Aproveite a oportunidade para retomar o contato!';
+  return [
+    'Zone Connection — Novo interesse de lead',
+    '',
+    'Olá! Um cliente da sua carteira acabou de se inscrever novamente em uma campanha.',
+    '',
+    `Cliente: ${params.nome}`,
+    '',
+    `Campanha: ${params.campanha}`,
+    '',
+    `Situação: ${situacao}`,
+    '',
+    fechamento,
+  ].join('\n');
+}
+
 /** Texto único do WhatsApp do corretor: sem dados do lead. */
 export function leadChegouWhatsApp(quantidade = 1): string {
   return quantidade > 1

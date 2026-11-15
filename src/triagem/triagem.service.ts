@@ -135,6 +135,27 @@ export class TriagemService {
       orderBy: { createdAt: 'desc' },
     });
 
+    const inscricoes = await this.prisma.leadInscricaoCampanha
+      .findMany({
+        where: { leadId, tenantId: requireTenantId(requester) },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, campanha: true, origem: true, createdAt: true },
+      })
+      .catch(() => []);
+
+    const inscricaoEvents = inscricoes.map((item) => ({
+      id: item.id,
+      leadId,
+      texto: `Nova inscrição na campanha ${item.campanha}. Origem: ${item.origem}.`,
+      textoAnterior: null,
+      stageAnterior: null,
+      stageNovo: null,
+      origem: 'manual' as const,
+      createdAt: item.createdAt,
+      editedAt: null,
+      autor: { id: 'campanha', name: 'Campanha' },
+    }));
+
     return {
       lead: {
         id: lead.id,
@@ -146,7 +167,9 @@ export class TriagemService {
         origemAtrasoLiberacao: lead.origemAtrasoLiberacao,
         triagemOrigemHerdada: lead.triagemOrigemHerdada,
       },
-      events,
+      events: [...events, ...inscricaoEvents].sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      ),
     };
   }
 

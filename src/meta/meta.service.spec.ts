@@ -56,6 +56,8 @@ function createService(opts: {
   duplicateDelivery?: boolean;
   existingLink?: { leadId: string } | null;
   existingLeadgenIds?: string[];
+  existingLeads?: Record<string, unknown>[];
+  reengajamentos?: string[];
 }) {
   const createdLeads: unknown[] = [];
   const deletedKeys: string[] = [];
@@ -102,6 +104,7 @@ function createService(opts: {
     },
     lead: {
       findFirst: async () => null,
+      findMany: async () => opts.existingLeads ?? [],
       create: async (args: { data: Record<string, unknown> }) => {
         const row = { id: 'crm-lead-1', tags: [], ...args.data };
         createdLeads.push(row);
@@ -114,6 +117,12 @@ function createService(opts: {
     },
     leadEmpreendimentoInteresse: {
       create: async () => ({}),
+    },
+    leadInscricaoCampanha: {
+      create: async () => ({ id: 'inscricao-1' }),
+    },
+    leadReatribuicao: {
+      findFirst: async () => null,
     },
   };
 
@@ -150,7 +159,12 @@ function createService(opts: {
     prisma as never,
     { get: () => undefined } as never,
     graphApi as unknown as MetaGraphApiService,
-    { notifyNewLead: async () => undefined } as never,
+    {
+      notifyNewLead: async () => undefined,
+      notifyReengajamento: async (params: { userId: string }) => {
+        opts.reengajamentos?.push(params.userId);
+      },
+    } as never,
     {
       comercialPlacement: async () => ({ funilId: 'funil-1', stage: 'novo' }),
     } as never,
@@ -303,6 +317,33 @@ describe('MetaService.handleWebhook', () => {
     });
     const result = await service.handleWebhook({ object: 'page', entry: [] });
     assert.deepEqual(result, { ok: true, leadIds: [] });
+  });
+
+  it('reinscrição de cliente já cadastrado não cria outro lead e avisa o corretor', async () => {
+    const reengajamentos: string[] = [];
+    const { service, createdLeads, upserts } = createService({
+      connection: { tenantId: TENANT_ID, pageAccessToken: 'page-token' },
+      existingLeads: [
+        {
+          id: 'lead-antigo',
+          nome: 'Ana Silva',
+          telefone: '(11) 99999-8888',
+          origem: 'Facebook Ads',
+          cidade: 'São Paulo',
+          corretorId: 'corretor-1',
+          perdidoAt: null,
+          tags: [],
+          createdAt: new Date('2026-11-01T00:00:00.000Z'),
+          metaLink: { id: 'link-1' },
+        },
+      ],
+      reengajamentos,
+    });
+    const result = await service.handleWebhook(payload());
+    assert.equal(createdLeads.length, 0);
+    assert.equal(upserts.length, 0);
+    assert.deepEqual(reengajamentos, ['corretor-1']);
+    assert.deepEqual(result, { ok: true, leadIds: ['lead-antigo'] });
   });
 
   it('ping dummy da ferramenta de teste: cria lead sem chamar Graph API', async () => {

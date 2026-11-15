@@ -269,35 +269,19 @@ export class MetaService {
       await this.loadAttribution(connection.pageAccessToken, event),
       formName,
     );
-    const { lead, created, keptLost } = await this.findOrCreateLead(
+    const outcome = await this.settleCampaignLead({
       mapped,
       event,
       metaLead,
-      connection.tenantId,
+      tenantId: connection.tenantId,
       attribution,
-    );
-    if (keptLost) {
-      this.logger.log(
-        `Lead perdido não reaberto crmLeadId=${lead.id} tenantId=${connection.tenantId} leadgen_id=${leadgenId}`,
-      );
-      return 'skipped';
-    }
-
-    await this.upsertMetaLink(
-      lead.id,
-      leadgenId,
-      connection.pageId,
-      event,
-      attribution,
-    );
-
+      pageId: connection.pageId,
+      dummy: false,
+    });
     this.logger.log(
-      `Lead importado leadgen_id=${leadgenId} crmLeadId=${lead.id} tenantId=${connection.tenantId}`,
+      `Lead importado leadgen_id=${leadgenId} crmLeadId=${outcome.leadId} tenantId=${connection.tenantId} reengajado=${outcome.reengaged}`,
     );
-    if (created) {
-      this.queueLeadNotify(connection.tenantId, lead);
-    }
-    return 'created';
+    return outcome.created ? 'created' : 'skipped';
   }
 
   /**
@@ -437,39 +421,27 @@ export class MetaService {
             }),
             null,
           );
-      const { lead, created, keptLost } = await this.findOrCreateLead(
+      const outcome = await this.settleCampaignLead({
         mapped,
-        event,
-        metaLead,
-        connection.tenantId,
-        attribution,
-      );
-      if (keptLost) {
-        this.logger.log(
-          `Lead perdido não reaberto crmLeadId=${lead.id} tenantId=${connection.tenantId} leadgen_id=${event.leadgenId}`,
-        );
-        return { ok: true, duplicate: true };
-      }
-
-      await this.upsertMetaLink(
-        lead.id,
-        event.leadgenId,
-        event.pageId,
-        {
+        event: {
           ...event,
           formId: event.formId ?? metaLead.form_id ?? null,
           adId: event.adId ?? metaLead.ad_id ?? null,
         },
+        metaLead,
+        tenantId: connection.tenantId,
         attribution,
-      );
-
+        pageId: event.pageId,
+        dummy,
+      });
       this.logger.log(
-        `Lead criado leadgen_id=${event.leadgenId} crmLeadId=${lead.id} tenantId=${connection.tenantId}`,
+        `Lead de campanha leadgen_id=${event.leadgenId} crmLeadId=${outcome.leadId} tenantId=${connection.tenantId} criado=${outcome.created} reengajado=${outcome.reengaged}`,
       );
-      if (created && !dummy) {
-        this.queueLeadNotify(connection.tenantId, lead);
-      }
-      return { ok: true, leadId: lead.id };
+      return {
+        ok: true,
+        leadId: outcome.leadId,
+        duplicate: outcome.duplicate,
+      };
     } catch (error) {
       // Libera a chave para a Meta reenviar o evento após falha (Graph API, etc.).
       await this.prisma.metaWebhookDelivery
@@ -581,6 +553,137 @@ export class MetaService {
     });
   }
 
+  private campanhaNome(attribution?: MetaAdAttribution | null) {
+    return (
+      attribution?.campaignName?.trim() ||
+      attribution?.formName?.trim() ||
+      'Campanha'
+    ).slice(0, 160);
+  }
+
+  private async settleCampaignLead(params: {
+    mapped: MappedMetaLead;
+    event: LeadgenEvent;
+    metaLead: MetaLeadPayload;
+    tenantId: string;
+    attribution?: MetaAdAttribution | null;
+    pageId: string;
+    dummy: boolean;
+  }) {
+    const { lead, created } = await this.findOrCreateLead(
+      params.mapped,
+      params.event,
+      params.metaLead,
+      params.tenantId,
+      params.attribution,
+    );
+    const campanha = this.campanhaNome(params.attribution);
+    const recorded = await this.recordInscricao({
+      tenantId: params.tenantId,
+      leadId: lead.id,
+      leadgenId: params.event.leadgenId,
+      campanha,
+    });
+    if (!recorded) {
+      return {
+        leadId: lead.id,
+        created: false,
+        reengaged: false,
+        duplicate: true,
+      };
+    }
+
+    const jaTemVinculo = Boolean(lead.metaLink);
+    if (!jaTemVinculo) {
+      await this.upsertMetaLink(
+        lead.id,
+        params.event.leadgenId,
+        params.pageId,
+        params.event,
+        params.attribution ?? null,
+      );
+    }
+
+    if (created) {
+      if (!params.dummy) this.queueLeadNotify(params.tenantId, lead);
+      return {
+        leadId: lead.id,
+        created: true,
+        reengaged: false,
+        duplicate: false,
+      };
+    }
+
+    if (!params.dummy) {
+      const corretorId = await this.corretorDoReengajamento(lead);
+      if (corretorId) {
+        await this.leadNotify.notifyReengajamento({
+          tenantId: params.tenantId,
+          userId: corretorId,
+          leadId: lead.id,
+          nome: lead.nome,
+          campanha,
+          perdido: Boolean(lead.perdidoAt),
+        });
+      } else {
+        this.logger.log(
+          `Reengajamento sem corretor crmLeadId=${lead.id} leadgen_id=${params.event.leadgenId}`,
+        );
+      }
+    }
+
+    return {
+      leadId: lead.id,
+      created: false,
+      reengaged: true,
+      duplicate: false,
+    };
+  }
+
+  private async recordInscricao(params: {
+    tenantId: string;
+    leadId: string;
+    leadgenId: string;
+    campanha: string;
+  }) {
+    try {
+      await this.prisma.leadInscricaoCampanha.create({
+        data: {
+          tenantId: params.tenantId,
+          leadId: params.leadId,
+          leadgenId: params.leadgenId,
+          campanha: params.campanha,
+          origem: 'Meta',
+        },
+      });
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /** Ativo: corretor atual. Perdido: o que ficou no lead ou o último do histórico. */
+  private async corretorDoReengajamento(lead: {
+    id: string;
+    corretorId: string | null;
+    perdidoAt: Date | null;
+  }) {
+    if (!lead.perdidoAt) return lead.corretorId;
+    if (lead.corretorId) return lead.corretorId;
+    const ultimo = await this.prisma.leadReatribuicao.findFirst({
+      where: { leadId: lead.id, toCorretorId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { toCorretorId: true },
+    });
+    return ultimo?.toCorretorId ?? null;
+  }
+
   private async findOrCreateLead(
     mapped: MappedMetaLead,
     event: LeadgenEvent,
@@ -588,21 +691,12 @@ export class MetaService {
     tenantId: string,
     attribution?: MetaAdAttribution | null,
   ) {
-    const archived = await this.findArchivedLead(mapped, tenantId);
-    if (archived) {
+    const existente = await this.findExistingLead(mapped, tenantId);
+    if (existente) {
       this.logger.log(
-        `Lead perdido permanece fora do funil crmLeadId=${archived.id} tenantId=${tenantId} leadgen_id=${event.leadgenId}`,
+        `Lead reengajado crmLeadId=${existente.id} tenantId=${tenantId} leadgen_id=${event.leadgenId} perdido=${Boolean(existente.perdidoAt)}`,
       );
-      return { lead: archived, created: false, keptLost: true };
-    }
-
-    const reusable = await this.findReusableLead(mapped, tenantId);
-    if (reusable) {
-      await this.mergeTags(reusable.id, reusable.tags, mapped.extraTags);
-      this.logger.log(
-        `Lead reutilizado crmLeadId=${reusable.id} tenantId=${tenantId} leadgen_id=${event.leadgenId}`,
-      );
-      return { lead: reusable, created: false };
+      return { lead: existente, created: false };
     }
 
     const canal = metaLeadCanal(event.platform, metaLead.platform);
@@ -676,25 +770,77 @@ export class MetaService {
       leadId: lead.id,
       origem,
     });
-    return { lead, created: true, keptLost: false };
+    return {
+      lead: {
+        ...lead,
+        metaLink: null,
+        perdidoAt: null,
+        corretorId: lead.corretorId ?? null,
+      },
+      created: true,
+    };
   }
 
-  /** Lead já marcado como perda não volta para Novo lead. */
-  private async findArchivedLead(mapped: MappedMetaLead, tenantId: string) {
+  /**
+   * CPF, depois telefone, depois e-mail.
+   * Se houver mais de um, fica o mais recente que tenha corretor.
+   */
+  private async findExistingLead(mapped: MappedMetaLead, tenantId: string) {
+    const select = {
+      id: true,
+      nome: true,
+      telefone: true,
+      origem: true,
+      cidade: true,
+      corretorId: true,
+      perdidoAt: true,
+      tags: true,
+      createdAt: true,
+      metaLink: { select: { id: true } },
+    } as const;
+
+    const escolher = <T extends { corretorId: string | null; createdAt: Date }>(
+      rows: T[],
+    ) => {
+      if (rows.length === 0) return null;
+      const comCorretor = rows.filter((row) => row.corretorId);
+      const pool = comCorretor.length > 0 ? comCorretor : rows;
+      return [...pool].sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      )[0];
+    };
+
+    if (mapped.cpf) {
+      const digits = mapped.cpf.replace(/\D/g, '');
+      const rows = await this.prisma.lead.findMany({
+        where: {
+          tenantId,
+          OR: [{ cpf: mapped.cpf }, { cpf: digits }],
+        },
+        select,
+      });
+      const escolhido = escolher(rows);
+      if (escolhido) return escolhido;
+    }
+
     if (mapped.telefone) {
-      const byPhone = await this.prisma.lead.findFirst({
-        where: { tenantId, telefone: mapped.telefone, perdidoAt: { not: null } },
-        orderBy: { perdidoAt: 'desc' },
+      const rows = await this.prisma.lead.findMany({
+        where: { tenantId, telefone: mapped.telefone },
+        select,
       });
-      if (byPhone) return byPhone;
+      const escolhido = escolher(rows);
+      if (escolhido) return escolhido;
     }
+
     if (mapped.email && !mapped.email.endsWith('@facebook.meta.local')) {
-      const byEmail = await this.prisma.lead.findFirst({
-        where: { tenantId, email: mapped.email, perdidoAt: { not: null } },
-        orderBy: { perdidoAt: 'desc' },
+      const rows = await this.prisma.lead.findMany({
+        where: { tenantId, email: mapped.email },
+        select,
       });
-      if (byEmail) return byEmail;
+      const escolhido = escolher(rows);
+      if (escolhido) return escolhido;
     }
+
     return null;
   }
 
@@ -712,48 +858,6 @@ export class MetaService {
       select: { id: true },
     });
     return partial?.id ?? null;
-  }
-
-  /** Reusa lead existente sem vínculo Meta (evita conflito no leadId unique). */
-  private async findReusableLead(
-    mapped: MappedMetaLead,
-    tenantId: string,
-  ) {
-    if (mapped.telefone) {
-      const byPhone = await this.prisma.lead.findFirst({
-        where: { tenantId, telefone: mapped.telefone, perdidoAt: null },
-        include: { metaLink: true },
-      });
-      if (byPhone && !byPhone.metaLink) return byPhone;
-    }
-
-    if (mapped.email && !mapped.email.endsWith('@facebook.meta.local')) {
-      const byEmail = await this.prisma.lead.findFirst({
-        where: { tenantId, email: mapped.email, perdidoAt: null },
-        include: { metaLink: true },
-      });
-      if (byEmail && !byEmail.metaLink) return byEmail;
-    }
-
-    return null;
-  }
-
-  private async mergeTags(
-    leadId: string,
-    current: string[],
-    extra: string[],
-  ) {
-    const next = new Set([
-      ...current,
-      'Facebook',
-      'Lead Ads',
-      ...extra,
-    ]);
-    if (next.size === current.length) return;
-    await this.prisma.lead.update({
-      where: { id: leadId },
-      data: { tags: [...next] },
-    });
   }
 
   private isDummyEvent(event: LeadgenEvent) {
