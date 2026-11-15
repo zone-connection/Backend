@@ -423,6 +423,14 @@ export async function ensureRuntimeSchema(prisma: PrismaService) {
     );
   }
   try {
+    await ensureLeadInscricaoSchema(prisma);
+  } catch (err) {
+    logger.error(
+      'Não foi possível alinhar o histórico de inscrições de campanha.',
+      err instanceof Error ? err.stack : err,
+    );
+  }
+  try {
     await ensureAssinaturaAvisosSchema(prisma);
   } catch (err) {
     logger.error(
@@ -609,6 +617,55 @@ export async function ensureLeadAtribuicaoSchema(prisma: PrismaService) {
   await prisma.$executeRawUnsafe(`
     CREATE INDEX IF NOT EXISTS "lead_reatribuicoes_leadId_createdAt_idx"
       ON "lead_reatribuicoes"("leadId", "createdAt")
+  `);
+}
+
+export async function ensureLeadInscricaoSchema(prisma: PrismaService) {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "lead_inscricoes_campanha" (
+      "id" TEXT NOT NULL,
+      "tenantId" TEXT NOT NULL,
+      "leadId" TEXT NOT NULL,
+      "leadgenId" TEXT NOT NULL,
+      "campanha" TEXT NOT NULL,
+      "origem" TEXT NOT NULL DEFAULT 'Meta',
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "lead_inscricoes_campanha_pkey" PRIMARY KEY ("id")
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS "lead_inscricoes_campanha_leadgenId_key"
+      ON "lead_inscricoes_campanha"("leadgenId")
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS "lead_inscricoes_campanha_leadId_createdAt_idx"
+      ON "lead_inscricoes_campanha"("leadId", "createdAt")
+  `);
+  await prisma.$executeRawUnsafe(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'lead_inscricoes_campanha_tenantId_fkey'
+      ) THEN
+        ALTER TABLE "lead_inscricoes_campanha"
+          ADD CONSTRAINT "lead_inscricoes_campanha_tenantId_fkey"
+          FOREIGN KEY ("tenantId") REFERENCES "tenants"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `);
+  await prisma.$executeRawUnsafe(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'lead_inscricoes_campanha_leadId_fkey'
+      ) THEN
+        ALTER TABLE "lead_inscricoes_campanha"
+          ADD CONSTRAINT "lead_inscricoes_campanha_leadId_fkey"
+          FOREIGN KEY ("leadId") REFERENCES "leads"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
   `);
 }
 

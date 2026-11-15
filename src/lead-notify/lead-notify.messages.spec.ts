@@ -5,6 +5,7 @@ import {
   formatLeadWhatsApp,
   leadAtribuidoCopy,
   leadChegouWhatsApp,
+  reengajamentoWhatsApp,
   leadCrmPath,
   isCrmWhatsappLeadNotifyText,
   leadLoteCopy,
@@ -33,6 +34,23 @@ describe('lead-notify messages', () => {
     assert.match(text, /Novo lead atribuído a você/);
     assert.match(text, /Ana Silva/);
     assert.match(text, /funil\?lead=lead-1/);
+  });
+
+  it('adapta o WhatsApp de reengajamento à situação do lead', () => {
+    const ativo = reengajamentoWhatsApp({
+      nome: 'João da Silva',
+      campanha: 'Residencial Jardim das Flores',
+      perdido: false,
+    });
+    assert.match(ativo, /Cliente: João da Silva/);
+    assert.match(ativo, /Campanha: Residencial Jardim das Flores/);
+    assert.match(ativo, /Lead ativo no seu funil/);
+    const perdido = reengajamentoWhatsApp({
+      nome: 'João da Silva',
+      campanha: 'Residencial Jardim das Flores',
+      perdido: true,
+    });
+    assert.match(perdido, /Lead anteriormente marcado como perdido/);
   });
 
   it('escolhe o domínio público do CRM, não o preview da Vercel', () => {

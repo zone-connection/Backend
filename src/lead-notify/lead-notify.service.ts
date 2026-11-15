@@ -18,6 +18,7 @@ import {
   leadCrmPath,
   leadLoteCopy,
   leadPoolCopy,
+  reengajamentoWhatsApp,
   DEFAULT_CRM_ORIGIN,
   type LeadNotifySnapshot,
 } from './lead-notify.messages';
@@ -76,6 +77,43 @@ export class LeadNotifyService {
     } catch (error) {
       this.logger.error(
         `Falha ao notificar novo lead ${params.lead.id}: ${
+          error instanceof Error ? error.message : 'erro'
+        }`,
+      );
+    }
+  }
+
+  /** Nova inscrição de campanha em lead já cadastrado. Não redistribui. */
+  async notifyReengajamento(params: {
+    tenantId: string;
+    userId: string;
+    leadId: string;
+    nome: string;
+    campanha: string;
+    perdido: boolean;
+  }): Promise<void> {
+    const text = reengajamentoWhatsApp({
+      nome: params.nome,
+      campanha: params.campanha,
+      perdido: params.perdido,
+    });
+    const titulo = 'Novo interesse de lead';
+    try {
+      await this.notificacoes.createLeadAtribuido({
+        userId: params.userId,
+        leadId: params.leadId,
+        titulo,
+        corpo: `${params.nome} · ${params.campanha}`,
+        eventoChave: `lead_reengajamento:${params.leadId}:${params.campanha}:${Date.now()}`,
+      });
+      await this.tryWhatsApp({
+        tenantId: params.tenantId,
+        userId: params.userId,
+        text,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Falha ao notificar reengajamento do lead ${params.leadId}: ${
           error instanceof Error ? error.message : 'erro'
         }`,
       );

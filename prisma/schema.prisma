@@ -188,6 +188,7 @@ model Tenant {
   users             User[]
   equipes           Equipe[]
   leads             Lead[]
+  inscricoesCampanha LeadInscricaoCampanha[]
   integracaoChamadas IntegracaoChamada[]
   apiAutorizacoes ApiAutorizacao[]
   apiWebhookDestinos ApiWebhookDestino[]
@@ -773,6 +774,7 @@ model Lead {
 
   triagemEvents TriagemEvent[]
   reatribuicoes LeadReatribuicao[]
+  inscricoesCampanha LeadInscricaoCampanha[]
   prazoAdiamentos LeadPrazoAdiamento[]
   documentacoes Documentacao[]
   processos     Processo[]
@@ -1176,6 +1178,24 @@ model LeadReatribuicao {
   @@index([createdAt])
   @@index([actorId])
   @@map("lead_reatribuicoes")
+}
+
+/// Nova inscrição de campanha ligada a um lead já existente ou recém-criado.
+/// O leadgenId impede reprocessar o mesmo evento.
+model LeadInscricaoCampanha {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadgenId String   @unique
+  campanha  String
+  origem    String   @default("Meta")
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, leadId])
+  @@index([leadId, createdAt])
+  @@map("lead_inscricoes_campanha")
 }
 
 /// Construtora parceira (cadastro admin; gerente só visualiza).
