@@ -272,6 +272,13 @@ export class CreatePropostaDto {
   intercaladas?: number[];
 
   @IsOptional()
+  @Transform(toIntArray)
+  @IsArray({ message: "Sinais deve ser uma lista." })
+  @IsInt({ each: true, message: "Sinal inválido." })
+  @Min(0, { each: true })
+  sinais?: number[];
+
+  @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined)
   @Transform(toOptionalInt)
   @IsInt({ message: "FGTS inválido." })
