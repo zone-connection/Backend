@@ -1655,6 +1655,10 @@ model Proposta {
   entrada        Int?
   /// Sinais individuais, quando há mais de um valor.
   sinais         Int[] @default([])
+  /// Data opcional de cada sinal (YYYY-MM-DD), alinhada a `sinais`.
+  sinaisDatas    String[] @default([])
+  /// Data opcional de cada intercalada, alinhada a `intercaladas`.
+  intercaladasDatas String[] @default([])
   apartado       Int?
   /// Parcelas pré-chaves (vários valores).
   preChaves      Int[] @default([])

@@ -279,6 +279,16 @@ export class CreatePropostaDto {
   sinais?: number[];
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  sinaisDatas?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  intercaladasDatas?: string[];
+
+  @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined)
   @Transform(toOptionalInt)
   @IsInt({ message: "FGTS inválido." })
