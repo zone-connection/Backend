@@ -1412,6 +1412,11 @@ export class TenantsService {
       if (dto.vendaDiretaFunil) merged.fichaAnaliseGuiada = false;
     }
     const modules = applyPlanoModules(tenant.plano, merged);
+    if (modules.vendaDiretaFunil === true) {
+      modules.fichaAnaliseGuiada = false;
+    } else if (modules.fichaAnaliseGuiada === true) {
+      modules.vendaDiretaFunil = false;
+    }
 
     await this.prisma.tenant.update({
       where: { id: tenantId },
