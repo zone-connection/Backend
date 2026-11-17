@@ -24,7 +24,7 @@ import {
 import { resolveFinanceiroTenantId } from "../common/utils/tenant";
 import { isCorretorLike } from "../common/utils/roles";
 import { corretorTemVendaVinculada } from "../common/utils/corretor-venda";
-import { hasUserModule } from "../common/utils/user-permissions";
+import { hasUserModule, moduleGrantedBeyondRole } from "../common/utils/user-permissions";
 import { PrismaService } from "../prisma/prisma.service";
 import { calcularEncargosAtraso } from "./titulo-atraso";
 import { BaixarTituloDto } from "./dto/baixar-titulo.dto";
@@ -4910,7 +4910,10 @@ export class FinanceiroService {
       hasUserModule(requester.role, requester.permissions, "comissao") ||
       hasUserModule(requester.role, requester.permissions, "financeiro")
     ) {
-      if (isCorretorLike(requester.role)) {
+      const comissaoLiberada =
+        moduleGrantedBeyondRole(requester.role, requester.permissions, "comissao") ||
+        moduleGrantedBeyondRole(requester.role, requester.permissions, "financeiro");
+      if (isCorretorLike(requester.role) && !comissaoLiberada) {
         const tenantId = requester.tenantId;
         if (
           !tenantId ||
@@ -4930,6 +4933,12 @@ export class FinanceiroService {
   }
 
   private assertComissaoWrite(requester: AuthenticatedUser) {
+    if (
+      moduleGrantedBeyondRole(requester.role, requester.permissions, "comissao") ||
+      moduleGrantedBeyondRole(requester.role, requester.permissions, "financeiro")
+    ) {
+      return;
+    }
     if (
       requester.role !== Role.admin &&
       requester.role !== Role.super_admin &&

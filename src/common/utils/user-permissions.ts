@@ -477,12 +477,49 @@ export function mergePermissions(
   };
 }
 
+/** Módulo ligado para este usuário e que o cargo, sozinho, não traz. */
+export function moduleGrantedBeyondRole(
+  role: Role,
+  stored: UserPermissions | null | undefined,
+  moduleKey: string,
+): boolean {
+  if (stored?.modules?.[moduleKey] !== true) return false;
+  return defaultsFromRole(role).modules[moduleKey] !== true;
+}
+
+function grantActionsOfExtraModules(
+  role: Role,
+  stored: UserPermissions | null | undefined,
+  merged: UserPermissions,
+) {
+  if (!stored?.modules) return;
+  const defaults = defaultsFromRole(role);
+  for (const item of PERMISSION_MODULES) {
+    if (stored.modules[item.key] !== true) continue;
+    if (defaults.modules[item.key] === true) continue;
+    merged.modules[item.key] = true;
+    for (const action of PERMISSION_ACTIONS) {
+      const sameModule = action.module === item.key;
+      const comissao =
+        item.key === 'comissao' && action.key === 'financeiro.comissao';
+      const financeiro =
+        item.key === 'financeiro' && action.module === 'financeiro';
+      if (sameModule || comissao || financeiro) {
+        merged.actions[action.key] = true;
+      }
+    }
+  }
+}
+
 export function effectivePermissions(
   role: Role,
   stored?: UserPermissions | null,
 ): UserPermissions {
   const merged = mergePermissions(defaultsFromRole(role), stored);
-  if (role === Role.corretor) merged.modules.presenca = false;
+  if (role === Role.corretor && stored?.modules?.presenca !== true) {
+    merged.modules.presenca = false;
+  }
+  grantActionsOfExtraModules(role, stored, merged);
   return merged;
 }
 
