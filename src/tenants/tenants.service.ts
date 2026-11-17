@@ -1354,6 +1354,7 @@ export class TenantsService {
       muralChaves: modules.muralChaves === true,
       fichaAnaliseGuiada: modules.fichaAnaliseGuiada === true,
       vendaDiretaFunil: modules.vendaDiretaFunil === true,
+      leadsFrios: modules.leadsFrios === true,
     };
   }
 
@@ -1411,6 +1412,9 @@ export class TenantsService {
       merged.vendaDiretaFunil = dto.vendaDiretaFunil;
       if (dto.vendaDiretaFunil) merged.fichaAnaliseGuiada = false;
     }
+    if (typeof dto.leadsFrios === 'boolean') {
+      merged.leadsFrios = dto.leadsFrios;
+    }
     const modules = applyPlanoModules(tenant.plano, merged);
     if (modules.vendaDiretaFunil === true) {
       modules.fichaAnaliseGuiada = false;
@@ -1434,6 +1438,7 @@ export class TenantsService {
       muralChaves: modules.muralChaves === true,
       fichaAnaliseGuiada: modules.fichaAnaliseGuiada === true,
       vendaDiretaFunil: modules.vendaDiretaFunil === true,
+      leadsFrios: modules.leadsFrios === true,
     };
   }
 

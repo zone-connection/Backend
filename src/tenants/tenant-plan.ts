@@ -101,6 +101,9 @@ export const FICHA_ANALISE_GUIADA_KEY = 'fichaAnaliseGuiada';
 /** Funil registra análise, aprovação e venda sem ficha de documentação. */
 export const VENDA_DIRETA_FUNIL_KEY = 'vendaDiretaFunil';
 
+/** Base de leads frios. Nasce desligada. */
+export const LEADS_FRIOS_KEY = 'leadsFrios';
+
 export function muralChavesTemOperacao(
   modules: Record<string, boolean> | null | undefined,
 ): boolean {
@@ -142,6 +145,9 @@ function withNavPrefs(
   }
   if (typeof raw[VENDA_DIRETA_FUNIL_KEY] === 'boolean') {
     normalized[VENDA_DIRETA_FUNIL_KEY] = raw[VENDA_DIRETA_FUNIL_KEY];
+  }
+  if (typeof raw[LEADS_FRIOS_KEY] === 'boolean') {
+    normalized[LEADS_FRIOS_KEY] = raw[LEADS_FRIOS_KEY];
   }
   return normalized;
 }

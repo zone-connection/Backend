@@ -57,4 +57,9 @@ export class UpdateTenantOperationModulesDto {
   @IsOptional()
   @IsBoolean()
   vendaDiretaFunil?: boolean;
+
+  /** Base compartilhada de leads frios. Desligada por padrão. */
+  @IsOptional()
+  @IsBoolean()
+  leadsFrios?: boolean;
 }

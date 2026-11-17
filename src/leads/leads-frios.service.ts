@@ -24,7 +24,14 @@ export class LeadsFriosService {
     private readonly funis: FunisService,
   ) {}
 
+  private assertAtivo(requester: AuthenticatedUser) {
+    if (requester.tenantModules?.leadsFrios !== true) {
+      throw new ForbiddenException('A base de leads frios está desativada.');
+    }
+  }
+
   list(requester: AuthenticatedUser) {
+    this.assertAtivo(requester);
     const tenantId = requireTenantId(requester);
     return this.prisma.lead.findMany({
       where: {
@@ -40,6 +47,7 @@ export class LeadsFriosService {
   }
 
   async importRows(dto: ImportLeadsFriosDto, requester: AuthenticatedUser) {
+    this.assertAtivo(requester);
     if (
       requester.role !== Role.admin &&
       requester.role !== Role.super_admin &&
@@ -90,6 +98,7 @@ export class LeadsFriosService {
   }
 
   async puxar(dto: LeadFrioIdsDto, requester: AuthenticatedUser) {
+    this.assertAtivo(requester);
     const tenantId = requireTenantId(requester);
     const corretorId = requester.id;
     const updated = await this.prisma.lead.updateMany({
@@ -112,6 +121,7 @@ export class LeadsFriosService {
   }
 
   async devolver(id: string, requester: AuthenticatedUser) {
+    this.assertAtivo(requester);
     const tenantId = requireTenantId(requester);
     const lead = await this.prisma.lead.findFirst({
       where: { id, tenantId, tipo: ContatoTipo.lead },
@@ -155,6 +165,7 @@ export class LeadsFriosService {
   }
 
   async apagar(dto: LeadFrioIdsDto, requester: AuthenticatedUser) {
+    this.assertAtivo(requester);
     if (
       requester.role !== Role.admin &&
       requester.role !== Role.super_admin
