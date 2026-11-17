@@ -593,7 +593,25 @@ export class MetasService {
         ? {}
         : documentacaoVinculadaAoCorretorWhere(corretorIds);
 
-    if (meta.tipo === MetaTipo.documentacoes) {
+    if (meta.tipo === MetaTipo.leads) {
+      atual = await this.prisma.lead.count({
+        where: {
+          tenantId,
+          tipo: 'lead',
+          createdAt: { gte: meta.inicio, lt: meta.fim },
+          ...(corretorIds === null ? {} : { corretorId: { in: corretorIds } }),
+        },
+      });
+    } else if (meta.tipo === MetaTipo.ligacoes) {
+      atual = await this.prisma.triagemEvent.count({
+        where: {
+          tipo: 'ligacao',
+          createdAt: { gte: meta.inicio, lt: meta.fim },
+          lead: { tenantId },
+          ...(corretorIds === null ? {} : { autorId: { in: corretorIds } }),
+        },
+      });
+    } else if (meta.tipo === MetaTipo.documentacoes) {
       atual = await this.prisma.documentacao.count({
         where: {
           tenantId,

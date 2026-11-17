@@ -1,0 +1,2 @@
+ALTER TYPE "MetaTipo" ADD VALUE IF NOT EXISTS 'leads';
+ALTER TYPE "MetaTipo" ADD VALUE IF NOT EXISTS 'ligacoes';

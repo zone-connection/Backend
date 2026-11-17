@@ -52,6 +52,7 @@ const eventSelect = {
   textoAnterior: true,
   stageAnterior: true,
   stageNovo: true,
+  tipo: true,
   origem: true,
   createdAt: true,
   editedAt: true,
@@ -287,6 +288,7 @@ export class TriagemService {
             origem,
             hops,
             now,
+            tipo: dto.tipo ?? null,
           })
         : [
             await this.prisma.triagemEvent.create({
@@ -296,6 +298,7 @@ export class TriagemService {
                 texto,
                 stageAnterior,
                 stageNovo,
+                tipo: dto.tipo ?? null,
                 origem,
               },
               select: eventSelect,
@@ -560,6 +563,7 @@ export class TriagemService {
     origem: TriagemOrigem;
     hops: StageHop[];
     now: Date;
+    tipo?: string | null;
   }) {
     const useAutoForAll = isAutoAvancoTexto(input.texto);
     const created = [];
@@ -574,6 +578,7 @@ export class TriagemService {
             texto: isLast && !useAutoForAll ? input.texto : hopAutoTexto(hop),
             stageAnterior: hop.fromSlug,
             stageNovo: hop.toSlug,
+            tipo: isLast && !useAutoForAll ? input.tipo ?? null : null,
             origem: input.origem,
             createdAt: new Date(input.now.getTime() + i),
           },

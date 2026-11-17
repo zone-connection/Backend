@@ -44,6 +44,7 @@ import { requireTenantId } from '../common/utils/tenant';
 import {
   hasAnyUserModule,
   sanitizeUserPermissions,
+  storedModuleEnabled,
 } from '../common/utils/user-permissions';
 import { AgendaService } from '../agenda/agenda.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
@@ -2006,6 +2007,8 @@ export class DashboardService {
       vendas: 'Vendas',
       documentacoes: 'Documentações',
       vgv: 'VGV',
+      leads: 'Leads',
+      ligacoes: 'Ligações',
     };
 
     const corretorItems = await Promise.all(
@@ -2015,7 +2018,25 @@ export class DashboardService {
           const corretorId = meta.corretorId!;
           const corretor = meta.corretor!;
           let atual = 0;
-          if (meta.tipo === MetaTipo.documentacoes) {
+          if (meta.tipo === MetaTipo.leads) {
+            atual = await this.prisma.lead.count({
+              where: {
+                tenantId,
+                tipo: 'lead',
+                corretorId,
+                createdAt: { gte: meta.inicio, lt: meta.fim },
+              },
+            });
+          } else if (meta.tipo === MetaTipo.ligacoes) {
+            atual = await this.prisma.triagemEvent.count({
+              where: {
+                tipo: 'ligacao',
+                autorId: corretorId,
+                createdAt: { gte: meta.inicio, lt: meta.fim },
+                lead: { tenantId },
+              },
+            });
+          } else if (meta.tipo === MetaTipo.documentacoes) {
             atual = await this.prisma.documentacao.count({
               where: {
                 tenantId,
@@ -2054,7 +2075,23 @@ export class DashboardService {
         .filter((meta) => !meta.corretorId)
         .map(async (meta) => {
           let atual = 0;
-          if (meta.tipo === MetaTipo.documentacoes) {
+          if (meta.tipo === MetaTipo.leads) {
+            atual = await this.prisma.lead.count({
+              where: {
+                tenantId,
+                tipo: 'lead',
+                createdAt: { gte: meta.inicio, lt: meta.fim },
+              },
+            });
+          } else if (meta.tipo === MetaTipo.ligacoes) {
+            atual = await this.prisma.triagemEvent.count({
+              where: {
+                tipo: 'ligacao',
+                createdAt: { gte: meta.inicio, lt: meta.fim },
+                lead: { tenantId },
+              },
+            });
+          } else if (meta.tipo === MetaTipo.documentacoes) {
             atual = await this.prisma.documentacao.count({
               where: {
                 tenantId,
@@ -2320,7 +2357,7 @@ export class DashboardService {
     });
     const origem = filtros.origem?.trim() || undefined;
     const origemWhere = origem ? { origem } : {};
-    const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
+    const corretorIds = await this.idsDoRanking(requester);
     const taxaConversao = (vendas: number, documentacoes: number) =>
       documentacoes === 0
         ? 0
@@ -2730,7 +2767,7 @@ export class DashboardService {
       de: filtros.de,
       ate: filtros.ate,
     });
-    const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
+    const corretorIds = await this.idsDoRanking(requester);
     const corretores = await this.prisma.user.findMany({
       where: {
         tenantId,
@@ -3176,6 +3213,21 @@ export class DashboardService {
         })),
       ],
     };
+  }
+
+  /** Ranking com a permissão vê a imobiliária inteira, como o admin. */
+  private async idsDoRanking(
+    requester: AuthenticatedUser,
+  ): Promise<string[] | null> {
+    const ids = await this.teamScope.getVisibleCorretorIds(requester);
+    if (
+      ids &&
+      requester.role !== Role.gerente &&
+      storedModuleEnabled(requester.permissions, 'corretores')
+    ) {
+      return null;
+    }
+    return ids;
   }
 
   private async assertDashboardGerencial(
