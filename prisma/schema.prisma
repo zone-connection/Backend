@@ -749,6 +749,13 @@ model Lead {
   perdidoPor   User?     @relation("LeadPerdidoPor", fields: [perdidoPorId], references: [id], onDelete: SetNull)
   perdidoPorId String?
 
+  /// Está agora na base de leads frios (sem corretor).
+  baseFria Boolean @default(false)
+  /// Já passou pela base fria. Continua marcado depois que um corretor puxa.
+  origemBaseFria Boolean @default(false)
+  /// Início da estadia atual na base fria.
+  baseFriaEm DateTime?
+
   /// Momento em que o lead entrou na etapa atual (não usa createdAt como movimentação contínua).
   stageEnteredAt DateTime @default(now())
   /// Última movimentação relevante (etapa, triagem, tarefa ou atividade).

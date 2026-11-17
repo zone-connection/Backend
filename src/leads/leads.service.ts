@@ -1197,6 +1197,7 @@ export class LeadsService {
 
     const where: Prisma.LeadWhereInput = {
       perdidoAt: null,
+      baseFria: false,
       ...(tipoFiltro ? { tipo: tipoFiltro } : {}),
       ...leadScope,
       ...(query.stage ? { stage: query.stage } : {}),

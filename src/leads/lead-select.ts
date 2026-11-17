@@ -26,6 +26,9 @@ export const leadSelect = {
   vagasMin: true,
   prospeccao: true,
   tags: true,
+  baseFria: true,
+  origemBaseFria: true,
+  baseFriaEm: true,
   corretorId: true,
   corretor: {
     select: {
