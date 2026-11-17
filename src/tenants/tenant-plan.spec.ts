@@ -74,6 +74,15 @@ describe('módulos de operação no plano', () => {
     assert.equal(on.fichaAnaliseGuiada, true);
   });
 
+  it('preserva a venda direta no funil e deixa desligada se não foi escolhida', () => {
+    const off = normalizeModulesForPlano(TenantPlano.ouro, {});
+    assert.equal(off.vendaDiretaFunil, undefined);
+    const on = normalizeModulesForPlano(TenantPlano.ouro, {
+      vendaDiretaFunil: true,
+    });
+    assert.equal(on.vendaDiretaFunil, true);
+  });
+
   it('preserva corretores criam propostas ao normalizar', () => {
     const next = normalizeModulesForPlano(TenantPlano.ouro, {
       corretoresCriamPropostas: true,

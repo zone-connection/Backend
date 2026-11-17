@@ -52,4 +52,9 @@ export class UpdateTenantOperationModulesDto {
   @IsOptional()
   @IsBoolean()
   fichaAnaliseGuiada?: boolean;
+
+  /** Análise, aprovação e venda no funil, sem ficha de documentação. */
+  @IsOptional()
+  @IsBoolean()
+  vendaDiretaFunil?: boolean;
 }

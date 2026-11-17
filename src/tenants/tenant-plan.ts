@@ -98,6 +98,9 @@ export const MURAL_CHAVES_OPT_IN_KEY = 'muralChavesOptIn';
 /** Ao entrar na análise, a ficha de documentação nasce obrigatória. */
 export const FICHA_ANALISE_GUIADA_KEY = 'fichaAnaliseGuiada';
 
+/** Funil registra análise, aprovação e venda sem ficha de documentação. */
+export const VENDA_DIRETA_FUNIL_KEY = 'vendaDiretaFunil';
+
 export function muralChavesTemOperacao(
   modules: Record<string, boolean> | null | undefined,
 ): boolean {
@@ -136,6 +139,9 @@ function withNavPrefs(
   }
   if (typeof raw[FICHA_ANALISE_GUIADA_KEY] === 'boolean') {
     normalized[FICHA_ANALISE_GUIADA_KEY] = raw[FICHA_ANALISE_GUIADA_KEY];
+  }
+  if (typeof raw[VENDA_DIRETA_FUNIL_KEY] === 'boolean') {
+    normalized[VENDA_DIRETA_FUNIL_KEY] = raw[VENDA_DIRETA_FUNIL_KEY];
   }
   return normalized;
 }
