@@ -82,6 +82,10 @@ enum MetaTipo {
   vendas
   documentacoes
   vgv
+  /// Leads criados no período (carteira de captação, sem clientes).
+  leads
+  /// Históricos do tipo ligação registrados no período.
+  ligacoes
 }
 
 /// Recorrência do período ativo da meta.
