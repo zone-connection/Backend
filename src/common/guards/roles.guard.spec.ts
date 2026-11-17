@@ -3,7 +3,6 @@ import { describe, it } from 'node:test';
 import { Role } from '@prisma/client';
 import {
   hasAnyUserModule,
-  isSensitiveApiWrite,
   modulesForApiPath,
 } from '../utils/user-permissions';
 
@@ -11,11 +10,10 @@ function wouldAllow(
   role: Role,
   requiredRoles: Role[],
   path: string,
-  method: string,
+  _method: string,
   permissions: { modules: Record<string, boolean>; actions: Record<string, boolean> } | null,
 ) {
   if (requiredRoles.some((allowed) => allowed === role)) return true;
-  if (isSensitiveApiWrite(path, method)) return false;
   return hasAnyUserModule(role, permissions, modulesForApiPath(path));
 }
 
@@ -49,12 +47,33 @@ describe('RolesGuard + módulos concedidos', () => {
     );
   });
 
-  it('não deixa analista alterar usuários só com módulo Usuários', () => {
+  it('deixa alterar usuários quando o módulo Usuários foi concedido', () => {
     assert.equal(
       wouldAllow(Role.analista, [Role.admin], '/users/abc', 'PATCH', {
         modules: { usuarios: true },
         actions: {},
       }),
+      true,
+    );
+  });
+
+  it('corretor com Financeiro lança e altera comissão', () => {
+    assert.equal(
+      wouldAllow(Role.corretor, [Role.admin, Role.financeiro], '/financeiro/comissao', 'POST', {
+        modules: { financeiro: true },
+        actions: {},
+      }),
+      true,
+    );
+    assert.equal(
+      wouldAllow(Role.corretor, [Role.admin, Role.financeiro], '/financeiro/titulos', 'DELETE', {
+        modules: { financeiro: true },
+        actions: {},
+      }),
+      true,
+    );
+    assert.equal(
+      wouldAllow(Role.corretor, [Role.admin, Role.financeiro], '/financeiro/titulos', 'POST', null),
       false,
     );
   });

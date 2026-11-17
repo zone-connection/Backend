@@ -44,6 +44,7 @@ import { requireTenantId } from '../common/utils/tenant';
 import {
   hasAnyUserModule,
   sanitizeUserPermissions,
+  storedModuleEnabled,
 } from '../common/utils/user-permissions';
 import { AgendaService } from '../agenda/agenda.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
@@ -2320,7 +2321,7 @@ export class DashboardService {
     });
     const origem = filtros.origem?.trim() || undefined;
     const origemWhere = origem ? { origem } : {};
-    const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
+    const corretorIds = await this.idsDoRanking(requester);
     const taxaConversao = (vendas: number, documentacoes: number) =>
       documentacoes === 0
         ? 0
@@ -2730,7 +2731,7 @@ export class DashboardService {
       de: filtros.de,
       ate: filtros.ate,
     });
-    const corretorIds = await this.teamScope.getVisibleCorretorIds(requester);
+    const corretorIds = await this.idsDoRanking(requester);
     const corretores = await this.prisma.user.findMany({
       where: {
         tenantId,
@@ -3176,6 +3177,21 @@ export class DashboardService {
         })),
       ],
     };
+  }
+
+  /** Ranking com a permissão vê a imobiliária inteira, como o admin. */
+  private async idsDoRanking(
+    requester: AuthenticatedUser,
+  ): Promise<string[] | null> {
+    const ids = await this.teamScope.getVisibleCorretorIds(requester);
+    if (
+      ids &&
+      requester.role !== Role.gerente &&
+      storedModuleEnabled(requester.permissions, 'corretores')
+    ) {
+      return null;
+    }
+    return ids;
   }
 
   private async assertDashboardGerencial(

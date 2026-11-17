@@ -477,6 +477,13 @@ export function mergePermissions(
   };
 }
 
+export function storedModuleEnabled(
+  stored: UserPermissions | null | undefined,
+  moduleKey: string,
+): boolean {
+  return stored?.modules?.[moduleKey] === true;
+}
+
 /** Módulo ligado para este usuário e que o cargo, sozinho, não traz. */
 export function moduleGrantedBeyondRole(
   role: Role,

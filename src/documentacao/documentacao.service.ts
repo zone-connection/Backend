@@ -715,6 +715,13 @@ export class DocumentacaoService {
         return {};
       case Role.corretor:
       case Role.treinee:
+        if (
+          requester.permissions?.modules?.documentacao === true ||
+          requester.permissions?.modules?.vendas === true ||
+          requester.permissions?.modules?.financeiro === true
+        ) {
+          return {};
+        }
         return documentacaoVinculadaAoCorretorWhere(requester.id);
       case Role.gerente: {
         const teamCorretorIds =

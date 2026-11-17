@@ -1670,7 +1670,9 @@ export class FinanceiroService {
     await this.assertComissaoAccess(requester);
     const tenantId = resolveFinanceiroTenantId(requester);
     const where: Prisma.FinanceiroComissaoWhereInput = { tenantId };
-    if (isCorretorLike(requester.role)) where.corretorId = requester.id;
+    if (isCorretorLike(requester.role) && !this.veVendasGerais(requester)) {
+      where.corretorId = requester.id;
+    }
     if (requester.role === Role.gerente) {
       // Inclui comissão sem equipe (equipeId null) se o gerente estiver no snapshot.
       where.OR = [
@@ -1678,7 +1680,11 @@ export class FinanceiroService {
         { gerenteId: requester.id },
       ];
     }
-    if (requester.role === Role.admin || requester.role === Role.super_admin) {
+    if (
+      requester.role === Role.admin ||
+      requester.role === Role.super_admin ||
+      this.veVendasGerais(requester)
+    ) {
       await this.syncComissoesParaTitulos(tenantId);
     }
     const rows = await this.prisma.financeiroComissao.findMany({
@@ -4290,7 +4296,7 @@ export class FinanceiroService {
       valorPremiacaoGerente: Number(row.valorPremiacaoGerente),
       valorPremiacaoRestante: Number(row.valorPremiacaoRestante),
     };
-    if (isCorretorLike(requester.role)) {
+    if (isCorretorLike(requester.role) && !this.veVendasGerais(requester)) {
       const {
         percentualImobiliaria: _percentualImobiliaria,
         comissaoBruta: _comissaoBruta,
@@ -4930,6 +4936,14 @@ export class FinanceiroService {
       return;
     }
     throw new ForbiddenException("Você não possui acesso às comissões.");
+  }
+
+  /** Permissão de Financeiro equivale ao admin dentro do módulo. */
+  private veVendasGerais(requester: AuthenticatedUser): boolean {
+    return (
+      moduleGrantedBeyondRole(requester.role, requester.permissions, "financeiro") ||
+      moduleGrantedBeyondRole(requester.role, requester.permissions, "comissao")
+    );
   }
 
   private assertComissaoWrite(requester: AuthenticatedUser) {
