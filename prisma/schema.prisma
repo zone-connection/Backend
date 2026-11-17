@@ -1142,6 +1142,8 @@ model TriagemEvent {
   textoAnterior String?
   stageAnterior String?
   stageNovo     String?
+  /// visita, ligacao, reuniao ou outro. Relatos antigos ficam sem tipo.
+  tipo          String?
   origem        TriagemOrigem
   createdAt     DateTime      @default(now())
   editedAt      DateTime?
