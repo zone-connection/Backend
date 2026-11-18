@@ -47,6 +47,7 @@ import {
   storedModuleEnabled,
 } from '../common/utils/user-permissions';
 import { AgendaService } from '../agenda/agenda.service';
+import { contarVisitasEReunioes } from '../metas/visitas-reunioes';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { FunisService } from '../funis/funis.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -2038,17 +2039,13 @@ export class DashboardService {
               },
             });
           } else if (meta.tipo === MetaTipo.agendamentos) {
-            atual = await this.prisma.agendamento.count({
-              where: {
-                tenantId,
-                status: { not: 'cancelado' },
-                startsAt: { gte: meta.inicio, lt: meta.fim },
-                OR: [
-                  { atribuidoParaId: corretorId },
-                  { atribuidoParaId: null, autorId: corretorId },
-                ],
-              },
-            });
+            atual = await contarVisitasEReunioes(
+              this.prisma,
+              tenantId,
+              meta.inicio,
+              meta.fim,
+              [corretorId],
+            );
           } else if (meta.tipo === MetaTipo.documentacoes) {
             atual = await this.prisma.documentacao.count({
               where: {
@@ -2105,13 +2102,13 @@ export class DashboardService {
               },
             });
           } else if (meta.tipo === MetaTipo.agendamentos) {
-            atual = await this.prisma.agendamento.count({
-              where: {
-                tenantId,
-                status: { not: 'cancelado' },
-                startsAt: { gte: meta.inicio, lt: meta.fim },
-              },
-            });
+            atual = await contarVisitasEReunioes(
+              this.prisma,
+              tenantId,
+              meta.inicio,
+              meta.fim,
+              null,
+            );
           } else if (meta.tipo === MetaTipo.documentacoes) {
             atual = await this.prisma.documentacao.count({
               where: {

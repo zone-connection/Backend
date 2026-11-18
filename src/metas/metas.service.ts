@@ -25,6 +25,7 @@ import { requireTenantId, isPlatformAdmin } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { contarVisitasEReunioes } from './visitas-reunioes';
 import { CreateMetaDto } from './dto/create-meta.dto';
 import { UpdateMetaDto } from './dto/update-meta.dto';
 
@@ -612,21 +613,13 @@ export class MetasService {
         },
       });
     } else if (meta.tipo === MetaTipo.agendamentos) {
-      atual = await this.prisma.agendamento.count({
-        where: {
-          tenantId,
-          status: { not: 'cancelado' },
-          startsAt: { gte: meta.inicio, lt: meta.fim },
-          ...(corretorIds === null
-            ? {}
-            : {
-                OR: [
-                  { atribuidoParaId: { in: corretorIds } },
-                  { atribuidoParaId: null, autorId: { in: corretorIds } },
-                ],
-              }),
-        },
-      });
+      atual = await contarVisitasEReunioes(
+        this.prisma,
+        tenantId,
+        meta.inicio,
+        meta.fim,
+        corretorIds,
+      );
     } else if (meta.tipo === MetaTipo.documentacoes) {
       atual = await this.prisma.documentacao.count({
         where: {
