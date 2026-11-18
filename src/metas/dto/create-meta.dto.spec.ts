@@ -15,7 +15,7 @@ function base(tipo: string) {
 
 describe('CreateMetaDto tipos leads e ligacoes', () => {
   it('aceita meta de leads criados e de ligações', async () => {
-    for (const tipo of ['leads', 'ligacoes', 'vendas', 'documentacoes', 'vgv']) {
+    for (const tipo of ['leads', 'ligacoes', 'agendamentos', 'vendas', 'documentacoes', 'vgv']) {
       const dto = plainToInstance(CreateMetaDto, base(tipo));
       const errors = await validate(dto);
       assert.equal(errors.length, 0, tipo);

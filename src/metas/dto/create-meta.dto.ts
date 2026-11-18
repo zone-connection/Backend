@@ -1,6 +1,6 @@
 import { IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength } from 'class-validator';
 
-export const META_TIPOS = ['vendas', 'documentacoes', 'vgv', 'leads', 'ligacoes'] as const;
+export const META_TIPOS = ['vendas', 'documentacoes', 'vgv', 'leads', 'ligacoes', 'agendamentos'] as const;
 export const META_PERIODOS = [
   'diaria',
   'semanal',
