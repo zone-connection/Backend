@@ -275,6 +275,7 @@ export class DashboardService {
       documentacoes,
       agendaHoje,
       comissao,
+      metasAtivas,
     ] = await Promise.all([
       this.prisma.lead.groupBy({
         by: ['tipo'],
@@ -317,6 +318,28 @@ export class DashboardService {
         papel: 'corretor',
         userId: requester.id,
       }),
+      this.prisma.meta.findMany({
+        where: {
+          tenantId,
+          inicio: { lte: now },
+          fim: { gt: now },
+          OR: [
+            { corretorId: requester.id },
+            { escopo: MetaEscopo.imobiliaria },
+          ],
+        },
+        include: {
+          corretor: {
+            select: {
+              id: true,
+              name: true,
+              equipeId: true,
+              equipe: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
     ]);
 
     const totalPorTipo = new Map(
@@ -334,6 +357,13 @@ export class DashboardService {
       : 0;
     const agendaAtiva = agendaHoje.filter(
       (item) => item.status !== 'cancelado',
+    );
+    const metasProgresso = await this.buildMetasProgress(
+      tenantId,
+      metasAtivas,
+    );
+    const metaPorId = new Map(
+      metasProgresso.corretores.map((item) => [item.id, item]),
     );
 
     return {
@@ -390,6 +420,24 @@ export class DashboardService {
               : 'pessoal',
         })),
       },
+      metas: metasAtivas.map((meta) => {
+        const progresso = metaPorId.get(meta.id);
+        const atual = progresso?.atual ?? 0;
+        const percentual =
+          meta.valor === 0
+            ? 0
+            : Math.min(100, Math.round((atual / meta.valor) * 100));
+        return {
+          id: meta.id,
+          titulo: meta.titulo?.trim() || null,
+          tipo: meta.tipo,
+          periodo: meta.periodo,
+          escopo: meta.escopo,
+          valor: meta.valor,
+          atual,
+          percentual,
+        };
+      }),
     };
   }
 
