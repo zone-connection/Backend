@@ -611,6 +611,22 @@ export class MetasService {
           ...(corretorIds === null ? {} : { autorId: { in: corretorIds } }),
         },
       });
+    } else if (meta.tipo === MetaTipo.agendamentos) {
+      atual = await this.prisma.agendamento.count({
+        where: {
+          tenantId,
+          status: { not: 'cancelado' },
+          startsAt: { gte: meta.inicio, lt: meta.fim },
+          ...(corretorIds === null
+            ? {}
+            : {
+                OR: [
+                  { atribuidoParaId: { in: corretorIds } },
+                  { atribuidoParaId: null, autorId: { in: corretorIds } },
+                ],
+              }),
+        },
+      });
     } else if (meta.tipo === MetaTipo.documentacoes) {
       atual = await this.prisma.documentacao.count({
         where: {

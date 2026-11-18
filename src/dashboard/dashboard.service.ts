@@ -2009,6 +2009,7 @@ export class DashboardService {
       vgv: 'VGV',
       leads: 'Leads',
       ligacoes: 'Ligações',
+      agendamentos: 'Agendamentos',
     };
 
     const corretorItems = await Promise.all(
@@ -2034,6 +2035,18 @@ export class DashboardService {
                 autorId: corretorId,
                 createdAt: { gte: meta.inicio, lt: meta.fim },
                 lead: { tenantId },
+              },
+            });
+          } else if (meta.tipo === MetaTipo.agendamentos) {
+            atual = await this.prisma.agendamento.count({
+              where: {
+                tenantId,
+                status: { not: 'cancelado' },
+                startsAt: { gte: meta.inicio, lt: meta.fim },
+                OR: [
+                  { atribuidoParaId: corretorId },
+                  { atribuidoParaId: null, autorId: corretorId },
+                ],
               },
             });
           } else if (meta.tipo === MetaTipo.documentacoes) {
@@ -2089,6 +2102,14 @@ export class DashboardService {
                 tipo: 'ligacao',
                 createdAt: { gte: meta.inicio, lt: meta.fim },
                 lead: { tenantId },
+              },
+            });
+          } else if (meta.tipo === MetaTipo.agendamentos) {
+            atual = await this.prisma.agendamento.count({
+              where: {
+                tenantId,
+                status: { not: 'cancelado' },
+                startsAt: { gte: meta.inicio, lt: meta.fim },
               },
             });
           } else if (meta.tipo === MetaTipo.documentacoes) {
