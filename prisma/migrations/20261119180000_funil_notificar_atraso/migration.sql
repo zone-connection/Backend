@@ -1,0 +1,1 @@
+ALTER TABLE "funis" ADD COLUMN "notificarAtraso" BOOLEAN NOT NULL DEFAULT true;

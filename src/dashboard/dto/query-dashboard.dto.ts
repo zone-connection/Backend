@@ -1,14 +1,43 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
+  Matches,
   Max,
   Min,
 } from 'class-validator';
+import { PERIODO_GRANULARIDADES, type PeriodoGranularidade } from '../../common/utils/periodo-brasil';
+
+export const RANKING_FAIXAS = [
+  'hoje',
+  'semana',
+  'mes',
+  'trimestre',
+  'ano',
+  'personalizado',
+] as const;
+export type RankingFaixa = (typeof RANKING_FAIXAS)[number];
+
+export const RANKING_CATEGORIAS = [
+  'lancamentos',
+  'documentacoes',
+  'captacoes',
+  'visitas',
+  'vendas_usados',
+  'locacoes',
+] as const;
+export type RankingCategoria = (typeof RANKING_CATEGORIAS)[number];
 
 export class QueryDashboardDto {
-  /** Mês calendário (1–12). Omite = mês atual (timezone BR). */
+  /** Recorte: mês, bimestre, trimestre, semestre ou ano. Omite = mês. */
+  @IsOptional()
+  @IsIn(PERIODO_GRANULARIDADES)
+  granularidade?: PeriodoGranularidade;
+
+  /** Mês calendário (1–12). Omite = mês atual (timezone BR). Alinha ao início do recorte. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -28,4 +57,48 @@ export class QueryDashboardDto {
   @IsOptional()
   @IsString()
   origem?: string;
+
+  /** Recorte: lançamento, usado ou captação. */
+  @IsOptional()
+  @IsIn(['lancamento', 'usado', 'captacao'])
+  operacao?: 'lancamento' | 'usado' | 'captacao';
+
+  /** Recorte rápido do ranking (hoje, semana, mês…). */
+  @IsOptional()
+  @IsIn(RANKING_FAIXAS)
+  faixa?: RankingFaixa;
+
+  /** Início do período personalizado (YYYY-MM-DD, calendário BR). */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Data inicial inválida.' })
+  de?: string;
+
+  /** Fim do período personalizado (YYYY-MM-DD, calendário BR, inclusivo). */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Data final inválida.' })
+  ate?: string;
+
+  /** Categoria do ranking. Omite = lançamentos (ranking atual). */
+  @IsOptional()
+  @IsIn(RANKING_CATEGORIAS)
+  categoria?: RankingCategoria;
+
+  /** Lista dos cards de entrada: leads do período ou vendas do VGV. */
+  @IsOptional()
+  @IsIn(['hoje', 'semana', 'mes', 'vgv'])
+  recorte?: 'hoje' | 'semana' | 'mes' | 'vgv';
+
+  /**
+   * Uma ou mais equipes. Vazio = visão geral da imobiliária.
+   * Aceita `equipeIds=a&equipeIds=b` ou lista separada por vírgula.
+   */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value == null || value === '') return undefined;
+    const raw = Array.isArray(value) ? value : String(value).split(',');
+    const ids = raw.map((item) => String(item).trim()).filter(Boolean);
+    return ids.length > 0 ? ids : undefined;
+  })
+  @IsUUID('4', { each: true })
+  equipeIds?: string[];
 }

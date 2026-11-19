@@ -23,6 +23,10 @@ export const LEAD_INTERESSES = ['Comprar'] as const;
 
 export type LeadInteresse = (typeof LEAD_INTERESSES)[number];
 
+export const LEAD_CATEGORIAS = ['aluguel', 'potencial'] as const;
+
+export type LeadCategoria = (typeof LEAD_CATEGORIAS)[number];
+
 export const LEAD_PRIORIDADES = ['Alta', 'Média', 'Baixa'] as const;
 
 export type LeadPrioridade = (typeof LEAD_PRIORIDADES)[number];

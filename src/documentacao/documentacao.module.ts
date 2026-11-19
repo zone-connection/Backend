@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 import { EquipesModule } from '../equipes/equipes.module';
-import { FunisModule } from '../funis/funis.module';
 import { DocumentacaoController } from './documentacao.controller';
 import { DocumentacaoService } from './documentacao.service';
 
 @Module({
-  imports: [EquipesModule, FunisModule],
+  imports: [EquipesModule],
   controllers: [DocumentacaoController],
   providers: [DocumentacaoService],
+  exports: [DocumentacaoService],
 })
 export class DocumentacaoModule {}

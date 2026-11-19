@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -31,6 +32,17 @@ export class UpdateDespesaDto {
   @IsOptional()
   @IsDateString({}, { message: 'Data inválida.' })
   data?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, {
+    message: 'Competência inválida. Use YYYY-MM.',
+  })
+  competencia?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  recorrente?: boolean;
 
   @IsOptional()
   @IsString()
