@@ -18,7 +18,7 @@ export class CreateDespesaTipoDto {
   nome!: string;
 
   @IsEnum(FinanceiroDespesaNatureza, {
-    message: 'Natureza inválida. Use fixa ou variavel.',
+    message: 'Natureza inválida. Use fixa, fixa_variavel ou variavel.',
   })
   natureza!: FinanceiroDespesaNatureza;
 

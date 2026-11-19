@@ -1,0 +1,4 @@
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "baseFria" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "origemBaseFria" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "baseFriaEm" TIMESTAMP(3);
+CREATE INDEX IF NOT EXISTS "leads_tenantId_baseFria_idx" ON "leads"("tenantId", "baseFria");

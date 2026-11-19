@@ -1,0 +1,550 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { Prisma } from '@prisma/client';
+import { ApiAccessGuard } from './api-access.guard';
+import { ApiPropertiesService } from './api-properties.service';
+import { ListarPropertiesApiDto } from './dto/listar-properties-api.dto';
+
+const A = '11111111-1111-4111-8111-111111111111';
+const B = '22222222-2222-4222-8222-222222222222';
+
+type Imovel = {
+  tenantId: string;
+  tipo: string;
+  finalidade: 'venda' | 'aluguel' | 'lancamento' | 'sala_comercial';
+  descricao: string;
+  cidade: string;
+  estado: string;
+  bairro: string;
+  quartos: number | null;
+  banheiros: number | null;
+  vagas: number | null;
+  area: Prisma.Decimal | null;
+  areaConstruida: Prisma.Decimal | null;
+  fotoUrl: string | null;
+  suites?: number | null;
+  comodidadesUnidade?: string[];
+  comodidadesCondominio?: string[];
+  fotos?: { url: string; publicId?: string; sortOrder: number }[];
+  logradouro?: string;
+  proprietario?: string;
+  fotoPublicId?: string;
+};
+
+type Row = {
+  id: string;
+  tenantId: string;
+  status: 'disponivel' | 'reservado' | 'vendido' | 'indisponivel';
+  precoVenda: Prisma.Decimal | null;
+  updatedAt: Date;
+  imovel: Imovel | null;
+};
+
+function money(value: string | null) {
+  return value == null ? null : new Prisma.Decimal(value);
+}
+
+function imovel(partial: Partial<Imovel> = {}): Imovel {
+  return {
+    tenantId: A,
+    tipo: 'apartamento',
+    finalidade: 'venda' as const,
+    descricao: 'Apartamento com varanda',
+    cidade: 'Recife',
+    estado: 'PE',
+    bairro: 'Boa Viagem',
+    quartos: 3,
+    banheiros: 2,
+    vagas: 1,
+    area: money('90.00'),
+    areaConstruida: money('85.50'),
+    fotoUrl: 'https://cdn.exemplo.com/capa.jpg',
+    suites: 1,
+    comodidadesUnidade: ['varanda'],
+    comodidadesCondominio: ['piscina'],
+    fotos: [
+      { url: 'https://cdn.exemplo.com/capa.jpg', publicId: 'capa', sortOrder: 0 },
+      { url: 'https://cdn.exemplo.com/sala.jpg', publicId: 'sala', sortOrder: 1 },
+    ],
+    logradouro: 'Av. Boa Viagem',
+    proprietario: 'Dono',
+    fotoPublicId: 'secret',
+    ...partial,
+  };
+}
+
+function row(partial: Partial<Row> & { id: string; tenantId: string }): Row {
+  return {
+    status: 'disponivel',
+    precoVenda: money('350000.00'),
+    updatedAt: new Date('2026-11-07T12:00:00.000Z'),
+    imovel: imovel({ tenantId: partial.tenantId }),
+    ...partial,
+  };
+}
+
+function contem(valor: string, termo: string) {
+  return valor.toLowerCase().includes(termo.toLowerCase());
+}
+
+function casa(where: Record<string, unknown>, item: Row) {
+  if (where.id && item.id !== where.id) return false;
+  if (where.tenantId && item.tenantId !== where.tenantId) return false;
+  if (where.status && item.status !== where.status) return false;
+  const imovelWhere = where.imovel as Record<string, unknown> | undefined;
+  if (imovelWhere) {
+    if (!item.imovel) return false;
+    if (imovelWhere.tenantId && item.imovel.tenantId !== imovelWhere.tenantId) return false;
+    const cidade = imovelWhere.cidade as { contains?: string } | undefined;
+    if (cidade?.contains && !contem(item.imovel.cidade, cidade.contains)) return false;
+    const bairro = imovelWhere.bairro as { contains?: string } | undefined;
+    if (bairro?.contains && !contem(item.imovel.bairro, bairro.contains)) return false;
+    if (imovelWhere.tipo && item.imovel.tipo !== imovelWhere.tipo) return false;
+    const quartos = imovelWhere.quartos as { gte?: number } | undefined;
+    if (quartos?.gte != null && (item.imovel.quartos ?? -1) < quartos.gte) return false;
+    const banheiros = imovelWhere.banheiros as { gte?: number } | undefined;
+    if (banheiros?.gte != null && (item.imovel.banheiros ?? -1) < banheiros.gte) return false;
+  }
+  const preco = where.precoVenda as { gte?: number; lte?: number } | undefined;
+  if (preco) {
+    const valor = item.precoVenda == null ? null : Number(item.precoVenda.toString());
+    if (valor == null) return false;
+    if (preco.gte != null && valor < preco.gte) return false;
+    if (preco.lte != null && valor > preco.lte) return false;
+  }
+  return true;
+}
+
+function banco(rows: Row[]) {
+  const chamadas = { findMany: 0, findFirst: 0, count: 0, fotos: 0, imovel: 0, query: 0 };
+  let ultimo: { where?: Record<string, unknown>; orderBy?: unknown; skip?: number; take?: number; select?: unknown } = {};
+  let whereCount: Record<string, unknown> | undefined;
+  let paginaSql: { limit?: number; offset?: number; tenantId?: string } = {};
+  const prisma = {
+    chamadas,
+    ultimo: () => ultimo,
+    whereCount: () => whereCount,
+    paginaSql: () => paginaSql,
+    $queryRaw: async (query: { strings: string[]; values: unknown[] }) => {
+      chamadas.query += 1;
+      const texto = query.strings.join(' ');
+      const valores = query.values;
+      const tenantId = String(valores[0]);
+      const cityLike = valores[1];
+      const neighborhoodLike = valores[3];
+      const tipo = valores[5];
+      const purpose = valores[7];
+      const bedrooms = valores[9];
+      const bathrooms = valores[11];
+      const minPrice = valores[13];
+      const maxPrice = valores[15];
+      const where: Record<string, unknown> = {
+        tenantId,
+        status: 'disponivel',
+        imovel: { tenantId },
+      };
+      const imovel = where.imovel as Record<string, unknown>;
+      if (typeof cityLike === 'string') imovel.cidade = { contains: cityLike.replaceAll('%', '') };
+      if (typeof neighborhoodLike === 'string') imovel.bairro = { contains: neighborhoodLike.replaceAll('%', '') };
+      if (typeof tipo === 'string') imovel.tipo = tipo;
+      if (typeof purpose === 'string') imovel.finalidade = purpose;
+      if (typeof bedrooms === 'number') imovel.quartos = { gte: bedrooms };
+      if (typeof bathrooms === 'number') imovel.banheiros = { gte: bathrooms };
+      if (typeof minPrice === 'number' || typeof maxPrice === 'number') {
+        where.precoVenda = {
+          ...(typeof minPrice === 'number' ? { gte: minPrice } : {}),
+          ...(typeof maxPrice === 'number' ? { lte: maxPrice } : {}),
+        };
+      }
+      whereCount = where;
+      const lista = rows
+        .filter((item) => casa(where, item))
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || b.id.localeCompare(a.id));
+      if (texto.includes('COUNT')) return [{ total: BigInt(lista.length) }];
+      if (!texto.includes('ORDER BY atualizado DESC, id DESC')) {
+        throw new Error('ordenação da união ausente');
+      }
+      const limit = Number(valores.at(-2));
+      const offset = Number(valores.at(-1));
+      paginaSql = { limit, offset, tenantId };
+      return lista.slice(offset, offset + limit).map((item) => ({ id: item.id, origem: 'venda_usado' }));
+    },
+    empreendimento: {
+      findMany: async () => [],
+      findFirst: async () => null,
+    },
+    vendaUsado: {
+      count: async ({ where }: { where: Record<string, unknown> }) => {
+        chamadas.count += 1;
+        whereCount = where;
+        return rows.filter((item) => casa(where, item)).length;
+      },
+      findFirst: async (args: { where: Record<string, unknown>; select?: unknown }) => {
+        chamadas.findFirst += 1;
+        const select = JSON.stringify(args.select ?? {});
+        if (select.includes('publicId') || select.includes('proprietario') || select.includes('logradouro') || select.includes('cep')) {
+          throw new Error('select expôs campo interno');
+        }
+        const item = rows.find((row) => casa(args.where, row));
+        if (!item?.imovel) return null;
+        return {
+          id: item.id,
+          status: item.status,
+          precoVenda: item.precoVenda,
+          updatedAt: item.updatedAt,
+          imovel: {
+            tipo: item.imovel.tipo,
+            finalidade: item.imovel.finalidade,
+            descricao: item.imovel.descricao,
+            cidade: item.imovel.cidade,
+            estado: item.imovel.estado,
+            bairro: item.imovel.bairro,
+            quartos: item.imovel.quartos,
+            banheiros: item.imovel.banheiros,
+            vagas: item.imovel.vagas,
+            area: item.imovel.area,
+            areaConstruida: item.imovel.areaConstruida,
+            fotoUrl: item.imovel.fotoUrl,
+            suites: item.imovel.suites ?? null,
+            comodidadesUnidade: item.imovel.comodidadesUnidade ?? [],
+            comodidadesCondominio: item.imovel.comodidadesCondominio ?? [],
+            fotos: (item.imovel.fotos ?? [])
+              .slice()
+              .sort((a, b) => a.sortOrder - b.sortOrder)
+              .map((foto) => ({ url: foto.url })),
+          },
+        };
+      },
+      findMany: async (args: typeof ultimo & { where?: { id?: { in?: string[] } } }) => {
+        chamadas.findMany += 1;
+        ultimo = args;
+        const ids = args.where?.id?.in;
+        if (ids) {
+          return rows
+            .filter((item) => ids.includes(item.id) && item.imovel)
+            .map((item) => ({
+              id: item.id,
+              status: item.status,
+              precoVenda: item.precoVenda,
+              updatedAt: item.updatedAt,
+              imovel: {
+                tipo: item.imovel?.tipo,
+                finalidade: item.imovel?.finalidade,
+                descricao: item.imovel?.descricao,
+                cidade: item.imovel?.cidade,
+                estado: item.imovel?.estado,
+                bairro: item.imovel?.bairro,
+                quartos: item.imovel?.quartos,
+                banheiros: item.imovel?.banheiros,
+                vagas: item.imovel?.vagas,
+                area: item.imovel?.area,
+                areaConstruida: item.imovel?.areaConstruida,
+                fotoUrl: item.imovel?.fotoUrl,
+              },
+            }));
+        }
+        const select = JSON.stringify(args.select ?? {});
+        if (select.includes('publicId') || select.includes('proprietario') || select.includes('logradouro')) {
+          throw new Error('select expôs campo interno');
+        }
+        if (select.includes('fotos')) chamadas.fotos += 1;
+        const lista = rows
+          .filter((item) => casa(args.where ?? {}, item))
+          .sort((a, b) => {
+            const tempo = b.updatedAt.getTime() - a.updatedAt.getTime();
+            return tempo !== 0 ? tempo : b.id.localeCompare(a.id);
+          });
+        const skip = args.skip ?? 0;
+        const take = args.take ?? lista.length;
+        return lista.slice(skip, skip + take).map((item) => ({
+          id: item.id,
+          status: item.status,
+          precoVenda: item.precoVenda,
+          updatedAt: item.updatedAt,
+          imovel: item.imovel
+            ? {
+                tipo: item.imovel.tipo,
+                finalidade: item.imovel.finalidade,
+                descricao: item.imovel.descricao,
+                cidade: item.imovel.cidade,
+                estado: item.imovel.estado,
+                bairro: item.imovel.bairro,
+                quartos: item.imovel.quartos,
+                banheiros: item.imovel.banheiros,
+                vagas: item.imovel.vagas,
+                area: item.imovel.area,
+                areaConstruida: item.imovel.areaConstruida,
+                fotoUrl: item.imovel.fotoUrl,
+              }
+            : null,
+        }));
+      },
+    },
+    imovel: {
+      count: async () => {
+        chamadas.imovel += 1;
+        return 0;
+      },
+      findMany: async () => {
+        chamadas.imovel += 1;
+        return [];
+      },
+      findFirst: async () => null,
+    },
+  };
+  return prisma;
+}
+
+async function dto(query: Record<string, unknown>) {
+  const instance = plainToInstance(ListarPropertiesApiDto, query);
+  const errors = await validate(instance, {
+    whitelist: true,
+    forbidNonWhitelisted: true,
+  });
+  return { instance, errors };
+}
+
+describe('GET /api/v1/properties', () => {
+  const estoque = [
+    row({ id: 'v1', tenantId: A, updatedAt: new Date('2026-11-07T15:00:00.000Z') }),
+    row({
+      id: 'v2',
+      tenantId: A,
+      updatedAt: new Date('2026-11-07T14:00:00.000Z'),
+      precoVenda: money('180000.00'),
+      imovel: imovel({ cidade: 'Olinda', bairro: 'Casa Caiada', tipo: 'casa', quartos: 1, banheiros: 1 }),
+    }),
+    row({ id: 'v3', tenantId: A, status: 'vendido' }),
+    row({ id: 'v4', tenantId: A, status: 'reservado' }),
+    row({ id: 'v5', tenantId: A, status: 'indisponivel' }),
+    row({ id: 'v6', tenantId: A, imovel: null }),
+    row({ id: 'vb', tenantId: B, imovel: imovel({ tenantId: B, cidade: 'Recife' }) }),
+    row({
+      id: 'v7',
+      tenantId: A,
+      updatedAt: new Date('2026-11-07T15:00:00.000Z'),
+      imovel: imovel({ fotoUrl: null, descricao: '' }),
+    }),
+  ];
+
+  it('lista só disponíveis do tenant, sem dados internos', async () => {
+    const db = banco(estoque);
+    const service = new ApiPropertiesService(db as never);
+    const lista = await service.listar(A, {});
+    const ids = lista.data.map((item) => item.id);
+    assert.deepEqual(ids, ['v7', 'v1', 'v2']);
+    assert.equal(lista.pagination.total, 3);
+    assert.equal(lista.pagination.page, 1);
+    assert.equal(lista.pagination.limit, 20);
+    assert.equal(lista.pagination.totalPages, 1);
+    const capa = lista.data.find((item) => item.id === 'v1');
+    assert.equal(capa?.sourceType, 'venda_usado');
+    assert.equal(capa?.purpose, 'venda');
+    assert.equal(capa?.availability, 'disponivel');
+    assert.equal(capa?.price, '350000.00');
+    assert.equal(capa?.features.area, '90.00');
+    assert.equal(capa?.features.builtArea, '85.50');
+    assert.equal(capa?.coverImage, 'https://cdn.exemplo.com/capa.jpg');
+    assert.equal(capa?.location.city, 'Recife');
+    const semFoto = lista.data.find((item) => item.id === 'v7');
+    assert.equal(semFoto?.coverImage, null);
+    assert.equal(semFoto?.description, null);
+    const cru = JSON.stringify(lista);
+    for (const proibido of ['tenantId', 'publicId', 'proprietario', 'logradouro', 'Boa Viagem, 100']) {
+      assert.equal(cru.includes(proibido), false);
+    }
+    assert.equal(db.chamadas.query, 2);
+    assert.equal(db.chamadas.findMany, 1);
+    assert.equal(db.chamadas.imovel, 0);
+    assert.equal(db.paginaSql().tenantId, A);
+    assert.equal(db.paginaSql().offset, 0);
+    assert.equal(db.paginaSql().limit, 20);
+    assert.equal(db.whereCount()?.tenantId, A);
+    assert.equal(db.whereCount()?.status, 'disponivel');
+    assert.equal(db.chamadas.fotos, 0);
+    assert.equal(db.chamadas.query, 2);
+  });
+
+  it('lista vazia mantém paginação zerada', async () => {
+    const service = new ApiPropertiesService(banco([]) as never);
+    const lista = await service.listar(A, {});
+    assert.deepEqual(lista.data, []);
+    assert.equal(lista.pagination.total, 0);
+    assert.equal(lista.pagination.totalPages, 0);
+  });
+
+  it('combina cidade, bairro, tipo, cômodos e preço sem diferenciar maiúsculas', async () => {
+    const db = banco(estoque);
+    const service = new ApiPropertiesService(db as never);
+    const lista = await service.listar(A, {
+      city: 'recife',
+      neighborhood: 'boa',
+      type: 'apartamento' as never,
+      bedrooms: 2,
+      bathrooms: 2,
+      minPrice: 200000,
+      maxPrice: 600000,
+    });
+    assert.deepEqual(lista.data.map((item) => item.id), ['v7', 'v1']);
+    assert.equal(lista.pagination.total, 2);
+  });
+
+  it('pagina no banco e desempata pela data e pelo id', async () => {
+    const db = banco(estoque);
+    const service = new ApiPropertiesService(db as never);
+    const pagina = await service.listar(A, { page: 2, limit: 1 });
+    assert.deepEqual(pagina.data.map((item) => item.id), ['v1']);
+    assert.equal(pagina.pagination.total, 3);
+    assert.equal(pagina.pagination.totalPages, 3);
+    assert.equal(db.paginaSql().offset, 1);
+    assert.equal(db.paginaSql().limit, 1);
+  });
+
+  it('rejeita faixa de preço invertida', async () => {
+    const service = new ApiPropertiesService(banco(estoque) as never);
+    await assert.rejects(
+      () => service.listar(A, { minPrice: 10, maxPrice: 1 }),
+      BadRequestException,
+    );
+  });
+
+  it('envia a faixa de preço só em precoVenda e não consulta captação', async () => {
+    const db = banco(estoque);
+    const service = new ApiPropertiesService(db as never);
+    await service.listar(A, { minPrice: 200000, maxPrice: 600000 });
+    assert.deepEqual(db.whereCount()?.precoVenda, { gte: 200000, lte: 600000 });
+    assert.equal(db.chamadas.imovel, 0);
+  });
+
+  it('o tenant do outro lado não vê o estoque alheio', async () => {
+    const service = new ApiPropertiesService(banco(estoque) as never);
+    const deB = await service.listar(B, {});
+    assert.deepEqual(deB.data.map((item) => item.id), ['vb']);
+  });
+
+  it('valida página, limite, números e recusa tenant externo', async () => {
+    const pagina = await dto({ page: 0 });
+    assert.equal(pagina.errors.length > 0, true);
+    const limite = await dto({ limit: 101 });
+    assert.equal(limite.errors.length > 0, true);
+    const teto = await dto({ limit: 100 });
+    assert.equal(teto.errors.length, 0);
+    assert.equal(teto.instance.limit, 100);
+    const quarto = await dto({ bedrooms: -1, bathrooms: 1.5 });
+    assert.equal(quarto.errors.length > 0, true);
+    const preco = await dto({ minPrice: -1, maxPrice: 'abc' });
+    assert.equal(preco.errors.length > 0, true);
+    const tipo = await dto({ type: 'aluguel' });
+    assert.equal(tipo.errors.length > 0, true);
+    const vazio = await dto({ city: '  ', neighborhood: '' });
+    assert.equal(vazio.errors.length, 0);
+    assert.equal(vazio.instance.city, undefined);
+    const externo = await dto({ tenantId: B });
+    assert.equal(externo.errors.some((erro) => erro.property === 'tenantId'), true);
+  });
+
+  it('rejeita token sem scope e token ausente', async () => {
+    const contexto = {
+      switchToHttp: () => ({ getRequest: () => ({ header: () => 'Bearer token' }) }),
+      getHandler: () => null,
+      getClass: () => null,
+    };
+    const semScope = new ApiAccessGuard(
+      {
+        authenticate: async () => ({
+          sub: 'zc',
+          appId: 'app',
+          tenantId: A,
+          scopes: ['leads:read'],
+          jti: 'j',
+        }),
+      } as never,
+      { getAllAndOverride: () => ['properties:read'] } as never,
+    );
+    await assert.rejects(() => semScope.canActivate(contexto as never), ForbiddenException);
+    const invalido = new ApiAccessGuard(
+      { authenticate: async () => { throw new UnauthorizedException('token inválido'); } } as never,
+      { getAllAndOverride: () => ['properties:read'] } as never,
+    );
+    await assert.rejects(() => invalido.canActivate(contexto as never), UnauthorizedException);
+  });
+});
+
+describe('GET /api/v1/properties/:id', () => {
+  const vendaId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const outro = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const estoque = [
+    row({
+      id: vendaId,
+      tenantId: A,
+      imovel: imovel({
+        fotos: [
+          { url: 'https://cdn.exemplo.com/sala.jpg', publicId: 'sala', sortOrder: 1 },
+          { url: 'https://cdn.exemplo.com/capa.jpg', publicId: 'capa', sortOrder: 0 },
+        ],
+      }),
+    }),
+    row({ id: outro, tenantId: B }),
+    row({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', tenantId: A, status: 'reservado' }),
+    row({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', tenantId: A, status: 'vendido' }),
+    row({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', tenantId: A, status: 'indisponivel' }),
+    row({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', tenantId: A, imovel: null }),
+    row({
+      id: '99999999-9999-4999-8999-999999999999',
+      tenantId: A,
+      imovel: imovel({ tenantId: B }),
+    }),
+    row({
+      id: '88888888-8888-4888-8888-888888888888',
+      tenantId: A,
+      imovel: imovel({ fotoUrl: null, fotos: [] }),
+    }),
+  ];
+
+  it('devolve a ficha, a capa e a galeria sem repetir a capa nem dados internos', async () => {
+    const db = banco(estoque);
+    const service = new ApiPropertiesService(db as never);
+    const item = await service.detalhe(A, vendaId);
+    assert.equal(item.id, vendaId);
+    assert.equal(item.sourceType, 'venda_usado');
+    assert.equal(item.purpose, 'venda');
+    assert.equal(item.availability, 'disponivel');
+    assert.equal(item.price, '350000.00');
+    assert.equal(item.coverImage, 'https://cdn.exemplo.com/capa.jpg');
+    assert.deepEqual(item.images, ['https://cdn.exemplo.com/sala.jpg']);
+    assert.equal(item.features.suites, 1);
+    assert.deepEqual(item.features.amenities.unit, ['varanda']);
+    assert.equal(db.chamadas.findFirst, 1);
+    const cru = JSON.stringify(item);
+    for (const proibido of ['tenantId', 'publicId', 'logradouro', 'proprietario', 'cpf', 'telefone', 'email', 'cep', 'complemento']) {
+      assert.equal(cru.toLowerCase().includes(proibido), false, proibido);
+    }
+  });
+
+  it('responde 404 para inexistente, outro tenant, status fechado, sem imóvel ou imóvel de outro tenant', async () => {
+    const service = new ApiPropertiesService(banco(estoque) as never);
+    const ids = [
+      '00000000-0000-4000-8000-000000000099',
+      outro,
+      'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      '99999999-9999-4999-8999-999999999999',
+    ];
+    for (const id of ids) {
+      await assert.rejects(() => service.detalhe(A, id), NotFoundException);
+    }
+    await assert.rejects(() => service.detalhe(B, vendaId), NotFoundException);
+  });
+
+  it('imóvel sem foto devolve capa nula e galeria vazia', async () => {
+    const service = new ApiPropertiesService(banco(estoque) as never);
+    const item = await service.detalhe(A, '88888888-8888-4888-8888-888888888888');
+    assert.equal(item.coverImage, null);
+    assert.deepEqual(item.images, []);
+  });
+});
