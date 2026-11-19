@@ -119,6 +119,10 @@ export class UpdateFunilDto {
 
   @IsOptional()
   @IsBoolean()
+  notificarAtraso?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   atrasoLiberacaoAtiva?: boolean;
 
   @IsOptional()

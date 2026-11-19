@@ -17,6 +17,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { CreateDocumentacaoDto } from './dto/create-documentacao.dto';
 import { AbrirFichaGuiadaDto } from './dto/abrir-ficha-guiada.dto';
+import { RegistrarVendaFunilDto } from './dto/registrar-venda-funil.dto';
 import { UpdateDocumentacaoDto } from './dto/update-documentacao.dto';
 import { QueryDocumentacaoDto } from './dto/query-documentacao.dto';
 import { DocumentacaoService } from './documentacao.service';
@@ -60,6 +61,15 @@ export class DocumentacaoController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.documentacaoService.findOne(id, requester);
+  }
+
+  @Post('venda-funil')
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee)
+  registrarVendaFunil(
+    @Body() dto: RegistrarVendaFunilDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.documentacaoService.registrarVendaFunil(dto, requester);
   }
 
   @Post('ficha-guiada')

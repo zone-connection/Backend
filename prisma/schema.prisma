@@ -86,7 +86,7 @@ enum MetaTipo {
   leads
   /// Históricos do tipo ligação registrados no período.
   ligacoes
-  /// Compromissos da agenda com início no período, sem os cancelados.
+  /// Visitas e reuniões marcadas na agenda, nos lembretes ou no histórico.
   agendamentos
 }
 
@@ -756,6 +756,13 @@ model Lead {
   motivoPerda  String?
   perdidoPor   User?     @relation("LeadPerdidoPor", fields: [perdidoPorId], references: [id], onDelete: SetNull)
   perdidoPorId String?
+
+  /// Está agora na base de leads frios (sem corretor).
+  baseFria Boolean @default(false)
+  /// Já passou pela base fria. Continua marcado depois que um corretor puxa.
+  origemBaseFria Boolean @default(false)
+  /// Início da estadia atual na base fria.
+  baseFriaEm DateTime?
 
   /// Momento em que o lead entrou na etapa atual (não usa createdAt como movimentação contínua).
   stageEnteredAt DateTime @default(now())
@@ -1660,9 +1667,15 @@ model Proposta {
   autor   User   @relation("PropostaAutor", fields: [autorId], references: [id], onDelete: Cascade)
 
   /// Valores em reais (inteiros).
-  /// valor = valor de venda; entrada = sinal.
+  /// valor = valor de venda; entrada = soma dos sinais.
   valor          Int
   entrada        Int?
+  /// Sinais individuais, quando há mais de um valor.
+  sinais         Int[] @default([])
+  /// Data opcional de cada sinal (YYYY-MM-DD), alinhada a `sinais`.
+  sinaisDatas    String[] @default([])
+  /// Data opcional de cada intercalada, alinhada a `intercaladas`.
+  intercaladasDatas String[] @default([])
   apartado       Int?
   /// Parcelas pré-chaves (vários valores).
   preChaves      Int[] @default([])
@@ -2212,6 +2225,8 @@ model Funil {
   /// Sem movimentação relevante após este período gera alerta no card.
   inatividadeValor   Int          @default(48)
   inatividadeUnidade PrazoUnidade @default(horas)
+  /// Desligado: não notifica nem marca o lead como atrasado.
+  notificarAtraso    Boolean      @default(true)
   /// Depois de X em atraso, desvincula o corretor (caça-lead ou retrabalho).
   atrasoLiberacaoAtiva    Boolean                 @default(false)
   atrasoLiberacaoDestino  AtrasoLiberacaoDestino  @default(retrabalho)

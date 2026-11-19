@@ -71,7 +71,7 @@ export class FunisController {
   }
 
   @Patch(':id')
-  @Roles(Role.admin, Role.gerente, Role.super_admin)
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.super_admin)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateFunilDto,

@@ -165,7 +165,7 @@ export class LeadsController {
 
   @Get('perdidos-kpis')
   @UseGuards(RolesGuard)
-  @Roles(Role.admin, Role.super_admin)
+  @Roles(Role.admin, Role.super_admin, Role.corretor)
   lostKpis(@CurrentUser() requester: AuthenticatedUser) {
     return this.leadsService.findLostKpis(requester);
   }
@@ -173,7 +173,7 @@ export class LeadsController {
   /** Leads perdidos — só admin. Antes de GET :id. */
   @Get('perdidos')
   @UseGuards(RolesGuard)
-  @Roles(Role.admin, Role.super_admin)
+  @Roles(Role.admin, Role.super_admin, Role.corretor)
   findLost(
     @Query() query: QueryLeadsDto,
     @CurrentUser() requester: AuthenticatedUser,

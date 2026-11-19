@@ -52,4 +52,14 @@ export class UpdateTenantOperationModulesDto {
   @IsOptional()
   @IsBoolean()
   fichaAnaliseGuiada?: boolean;
+
+  /** Análise, aprovação e venda no funil, sem ficha de documentação. */
+  @IsOptional()
+  @IsBoolean()
+  vendaDiretaFunil?: boolean;
+
+  /** Base compartilhada de leads frios. Desligada por padrão. */
+  @IsOptional()
+  @IsBoolean()
+  leadsFrios?: boolean;
 }

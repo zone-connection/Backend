@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { CatalogType, FunilTipo, Prisma, Role, TenantPlano, UserStatus } from '@prisma/client';
+import { CatalogType, FunilTipo, MfaAuditEvent, MfaDecision, Prisma, Role, TenantPlano, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomInt } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -62,6 +62,8 @@ const tenantAdminUserSelect = {
   email: true,
   role: true,
   status: true,
+  totpEnabledAt: true,
+  mfaDecision: true,
 } satisfies Prisma.UserSelect;
 
 const adminUsersInclude = {
@@ -508,6 +510,59 @@ export class TenantsService {
       where: { id: admin.id, tenantId },
       select: publicUserSelect,
     });
+  }
+
+  /** Liga ou desliga a 2FA do administrador da imobiliária. Só o super admin chama. */
+  async setAdminMfa(tenantId: string, enabled: boolean) {
+    if (tenantId === PLATFORM_TENANT_ID) {
+      throw new BadRequestException(
+        'A autenticação do super admin não é alterada por aqui.',
+      );
+    }
+    await this.ensureExists(tenantId);
+    const admin = await this.prisma.user.findFirst({
+      where: { tenantId, role: Role.admin },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!admin) {
+      throw new NotFoundException('Este tenant ainda não tem administrador.');
+    }
+
+    if (enabled) {
+      await this.prisma.user.update({
+        where: { id: admin.id },
+        data: admin.totpEnabledAt
+          ? { mfaDecision: MfaDecision.manter, mfaDecisionAt: new Date() }
+          : { mfaDecision: null, mfaDecisionAt: null, totpDisabledAt: null },
+      });
+      await this.prisma.userMfaAudit.create({
+        data: { userId: admin.id, event: MfaAuditEvent.ativacao },
+      });
+    } else {
+      await this.prisma.user.update({
+        where: { id: admin.id },
+        data: {
+          totpSecretEnc: null,
+          totpPendingEnc: null,
+          totpEnabledAt: null,
+          totpDisabledAt: new Date(),
+          totpLastStep: null,
+          mfaDecision: MfaDecision.recusar,
+          mfaDecisionAt: new Date(),
+          hashedRefreshToken: null,
+        },
+      });
+      await this.prisma.userMfaRecoveryCode.deleteMany({ where: { userId: admin.id } });
+      await this.prisma.userMfaAudit.create({
+        data: { userId: admin.id, event: MfaAuditEvent.desativacao },
+      });
+    }
+
+    const user = await this.prisma.user.findFirstOrThrow({
+      where: { id: admin.id },
+      select: tenantAdminUserSelect,
+    });
+    return user;
   }
 
   /**
@@ -1353,6 +1408,8 @@ export class TenantsService {
       corretoresCriamPropostas: modules.corretoresCriamPropostas === true,
       muralChaves: modules.muralChaves === true,
       fichaAnaliseGuiada: modules.fichaAnaliseGuiada === true,
+      vendaDiretaFunil: modules.vendaDiretaFunil === true,
+      leadsFrios: modules.leadsFrios === true,
     };
   }
 
@@ -1404,8 +1461,21 @@ export class TenantsService {
     }
     if (typeof dto.fichaAnaliseGuiada === 'boolean') {
       merged.fichaAnaliseGuiada = dto.fichaAnaliseGuiada;
+      if (dto.fichaAnaliseGuiada) merged.vendaDiretaFunil = false;
+    }
+    if (typeof dto.vendaDiretaFunil === 'boolean') {
+      merged.vendaDiretaFunil = dto.vendaDiretaFunil;
+      if (dto.vendaDiretaFunil) merged.fichaAnaliseGuiada = false;
+    }
+    if (typeof dto.leadsFrios === 'boolean') {
+      merged.leadsFrios = dto.leadsFrios;
     }
     const modules = applyPlanoModules(tenant.plano, merged);
+    if (modules.vendaDiretaFunil === true) {
+      modules.fichaAnaliseGuiada = false;
+    } else if (modules.fichaAnaliseGuiada === true) {
+      modules.vendaDiretaFunil = false;
+    }
 
     await this.prisma.tenant.update({
       where: { id: tenantId },
@@ -1422,6 +1492,8 @@ export class TenantsService {
       corretoresCriamPropostas: modules.corretoresCriamPropostas === true,
       muralChaves: modules.muralChaves === true,
       fichaAnaliseGuiada: modules.fichaAnaliseGuiada === true,
+      vendaDiretaFunil: modules.vendaDiretaFunil === true,
+      leadsFrios: modules.leadsFrios === true,
     };
   }
 

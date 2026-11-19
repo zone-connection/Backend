@@ -6,7 +6,14 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { CatalogType, FunilEtapaPapel, FunilTipo, Prisma, Role } from '@prisma/client';
+import {
+  CatalogType,
+  FunilEtapaPapel,
+  FunilTipo,
+  Prisma,
+  Role,
+  TenantPlano,
+} from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { PrismaService } from '../prisma/prisma.service';
@@ -57,6 +64,7 @@ const funilSelect = {
   ativo: true,
   inatividadeValor: true,
   inatividadeUnidade: true,
+  notificarAtraso: true,
   atrasoLiberacaoAtiva: true,
   atrasoLiberacaoDestino: true,
   atrasoLiberacaoValor: true,
@@ -157,15 +165,41 @@ export class FunisService {
     if (dto.inatividadeUnidade !== undefined) {
       data.inatividadeUnidade = dto.inatividadeUnidade;
     }
+    if (dto.notificarAtraso !== undefined) {
+      data.notificarAtraso = dto.notificarAtraso;
+    }
     const atrasoFieldsTouched =
       dto.atrasoLiberacaoAtiva !== undefined ||
       dto.atrasoLiberacaoDestino !== undefined ||
       dto.atrasoLiberacaoValor !== undefined ||
       dto.atrasoLiberacaoUnidade !== undefined;
-    if (atrasoFieldsTouched && requester.role !== Role.admin) {
-      throw new ForbiddenException(
-        'Somente o administrador pode ativar ou desativar o Caça-lead.',
+    const automacaoTouched = atrasoFieldsTouched || dto.notificarAtraso !== undefined;
+    if (automacaoTouched && requester.role !== Role.admin && requester.role !== Role.super_admin) {
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { plano: true },
+      });
+      if (tenant?.plano !== TenantPlano.solo || requester.role !== Role.corretor) {
+        throw new ForbiddenException(
+          'Somente o administrador pode ativar ou desativar o Caça-lead.',
+        );
+      }
+    }
+    if (requester.role === Role.corretor) {
+      const extra = Object.entries(dto).filter(
+        ([key, value]) =>
+          value !== undefined &&
+          key !== 'notificarAtraso' &&
+          key !== 'atrasoLiberacaoAtiva' &&
+          key !== 'atrasoLiberacaoDestino' &&
+          key !== 'atrasoLiberacaoValor' &&
+          key !== 'atrasoLiberacaoUnidade',
       );
+      if (extra.length > 0) {
+        throw new ForbiddenException(
+          'O corretor solo só pode ativar ou desativar a automação de atraso.',
+        );
+      }
     }
     if (dto.atrasoLiberacaoAtiva !== undefined) {
       data.atrasoLiberacaoAtiva = dto.atrasoLiberacaoAtiva;

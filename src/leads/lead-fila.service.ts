@@ -631,6 +631,7 @@ export class LeadFilaService implements OnModuleInit, OnModuleDestroy {
         tenantId: params.tenantId,
         tipo: ContatoTipo.lead,
         perdidoAt: null,
+        baseFria: false,
         motivoPerda: null,
         origemAtrasoLiberacao: null,
         corretorId: null,

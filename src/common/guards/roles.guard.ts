@@ -12,7 +12,6 @@ import { AuthenticatedUser } from '../types/authenticated-user';
 import {
   hasAnyUserModule,
   hasUserModule,
-  isSensitiveApiWrite,
   modulesForApiPath,
 } from '../utils/user-permissions';
 import { operationModuleForApiPath, isTenantOperationEnabled } from '../../tenants/tenant-operation.util';
@@ -82,12 +81,7 @@ export class RolesGuard implements CanActivate {
       user.permissions,
       modulesForApiPath(rawPath),
     );
-    // Assistente: o admin libera módulos — permite escrita nas rotas liberadas.
-    if (
-      moduleOk &&
-      (user.role === Role.assistente ||
-        !isSensitiveApiWrite(rawPath, request.method))
-    ) {
+    if (moduleOk) {
       return true;
     }
 

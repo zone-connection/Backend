@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -103,6 +104,17 @@ export class TenantsController {
     @Body() dto: ResetUserPasswordDto,
   ) {
     return this.tenantsService.resetAdminPassword(id, dto.password);
+  }
+
+  @Post(':id/admin/mfa')
+  setAdminMfa(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { enabled?: boolean },
+  ) {
+    if (typeof body.enabled !== 'boolean') {
+      throw new BadRequestException('Informe se a autenticação deve ficar ativa.');
+    }
+    return this.tenantsService.setAdminMfa(id, body.enabled);
   }
 
   @Patch(':id/admin')

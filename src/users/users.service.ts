@@ -28,6 +28,7 @@ import { isCorretorLike } from '../common/utils/roles';
 import { prismaTableOrderBy } from '../common/utils/table-sort';
 import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import { normalizeCor } from '../common/utils/cor';
+import { AccountMailService } from '../mailer/account-mail.service';
 import {
   isDeliverableEmail,
   parseOptionalNotifyEmail,
@@ -71,6 +72,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly teamScope: TeamScopeService,
     private readonly presence: PresenceService,
+    private readonly accountMail: AccountMailService,
   ) {}
 
   async create(
@@ -107,7 +109,7 @@ export class UsersService {
         : CreciProcessoStatus.nao_iniciado);
     this.assertCreciProcesso(creciStatus, creci);
 
-    return this.prisma.user.create({
+    const user = await this.prisma.user.create({
       data: {
         tenantId,
         name: dto.name.trim(),
@@ -142,6 +144,16 @@ export class UsersService {
       },
       select: publicUserSelect,
     });
+    if (user.status === UserStatus.ativo) {
+      void this.accountMail.sendNewUser({
+        name: user.name,
+        email: user.email,
+        notifyEmail: user.notifyEmail,
+        role: user.role,
+        password: dto.password,
+      });
+    }
+    return user;
   }
 
   async importMany(dto: ImportUsersDto, requester: AuthenticatedUser) {
@@ -818,6 +830,12 @@ export class UsersService {
         },
         select: publicUserSelect,
       });
+      void this.accountMail.sendAdminPasswordReset({
+        name: user.name,
+        email: user.email,
+        notifyEmail: user.notifyEmail,
+        password: finalPassword,
+      });
       return { user, temporaryPassword };
     }
 
@@ -846,6 +864,13 @@ export class UsersService {
         lockedUntil: null,
       },
       select: publicUserSelect,
+    });
+
+    void this.accountMail.sendAdminPasswordReset({
+      name: user.name,
+      email: user.email,
+      notifyEmail: user.notifyEmail,
+      password: finalPassword,
     });
 
     return { user, temporaryPassword };

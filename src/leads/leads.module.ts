@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { LeadsController } from './leads.controller';
+import { LeadsFriosController } from './leads-frios.controller';
+import { LeadsFriosService } from './leads-frios.service';
 import { LeadsService } from './leads.service';
 import { CatalogModule } from '../catalog/catalog.module';
 import { EquipesModule } from '../equipes/equipes.module';
@@ -32,9 +34,10 @@ import { WebhooksModule } from '../api-v1/webhooks/webhooks.module';
     PlatformContratosModule,
     WebhooksModule,
   ],
-  controllers: [LeadsController],
+  controllers: [LeadsController, LeadsFriosController],
   providers: [
     LeadsService,
+    LeadsFriosService,
     LeadAtrasoLiberacaoService,
     LeadDistribuicaoAutoService,
     LeadConversaoService,

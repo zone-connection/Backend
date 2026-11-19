@@ -273,6 +273,23 @@ export class UpdatePropostaDto {
   intercaladas?: number[];
 
   @IsOptional()
+  @Transform(toIntArray)
+  @IsArray({ message: "Sinais deve ser uma lista." })
+  @IsInt({ each: true, message: "Sinal inválido." })
+  @Min(0, { each: true })
+  sinais?: number[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  sinaisDatas?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  intercaladasDatas?: string[];
+
+  @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined)
   @Transform(toOptionalInt)
   @IsInt({ message: "FGTS inválido." })

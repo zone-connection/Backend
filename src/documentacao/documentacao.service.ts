@@ -26,12 +26,14 @@ import { requireTenantId } from '../common/utils/tenant';
 import {
   applyPlanoModules,
   FICHA_ANALISE_GUIADA_KEY,
+  VENDA_DIRETA_FUNIL_KEY,
 } from '../tenants/tenant-plan';
 import { hasUserModule } from '../common/utils/user-permissions';
 import { prismaTableOrderBy } from '../common/utils/table-sort';
 import { CreateDocumentacaoDto } from './dto/create-documentacao.dto';
 import { UpdateDocumentacaoDto } from './dto/update-documentacao.dto';
 import { QueryDocumentacaoDto } from './dto/query-documentacao.dto';
+import { RegistrarVendaFunilDto } from './dto/registrar-venda-funil.dto';
 
 const userMini = {
   select: { id: true, name: true, cor: true, role: true },
@@ -292,16 +294,6 @@ export class DocumentacaoService {
     return proposta.id;
   }
 
-  private vendaSemPropostaPronta = false;
-
-  private async garantirVendaSemProposta() {
-    if (this.vendaSemPropostaPronta) return;
-    await this.prisma.$executeRawUnsafe(
-      `ALTER TABLE "documentacoes" ADD COLUMN IF NOT EXISTS "vendaSemProposta" BOOLEAN NOT NULL DEFAULT false`,
-    );
-    this.vendaSemPropostaPronta = true;
-  }
-
   private exigirPropostaNaVenda(
     vgv: number | null | undefined,
     dataVenda: Date | string | null | undefined,
@@ -376,7 +368,6 @@ export class DocumentacaoService {
       dto.vendaSemProposta,
     );
 
-    await this.garantirVendaSemProposta();
     const created = await this.prisma.documentacao.create({
       data: {
         tenantId,
@@ -635,7 +626,6 @@ export class DocumentacaoService {
       vendaSemPropostaFinal,
     );
 
-    await this.garantirVendaSemProposta();
     const updated = await this.prisma.documentacao.update({
       where: { id },
       data,
@@ -713,6 +703,13 @@ export class DocumentacaoService {
         return {};
       case Role.corretor:
       case Role.treinee:
+        if (
+          requester.permissions?.modules?.documentacao === true ||
+          requester.permissions?.modules?.vendas === true ||
+          requester.permissions?.modules?.financeiro === true
+        ) {
+          return {};
+        }
         return documentacaoVinculadaAoCorretorWhere(requester.id);
       case Role.gerente: {
         const teamCorretorIds =
@@ -826,6 +823,144 @@ export class DocumentacaoService {
       },
       requester,
     );
+  }
+
+  private async vendaDiretaAtiva(requester: AuthenticatedUser): Promise<boolean> {
+    const tenantId = requireTenantId(requester);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { plano: true, modules: true },
+    });
+    if (!tenant) return false;
+    const modules = applyPlanoModules(tenant.plano, tenant.modules);
+    return modules[VENDA_DIRETA_FUNIL_KEY] === true;
+  }
+
+  /**
+   * Lança a venda a partir do funil, sem ficha prévia e sem proposta.
+   * O registro entra no módulo de vendas com status vendido.
+   */
+  async registrarVendaFunil(
+    dto: RegistrarVendaFunilDto,
+    requester: AuthenticatedUser,
+  ) {
+    if (!(await this.vendaDiretaAtiva(requester))) {
+      throw new ForbiddenException(
+        'A venda direta pelo funil não está ativa nesta imobiliária.',
+      );
+    }
+    const tenantId = requireTenantId(requester);
+    const dataVenda = parseOptionalDate(dto.dataVenda);
+    if (!dataVenda) {
+      throw new BadRequestException('Informe a data da venda.');
+    }
+    const empreendimento = await this.prisma.empreendimento.findFirst({
+      where: { id: dto.empreendimentoId, tenantId },
+      select: { id: true, construtoraId: true },
+    });
+    if (!empreendimento) {
+      throw new BadRequestException('Empreendimento não encontrado.');
+    }
+    if (
+      !empreendimento.construtoraId ||
+      empreendimento.construtoraId !== dto.construtoraId
+    ) {
+      throw new BadRequestException(
+        'A construtora não corresponde ao empreendimento escolhido.',
+      );
+    }
+    const lead = await this.prisma.lead.findFirst({
+      where: { id: dto.leadId, tenantId },
+      select: {
+        id: true,
+        nome: true,
+        tipo: true,
+        stage: true,
+        corretorId: true,
+        equipe: { select: { gerenteId: true } },
+      },
+    });
+    if (!lead) throw new NotFoundException('Lead não encontrado.');
+
+    const fontes = await this.prisma.catalogItem.findMany({
+      where: { tenantId, type: CatalogType.documentacao_fonte, active: true },
+      select: { label: true },
+      orderBy: { label: 'asc' },
+    });
+    const status1Items = await this.prisma.catalogItem.findMany({
+      where: { tenantId, type: CatalogType.documentacao_status1, active: true },
+      select: { label: true },
+    });
+    const status2Items = await this.prisma.catalogItem.findMany({
+      where: { tenantId, type: CatalogType.documentacao_status2, active: true },
+      select: { label: true },
+    });
+    const fonte =
+      fontes.find((item) => item.label.trim().toLowerCase() === 'outro')
+        ?.label ??
+      fontes[0]?.label ??
+      'Outro';
+    const status1 =
+      status1Items.find((item) =>
+        item.label.trim().toLowerCase().includes('aprov'),
+      )?.label ?? 'Aprovado';
+    const status2 =
+      status2Items.find((item) => isStatusVendido(item.label))?.label ??
+      'Vendido';
+
+    const corretorId = lead.corretorId;
+    const gerenteId =
+      lead.equipe?.gerenteId ??
+      (requester.role === Role.gerente ? requester.id : null);
+
+    const venda = {
+      construtoraId: dto.construtoraId,
+      empreendimentoId: dto.empreendimentoId,
+      status1,
+      status2,
+      dataVenda,
+      vgv: dto.vgv,
+      vendaSemProposta: true,
+      corretorId,
+      gerenteId,
+    };
+
+    const existing = await this.prisma.documentacao.findFirst({
+      where: { tenantId, leadId: lead.id },
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const saved = existing
+      ? await this.prisma.documentacao.update({
+          where: { id: existing.id },
+          data: venda,
+          select: docSelect,
+        })
+      : await this.prisma.documentacao.create({
+          data: {
+            tenantId,
+            autorId: requester.id,
+            leadId: lead.id,
+            tipoContato: lead.tipo,
+            stageSituacao: lead.stage,
+            nome: lead.nome,
+            fonte,
+            origem: 'lancamento',
+            ...venda,
+          },
+          select: docSelect,
+        });
+
+    await this.prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        construtoraId: dto.construtoraId,
+        empreendimentoId: dto.empreendimentoId,
+      },
+    });
+    await this.syncLeadDocumentacaoTags(lead.id, tenantId);
+    return saved;
   }
 
   /** Exclusão permanece restrita a admin e analista. */

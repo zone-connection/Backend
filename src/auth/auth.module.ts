@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { MailerModule } from '../mailer/mailer.module';
 import { PresenceModule } from '../presence/presence.module';
 import { MediaModule } from '../media/media.module';
 import { AuthController } from './auth.controller';
@@ -11,7 +12,7 @@ import { TurnstileService } from './turnstile.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), PresenceModule, MediaModule],
+  imports: [PassportModule, JwtModule.register({}), PresenceModule, MediaModule, MailerModule],
   controllers: [AuthController],
   providers: [AuthService, MfaService, JwtStrategy, BootstrapAdminService, TurnstileService],
   exports: [AuthService],

@@ -130,6 +130,7 @@ type FunilCtx = {
   inatividadeMs: number;
   inatividadeValor: number;
   inatividadeUnidade: PrazoUnidade;
+  notificarAtraso: boolean;
   etapasBySlug: Map<string, EtapaCtx>;
   terminalSlugs: string[];
 };
@@ -197,6 +198,7 @@ export class LeadMonitoramentoService {
     const funilSelect = {
       inatividadeValor: true,
       inatividadeUnidade: true,
+      notificarAtraso: true,
       etapas: {
         where: { active: true },
         select: {
@@ -258,6 +260,7 @@ export class LeadMonitoramentoService {
       inatividadeMs,
       inatividadeValor,
       inatividadeUnidade,
+      notificarAtraso: funil?.notificarAtraso !== false,
       etapasBySlug,
       terminalSlugs,
     };
@@ -1067,6 +1070,7 @@ export class LeadMonitoramentoService {
     });
 
     let created = 0;
+    if (ctx.notificarAtraso) {
     for (const lead of leads) {
       const mon = this.compute(lead, ctx, requester, now);
       const dueAt = mon.prazoDueAt ? new Date(mon.prazoDueAt) : null;
@@ -1108,14 +1112,15 @@ export class LeadMonitoramentoService {
         if (n) created += 1;
       }
     }
-
-    created += await this.syncTarefasAtrasadas(tenantId, ctx, requester, now);
     created += await this.syncLeadsSemAtendimento(
       tenantId,
       ctx,
       requester,
       now,
     );
+    }
+
+    created += await this.syncTarefasAtrasadas(tenantId, ctx, requester, now);
     created += await this.syncPropostasVencimento(tenantId, requester, now);
 
     return { ok: true, created };

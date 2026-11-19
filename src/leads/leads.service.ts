@@ -14,6 +14,7 @@ import {
   FunilTipo,
   Prisma,
   Role,
+  TenantPlano,
   TriagemOrigem,
   UserStatus,
   AtrasoLiberacaoDestino,
@@ -1197,6 +1198,7 @@ export class LeadsService {
 
     const where: Prisma.LeadWhereInput = {
       perdidoAt: null,
+      baseFria: false,
       ...(tipoFiltro ? { tipo: tipoFiltro } : {}),
       ...leadScope,
       ...(query.stage ? { stage: query.stage } : {}),
@@ -1435,7 +1437,12 @@ export class LeadsService {
         isCorretorLike(requester.role) &&
         lead.tipo === ContatoTipo.cliente &&
         lead.corretorId === requester.id;
-      if (!adminLead && !corretorCliente) {
+      const soloLead =
+        isCorretorLike(requester.role) &&
+        lead.tipo === ContatoTipo.lead &&
+        lead.corretorId === requester.id &&
+        (await this.isSoloTenant(tenantId));
+      if (!adminLead && !corretorCliente && !soloLead) {
         throw new NotFoundException('Lead não encontrado.');
       }
       return this.decorateOne(lead, requester);
@@ -1456,8 +1463,16 @@ export class LeadsService {
     return this.decorateOne(lead, requester);
   }
 
+  private async isSoloTenant(tenantId: string): Promise<boolean> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { plano: true },
+    });
+    return tenant?.plano === TenantPlano.solo;
+  }
+
   /**
-   * Lista leads marcados como perdidos — exclusivo do admin.
+   * Lista leads marcados como perdidos — admin, ou corretor do plano Solo (próprios).
    */
   async findLost(
     query: QueryLeadsDto,
@@ -1465,9 +1480,17 @@ export class LeadsService {
   ): Promise<PaginatedLeads> {
     const tenantId = requireTenantId(requester);
     if (!canViewLostLeads(requester)) {
-      throw new ForbiddenException(
-        'Apenas administradores podem ver leads perdidos.',
-      );
+      if (
+        !(await this.isSoloTenant(tenantId)) ||
+        !isCorretorLike(requester.role)
+      ) {
+        throw new ForbiddenException(
+          'Apenas administradores podem ver leads perdidos.',
+        );
+      }
+      return this.findLostByTipo(tenantId, ContatoTipo.lead, query, {
+        corretorId: requester.id,
+      });
     }
 
     return this.findLostByTipo(tenantId, ContatoTipo.lead, query);
@@ -1476,7 +1499,11 @@ export class LeadsService {
   /** Contagem de leads perdidos por motivo (cards do topo). */
   async findLostKpis(requester: AuthenticatedUser) {
     const tenantId = requireTenantId(requester);
-    if (!canViewLostLeads(requester)) {
+    const soloCorretor =
+      !canViewLostLeads(requester) &&
+      isCorretorLike(requester.role) &&
+      (await this.isSoloTenant(tenantId));
+    if (!canViewLostLeads(requester) && !soloCorretor) {
       throw new ForbiddenException(
         'Apenas administradores podem ver leads perdidos.',
       );
@@ -1488,6 +1515,7 @@ export class LeadsService {
         tenantId,
         tipo: ContatoTipo.lead,
         perdidoAt: { not: null },
+        ...(soloCorretor ? { corretorId: requester.id } : {}),
       },
       _count: { _all: true },
     });
