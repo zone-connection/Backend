@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -103,6 +104,7 @@ export class CreateDocumentacaoDto {
   @Transform(toOptionalInt)
   @IsInt({ message: 'VGV inválido.' })
   @Min(0, { message: 'VGV não pode ser negativo.' })
+  @Max(2147483647, { message: 'VGV passa do limite permitido.' })
   vgv?: number | null;
 
   @IsOptional()
