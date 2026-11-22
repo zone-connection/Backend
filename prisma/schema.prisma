@@ -1686,6 +1686,8 @@ model Proposta {
   sinais         Int[] @default([])
   /// Data opcional de cada sinal (YYYY-MM-DD), alinhada a `sinais`.
   sinaisDatas    String[] @default([])
+  /// Nome opcional de cada sinal, alinhado a `sinais`.
+  sinaisNomes    String[] @default([])
   /// Data opcional de cada intercalada, alinhada a `intercaladas`.
   intercaladasDatas String[] @default([])
   apartado       Int?

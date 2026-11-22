@@ -286,6 +286,11 @@ export class CreatePropostaDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  sinaisNomes?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
   intercaladasDatas?: string[];
 
   @IsOptional()

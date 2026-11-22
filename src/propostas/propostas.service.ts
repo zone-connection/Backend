@@ -65,6 +65,7 @@ const propostaSelect = {
   entrada: true,
   sinais: true,
   sinaisDatas: true,
+  sinaisNomes: true,
   intercaladasDatas: true,
   apartado: true,
   preChaves: true,
@@ -415,6 +416,7 @@ export class PropostasService {
         entrada: dto.entrada ?? null,
         sinais: dto.sinais ?? [],
         sinaisDatas: dto.sinaisDatas ?? [],
+        sinaisNomes: dto.sinaisNomes ?? [],
         intercaladasDatas: dto.intercaladasDatas ?? [],
         apartado: dto.apartado ?? null,
         preChaves: dto.preChaves ?? [],
@@ -476,6 +478,7 @@ export class PropostasService {
     if (dto.entrada !== undefined) data.entrada = dto.entrada;
     if (dto.sinais !== undefined) data.sinais = dto.sinais;
     if (dto.sinaisDatas !== undefined) data.sinaisDatas = dto.sinaisDatas;
+    if (dto.sinaisNomes !== undefined) data.sinaisNomes = dto.sinaisNomes;
     if (dto.intercaladasDatas !== undefined)
       data.intercaladasDatas = dto.intercaladasDatas;
     if (dto.apartado !== undefined) data.apartado = dto.apartado;

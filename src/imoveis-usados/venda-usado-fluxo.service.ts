@@ -42,7 +42,13 @@ const visitaInclude = {
 
 const propostaInclude = {
   interessado: { select: { id: true, nome: true, telefone: true } },
-  responsavel: { select: { id: true, name: true } },
+  responsavel: {
+    select: {
+      id: true,
+      name: true,
+      equipe: { select: { id: true, name: true } },
+    },
+  },
   negociacao: {
     include: {
       movimentos: {
