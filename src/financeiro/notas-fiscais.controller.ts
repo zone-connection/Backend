@@ -55,6 +55,21 @@ export class NotasFiscaisController {
     return this.notas.list(requester, query);
   }
 
+  @Post('ler-pdf')
+  @Roles(...roles)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: DOCUMENT_MAX_BYTES, files: 1 },
+    }),
+  )
+  lerPdf(
+    @CurrentUser() requester: AuthenticatedUser,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.notas.lerPdf(requester, file);
+  }
+
   @Post()
   @Roles(...roles)
   @UseInterceptors(

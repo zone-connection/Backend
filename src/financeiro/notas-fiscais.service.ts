@@ -6,8 +6,10 @@ import {
 import { Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { resolveFinanceiroTenantId } from '../common/utils/tenant';
+import { PDFParse } from 'pdf-parse';
 import { MediaService } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { lerCamposNotaFiscalPdf } from './nota-fiscal-pdf';
 
 export type NotaFiscalInput = {
   numero?: string;
@@ -80,6 +82,53 @@ export class NotasFiscaisService {
       include: { _count: { select: { comissoes: true } } },
     });
     return rows.map((row) => this.toDto(row));
+  }
+
+  async lerPdf(requester: AuthenticatedUser, file?: Express.Multer.File) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Envie o PDF da nota.');
+    }
+    const nome = (file.originalname ?? '').toLowerCase();
+    const mime = (file.mimetype ?? '').toLowerCase();
+    if (!nome.endsWith('.pdf') && !mime.includes('pdf')) {
+      throw new BadRequestException('A leitura automática aceita apenas PDF.');
+    }
+    const parser = new PDFParse({ data: file.buffer });
+    let text = '';
+    try {
+      const parsed = await parser.getText();
+      text = parsed.text?.trim() ?? '';
+    } finally {
+      await parser.destroy().catch(() => undefined);
+    }
+    if (text.length < 40) {
+      throw new BadRequestException(
+        'Este PDF parece escaneado ou sem texto selecionável. Preencha os campos manualmente.',
+      );
+    }
+    const tenantId = resolveFinanceiroTenantId(requester);
+    const [corretores, empreendimentos] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { tenantId, status: 'ativo' },
+        select: { name: true },
+      }),
+      this.prisma.empreendimento.findMany({
+        where: { tenantId },
+        select: { nome: true, construtora: { select: { nome: true } } },
+      }),
+    ]);
+    const construtoras = await this.prisma.construtora.findMany({
+      where: { tenantId },
+      select: { nome: true },
+    });
+    return lerCamposNotaFiscalPdf(text, {
+      corretores: corretores.map((item) => item.name),
+      construtoras: construtoras.map((item) => item.nome),
+      empreendimentos: empreendimentos.map((item) => ({
+        nome: item.nome,
+        construtora: item.construtora?.nome ?? null,
+      })),
+    });
   }
 
   async opcoes(requester: AuthenticatedUser) {
