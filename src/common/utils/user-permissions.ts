@@ -610,6 +610,12 @@ export function modulesForApiPath(rawPath: string): string[] {
   if (path.startsWith('treinamento')) return ['treinamento'];
   if (path.startsWith('triagem')) return ['triagem'];
   if (path.startsWith('localidades')) return ['imoveis', 'construtoras'];
+  if (
+    path.startsWith('captacao/imoveis') ||
+    (path.startsWith('captacao/proprietarios') && !path.includes('/portal'))
+  ) {
+    return ['imoveis'];
+  }
   if (path.startsWith('captacao')) return ['captacao'];
   if (path.startsWith('locacao')) return ['locacao'];
   return [];

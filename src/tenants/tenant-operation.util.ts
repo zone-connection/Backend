@@ -57,6 +57,13 @@ export function operationModuleForApiPath(
   rawPath: string,
 ): TenantOperationKey | null {
   const path = rawPath.split('?')[0].replace(/^\/+/, '').toLowerCase();
+  // Imóvel pronto e proprietário pertencem ao catálogo de Imóveis.
+  if (
+    path.startsWith('captacao/imoveis') ||
+    (path.startsWith('captacao/proprietarios') && !path.includes('/portal'))
+  ) {
+    return null;
+  }
   if (path.startsWith('captacao')) return 'captacao';
   if (path.startsWith('imoveis-usados') || path.startsWith('imoveisusados')) {
     return 'imoveisUsados';

@@ -39,7 +39,9 @@ describe('operações do tenant', () => {
   });
 
   it('mapeia APIs futuras para a operação', () => {
-    assert.equal(operationModuleForApiPath('/captacao/imoveis'), 'captacao');
+    assert.equal(operationModuleForApiPath('/captacao/imoveis'), null);
+    assert.equal(operationModuleForApiPath('/captacao/proprietarios'), null);
+    assert.equal(operationModuleForApiPath('/captacao'), 'captacao');
     assert.equal(operationModuleForApiPath('imoveis-usados'), 'imoveisUsados');
     assert.equal(
       operationModuleForApiPath('/imoveis-usados/interessados'),

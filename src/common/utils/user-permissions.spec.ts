@@ -68,7 +68,9 @@ describe('permissões por usuário', () => {
       'comissao',
       'financeiro',
     ]);
-    assert.deepEqual(modulesForApiPath('/captacao/proprietarios'), ['captacao']);
+    assert.deepEqual(modulesForApiPath('/captacao/proprietarios'), ['imoveis']);
+    assert.deepEqual(modulesForApiPath('/captacao/imoveis'), ['imoveis']);
+    assert.deepEqual(modulesForApiPath('/captacao'), ['captacao']);
     assert.deepEqual(modulesForApiPath('/imoveis-usados'), ['imoveisUsados']);
     assert.deepEqual(modulesForApiPath('/imoveis-usados/interessados'), [
       'imoveisUsados',
