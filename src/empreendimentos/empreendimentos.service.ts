@@ -322,7 +322,7 @@ export class EmpreendimentosService {
       valor: item.valorReferencia,
       areaM2: item.areaM2,
       badge: item.status?.trim() || "Empreendimento",
-      imagens: stored.slice(0, 15).map((image) => image.largeUrl || image.url),
+      imagens: stored.slice(0, EMPREENDIMENTO_MAX_IMAGES).map((image) => image.largeUrl || image.url),
       localidade: item.localidade?.nome ?? null,
       construtora: item.construtora?.nome ?? null,
       vitrine,
@@ -345,7 +345,7 @@ export class EmpreendimentosService {
     },
   ) {
     const stored = resolveEmpreendimentoImages(item);
-    const imagens = stored.slice(0, 15).map((image) => image.largeUrl || image.url);
+    const imagens = stored.slice(0, EMPREENDIMENTO_MAX_IMAGES).map((image) => image.largeUrl || image.url);
     const vitrine = normalizeEmpreendimentoVitrine(item.vitrine);
     const valor =
       item.valorReferencia ??

@@ -1,6 +1,6 @@
 import { CaptacaoImovelTipo } from '@prisma/client';
 
-export const IMOVEL_MAX_FOTOS = 15;
+export const IMOVEL_MAX_FOTOS = 30;
 
 export const CAPTACAO_MOTIVOS_PERDA = [
   'Proprietário desistiu',
