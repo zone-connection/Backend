@@ -190,6 +190,18 @@ model Tenant {
   isTest Boolean @default(false)
   /// Add-on Gestão de Tarefas e Lembretes (contratado à parte do plano).
   tarefasEnabled Boolean @default(false)
+  /// Próximo vencimento da mensalidade da plataforma (super admin).
+  mensalidadeVencimento DateTime?
+  /// E-mail do responsável que recebe o aviso 3 dias antes.
+  mensalidadeResponsavelEmail String @default("")
+  /// Vencimento para o qual o aviso de 3 dias já foi enviado.
+  mensalidadeAvisoPara DateTime?
+  /// Admin do tenant recebe e-mails operacionais (contas e leads atrasados).
+  emailOperacional Boolean @default(true)
+  /// Quantidade de leads atrasados que dispara um e-mail. 0 = desligado.
+  leadsAtrasadosLimite Int @default(0)
+  /// Último dia em que o resumo de leads atrasados foi enviado.
+  leadsAtrasadosAvisoEm DateTime?
 
   users             User[]
   equipes           Equipe[]
@@ -3724,6 +3736,8 @@ model FinanceiroTitulo {
   natureza        FinanceiroDespesaNatureza?
   /// E-mail de cobrança atrasada já enviado para este título.
   avisoAtrasoEnviadoEm DateTime?
+  /// E-mail de vencimento próximo (até 3 dias) já enviado.
+  avisoProximoEnviadoEm DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

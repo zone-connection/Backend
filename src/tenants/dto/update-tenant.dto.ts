@@ -1,11 +1,14 @@
 import {
   Allow,
   IsBoolean,
+  IsEmail,
   IsEnum,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  Matches,
+  ValidateIf,
   Max,
   MaxLength,
   Min,
@@ -70,6 +73,25 @@ export class UpdateTenantDto {
   @IsOptional()
   @IsBoolean()
   isTest?: boolean;
+
+  /** Dia do vencimento da mensalidade (YYYY-MM-DD). Vazio limpa. */
+  @IsOptional()
+  @Transform(emptyToNull)
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'Data de vencimento inválida.',
+  })
+  mensalidadeVencimento?: string | null;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @ValidateIf((_, value) => value !== '')
+  @IsEmail({}, { message: 'E-mail do responsável inválido.' })
+  @MaxLength(160)
+  mensalidadeResponsavelEmail?: string;
 
   @IsOptional()
   @Transform(emptyToNull)

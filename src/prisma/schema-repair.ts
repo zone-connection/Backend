@@ -501,7 +501,17 @@ export async function ensureAssinaturaAvisosSchema(prisma: PrismaService) {
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "financeiro_titulos"
-      ADD COLUMN IF NOT EXISTS "avisoAtrasoEnviadoEm" TIMESTAMP(3)
+      ADD COLUMN IF NOT EXISTS "avisoAtrasoEnviadoEm" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "avisoProximoEnviadoEm" TIMESTAMP(3)
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "tenants"
+      ADD COLUMN IF NOT EXISTS "mensalidadeVencimento" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "mensalidadeResponsavelEmail" TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS "mensalidadeAvisoPara" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "emailOperacional" BOOLEAN NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS "leadsAtrasadosLimite" INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS "leadsAtrasadosAvisoEm" TIMESTAMP(3)
   `);
 }
 

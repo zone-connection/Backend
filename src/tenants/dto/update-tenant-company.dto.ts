@@ -1,4 +1,14 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 
 /**
  * Dados cadastrais da imobiliária (admin do tenant).
@@ -66,4 +76,16 @@ export class UpdateTenantCompanyDto {
   @IsString()
   @MaxLength(160)
   representanteLegal?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  emailOperacional?: boolean;
+
+  /** 0 desliga o aviso de leads atrasados. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(5000)
+  leadsAtrasadosLimite?: number;
 }

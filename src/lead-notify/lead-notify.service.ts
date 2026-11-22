@@ -5,13 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificacoesService } from '../notificacoes/notificacoes.service';
 import { OzapApiClient } from '../ozap/ozap-api.client';
 import {
-  MailerService,
-  resolveNotifyEmail,
-} from '../mailer/mailer.service';
-import {
-  DEFAULT_BRAND_LOGO_URL,
   equipePoolCopy,
-  formatLeadEmailHtml,
   formatLeadWhatsApp,
   leadAtribuidoCopy,
   leadChegouWhatsApp,
@@ -34,7 +28,6 @@ export class LeadNotifyService {
     private readonly prisma: PrismaService,
     private readonly notificacoes: NotificacoesService,
     private readonly ozapApi: OzapApiClient,
-    private readonly mailer: MailerService,
     private readonly config: ConfigService,
     private readonly evolution: EvolutionService,
   ) {}
@@ -315,10 +308,10 @@ export class LeadNotifyService {
       crmUrl?: string | null;
     } | null;
   }) {
-    await Promise.allSettled([
-      this.tryWhatsApp(params),
-      params.email ? this.tryEmail({ ...params, email: params.email }) : Promise.resolve(),
-    ]);
+    // E-mail por lead estoura a cota mensal. Aviso fica no sino e no WhatsApp.
+    // E-mail operacional (criação de usuário, vencimentos, lembrete, leads atrasados)
+    // sai por outros fluxos.
+    await this.tryWhatsApp(params);
   }
 
   /** Instância da plataforma. O aviso não usa a conexão OZap do tenant. */
@@ -372,62 +365,6 @@ export class LeadNotifyService {
       );
       return false;
     }
-  }
-
-  private async tryEmail(params: {
-    tenantId: string;
-    userId: string;
-    subject: string;
-    text: string;
-    email: {
-      titulo: string;
-      lead?: LeadNotifySnapshot | null;
-      extra?: string;
-      crmUrl?: string | null;
-    };
-  }) {
-    if (!this.mailer.isConfigured()) {
-      this.logger.warn(
-        `SMTP ausente — e-mail de lead não enviado user=${params.userId}.`,
-      );
-      return;
-    }
-
-    const [user, tenant] = await Promise.all([
-      this.prisma.user.findFirst({
-        where: { id: params.userId, tenantId: params.tenantId },
-        select: { email: true, notifyEmail: true },
-      }),
-      this.prisma.tenant.findUnique({
-        where: { id: params.tenantId },
-        select: { name: true },
-      }),
-    ]);
-    const to = resolveNotifyEmail(user ?? {});
-    if (!to) {
-      this.logger.warn(
-        `Usuário ${params.userId} sem e-mail válido (login/avisos) — e-mail não enviado.`,
-      );
-      return;
-    }
-
-    await this.mailer.sendText({
-      to,
-      subject: params.subject,
-      text: formatLeadWhatsApp({
-        titulo: params.email.titulo,
-        lead: params.email.lead,
-        extra: params.email.extra,
-        crmUrl: params.email.crmUrl,
-        includeTelefone: false,
-      }),
-      html: formatLeadEmailHtml({
-        ...params.email,
-        brandName: tenant?.name,
-        logoUrl: DEFAULT_BRAND_LOGO_URL,
-      }),
-    });
-    this.logger.log(`E-mail de lead enviado user=${params.userId} to=${to}`);
   }
 
   /**

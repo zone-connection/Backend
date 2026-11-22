@@ -848,6 +848,20 @@ export class TenantsService {
           iaBotEnabled: planFields.iaBotEnabled,
           tarefasEnabled: dto.tarefasEnabled ?? current.tarefasEnabled,
           ...(dto.isTest !== undefined ? { isTest: dto.isTest } : {}),
+          ...(dto.mensalidadeVencimento !== undefined
+            ? {
+                mensalidadeVencimento: dto.mensalidadeVencimento
+                  ? new Date(`${dto.mensalidadeVencimento}T12:00:00.000Z`)
+                  : null,
+                mensalidadeAvisoPara: null,
+              }
+            : {}),
+          ...(dto.mensalidadeResponsavelEmail !== undefined
+            ? {
+                mensalidadeResponsavelEmail:
+                  dto.mensalidadeResponsavelEmail?.trim().toLowerCase() ?? '',
+              }
+            : {}),
           ...(logoChanged
             ? { primaryColor, logoPublicId: null }
             : {}),
@@ -1221,6 +1235,12 @@ export class TenantsService {
         ...(dto.pix !== undefined ? { pix: dto.pix.trim() } : {}),
         ...(dto.representanteLegal !== undefined
           ? { representanteLegal: dto.representanteLegal.trim() }
+          : {}),
+        ...(dto.emailOperacional !== undefined
+          ? { emailOperacional: dto.emailOperacional }
+          : {}),
+        ...(dto.leadsAtrasadosLimite !== undefined
+          ? { leadsAtrasadosLimite: dto.leadsAtrasadosLimite }
           : {}),
       },
       select: tenantBrandingSelect,
