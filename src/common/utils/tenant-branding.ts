@@ -33,6 +33,7 @@ export const tenantBrandingSelect = {
   mensalidadeVencimento: true,
   mensalidadeResponsavelEmail: true,
   emailOperacional: true,
+  exibirPrevisaoSubordinados: true,
   leadsAtrasadosLimite: true,
 } satisfies Prisma.TenantSelect;
 

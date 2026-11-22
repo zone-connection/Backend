@@ -198,6 +198,8 @@ model Tenant {
   mensalidadeAvisoPara DateTime?
   /// Admin do tenant recebe e-mails operacionais (contas e leads atrasados).
   emailOperacional Boolean @default(true)
+  /// Corretores, gerentes e demais subordinados veem datas de previsão.
+  exibirPrevisaoSubordinados Boolean @default(true)
   /// Quantidade de leads atrasados que dispara um e-mail. 0 = desligado.
   leadsAtrasadosLimite Int @default(0)
   /// Último dia em que o resumo de leads atrasados foi enviado.

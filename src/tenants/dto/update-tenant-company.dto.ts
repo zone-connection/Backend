@@ -81,6 +81,10 @@ export class UpdateTenantCompanyDto {
   @IsBoolean()
   emailOperacional?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  exibirPrevisaoSubordinados?: boolean;
+
   /** 0 desliga o aviso de leads atrasados. */
   @IsOptional()
   @Type(() => Number)

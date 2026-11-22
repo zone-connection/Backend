@@ -1239,6 +1239,9 @@ export class TenantsService {
         ...(dto.emailOperacional !== undefined
           ? { emailOperacional: dto.emailOperacional }
           : {}),
+        ...(dto.exibirPrevisaoSubordinados !== undefined
+          ? { exibirPrevisaoSubordinados: dto.exibirPrevisaoSubordinados }
+          : {}),
         ...(dto.leadsAtrasadosLimite !== undefined
           ? { leadsAtrasadosLimite: dto.leadsAtrasadosLimite }
           : {}),
