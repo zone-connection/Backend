@@ -2101,7 +2101,7 @@ export class FinanceiroService {
 
     await this.syncTitulosAtrasados(tenantId).catch(() => undefined);
 
-    const [movJanela, movJanelaAnt, titulosReceber, titulosPagar, movAbertosParceiro, comissoesJanela] =
+    const [movJanela, movJanelaAnt, titulosReceber, titulosPagar, movAbertosParceiro, comissoesJanela, titulosInadimplentes] =
       await Promise.all([
         this.prisma.financeiroMovimento.findMany({
           where: {
@@ -2174,6 +2174,19 @@ export class FinanceiroService {
           },
           orderBy: [{ valor: "desc" }, { vencimento: "asc" }],
         }),
+        this.prisma.financeiroTitulo.findMany({
+          where: {
+            tenantId,
+            status: {
+              in: [
+                FinanceiroTituloStatus.aberto,
+                FinanceiroTituloStatus.atrasado,
+              ],
+            },
+            vencimento: { lt: parseDayStart(todayIsoBrasil()) },
+          },
+          select: { tipo: true, valor: true },
+        }),
       ]);
 
     const movMes = movJanela.filter((r) =>
@@ -2188,6 +2201,12 @@ export class FinanceiroService {
     const aPagarValor = titulosPagar
       .filter((t) => noPeriodoVisao(t.vencimento, y, mesFiltro))
       .reduce((s, t) => s + t.valor, 0);
+    const somaInadimplente = (tipo: FinanceiroTituloTipo) =>
+      titulosInadimplentes
+        .filter((t) => t.tipo === tipo)
+        .reduce((s, t) => s + t.valor, 0);
+    const inadimplenteReceber = somaInadimplente(FinanceiroTituloTipo.receber);
+    const inadimplentePagar = somaInadimplente(FinanceiroTituloTipo.pagar);
     const comissoesAReceberMes = comissoesJanela.filter((t) =>
       noPeriodoVisao(t.vencimento, y, mesFiltro),
     );
@@ -2346,6 +2365,9 @@ export class FinanceiroService {
         comissoesAReceberMes: comissoesAReceberMesValor,
         aReceber: aReceberValor,
         aPagar: aPagarValor,
+        inadimplenteReceber,
+        inadimplentePagar,
+        inadimplente: inadimplenteReceber + inadimplentePagar,
         resultadoMes,
         evolucaoReceitas: evolucao(receitasMes, receitasAnt),
         evolucaoDespesas: evolucao(despesasMes, despesasAnt),
@@ -3745,8 +3767,7 @@ export class FinanceiroService {
       ) {
         continue;
       }
-      const natureza =
-        m.status === FinanceiroTituloStatus.pago ? "realizado" : "previsto";
+      const natureza = "realizado";
       eventos.push({
         data: isoDateOnly(m.data),
         tipo: m.tipo === FinanceiroMovimentoTipo.entrada ? "entrada" : "saida",
