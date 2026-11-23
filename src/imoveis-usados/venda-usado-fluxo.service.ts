@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   InteresseUsadoStatus,
   UserStatus,
@@ -39,6 +40,19 @@ const visitaInclude = {
   interessado: { select: { id: true, nome: true, telefone: true } },
   responsavel: { select: { id: true, name: true } },
 } as const;
+
+function fichaProposta(
+  value?: Record<string, string>,
+): Prisma.InputJsonValue | undefined {
+  if (!value) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== 'string') continue;
+    const texto = item.trim().slice(0, 500);
+    if (texto) out[key.slice(0, 40)] = texto;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 const propostaInclude = {
   interessado: { select: { id: true, nome: true, telefone: true } },
@@ -339,6 +353,7 @@ export class VendaUsadoFluxoService {
           entrada: dto.entrada,
           valorFinanciamento: dto.valorFinanciamento,
           observacoes: dto.observacoes?.trim() ?? '',
+          ficha: fichaProposta(dto.ficha),
         },
       });
       const negociacao = await tx.vendaUsadoNegociacao.create({

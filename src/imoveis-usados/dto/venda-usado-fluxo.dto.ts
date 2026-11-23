@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -102,6 +103,10 @@ export class CreatePropostaUsadoDto {
   @IsString()
   @MaxLength(2000)
   observacoes?: string;
+
+  @IsOptional()
+  @IsObject()
+  ficha?: Record<string, string>;
 }
 
 export class UpdatePropostaUsadoDto {
