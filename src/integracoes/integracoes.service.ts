@@ -497,6 +497,15 @@ function parseData(value?: string): Date | null {
 
 /** Aceita dígitos com DDD e devolve (DD) 9XXXX-XXXX ou (DD) XXXX-XXXX. */
 export function formatarTelefone(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('+')) {
+    const digits = trimmed.replace(/\D/g, '');
+    if (!/^[1-9]\d{7,14}$/.test(digits)) return null;
+    if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+      return formatarTelefone(digits.slice(2));
+    }
+    return `+${digits}`;
+  }
   const digits = raw.replace(/\D/g, '').replace(/^55/, '');
   if (digits.length === 11) {
     return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;

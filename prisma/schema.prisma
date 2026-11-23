@@ -36,6 +36,8 @@ enum Role {
   treinee
   /// Acesso exclusivo ao módulo Financeiro da imobiliária.
   financeiro
+  /// Acesso exclusivo ao módulo de RH da imobiliária.
+  rh
   /// Extra do plano Solo: acesso só pelos módulos/ações liberados pelo admin.
   assistente
 }
@@ -210,6 +212,10 @@ model Tenant {
   leadsAtrasadosAvisoEm DateTime?
 
   users             User[]
+  rhCandidatos      RhCandidato[]
+  rhTreinamentos    RhTreinamento[]
+  rhModelos         RhModeloContrato[]
+  rhDocumentos      RhDocumento[]
   equipes           Equipe[]
   leads             Lead[]
   inscricoesCampanha LeadInscricaoCampanha[]
@@ -440,6 +446,12 @@ model User {
   corModulo    String?
   role      Role       @default(corretor)
   status    UserStatus @default(ativo)
+  /// Preenchido no desligamento pelo módulo de RH. O usuário não é apagado.
+  desligadoEm         DateTime?
+  desligamentoMotivo  String?
+  desligadoPorId      String?
+  desligadoPor        User?      @relation("UserDesligamento", fields: [desligadoPorId], references: [id], onDelete: SetNull)
+  desligamentosFeitos User[]     @relation("UserDesligamento")
   avatar    String?
   /// Permissões do perfil financeiro (ignoradas nos demais perfis).
   financeiroCanView   Boolean @default(true)
@@ -535,6 +547,16 @@ model User {
 
   // Compromissos da agenda criados por este usuário.
   agendamentos Agendamento[] @relation("AgendamentoAutor")
+  agendamentosRh Agendamento[] @relation("AgendamentoRhUser")
+  rhCandidatosResponsavel RhCandidato[] @relation("RhCandidatoResponsavel")
+  rhCandidatosEncerrados  RhCandidato[] @relation("RhCandidatoEncerradoPor")
+  rhCandidatoVinculado    RhCandidato?  @relation("RhCandidatoUsuario")
+  rhHistoricos            RhCandidatoHistorico[]
+  rhTreinamentos          RhTreinamento[] @relation("RhTreinamentoAutor")
+  rhTreinamentosRecebidos RhTreinamento[] @relation("RhTreinamentoUsuario")
+  rhModelosEnviados       RhModeloContrato[]
+  rhDocumentosEnviados    RhDocumento[] @relation("RhDocumentoAutor")
+  rhDocumentos            RhDocumento[] @relation("RhDocumentoUsuario")
 
   // Solicitações de agenda que este gerente/admin aprovou ou recusou.
   agendamentosAprovados Agendamento[] @relation("AgendamentoAprovador")
@@ -2058,6 +2080,12 @@ model Agendamento {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   leadId   String?
   lead     Lead?  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  /// Compromisso de RH (entrevista, treinamento, etc.). A agenda continua sendo esta.
+  rhCandidatoId String?
+  rhCandidato   RhCandidato? @relation(fields: [rhCandidatoId], references: [id], onDelete: SetNull)
+  rhUserId      String?
+  rhUser        User?        @relation("AgendamentoRhUser", fields: [rhUserId], references: [id], onDelete: SetNull)
+  rhTipo        RhCompromissoTipo?
   autorId  String
   autor    User   @relation("AgendamentoAutor", fields: [autorId], references: [id], onDelete: Cascade)
 
@@ -2143,6 +2171,8 @@ model Agendamento {
   @@index([empreendimentoId])
   @@index([imovelId])
   @@index([muralChaveId])
+  @@index([rhCandidatoId])
+  @@index([rhUserId])
   @@map("agendamentos")
 }
 
@@ -3201,8 +3231,8 @@ model VendaUsadoProposta {
   id                 String                   @id @default(uuid())
   tenantId           String
   tenant             Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  vendaUsadoId       String
-  vendaUsado         VendaUsado               @relation(fields: [vendaUsadoId], references: [id], onDelete: Cascade)
+  vendaUsadoId       String?
+  vendaUsado         VendaUsado?              @relation(fields: [vendaUsadoId], references: [id], onDelete: Cascade)
   interessadoId      String
   interessado        InteressadoUsado         @relation(fields: [interessadoId], references: [id], onDelete: Restrict)
   responsavelId      String
@@ -5201,4 +5231,138 @@ model ApiWebhookTentativa {
 
   @@index([entregaId, numero])
   @@map("api_webhook_tentativas")
+}
+
+enum RhEtapa {
+  novo
+  em_contato
+  entrevista
+  aprovado
+  integracao
+  ativo
+  desistente
+  reprovado
+}
+
+enum RhModeloTipo {
+  com_creci
+  sem_creci
+}
+
+enum RhCompromissoTipo {
+  entrevista
+  retorno
+  reuniao
+  documentos
+  assinatura
+  treinamento
+  avaliacao
+}
+
+model RhCandidato {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nome        String
+  telefone    String   @default("")
+  email       String   @default("")
+  creci       String?
+  experiencia String   @default("")
+  observacoes String   @default("")
+  entradaEm   DateTime @default(now())
+  etapa       RhEtapa  @default(novo)
+  responsavelId String?
+  responsavel   User?  @relation("RhCandidatoResponsavel", fields: [responsavelId], references: [id], onDelete: SetNull)
+  encerradoEm DateTime?
+  motivoEncerramento String @default("")
+  encerradoPorId String?
+  encerradoPor   User? @relation("RhCandidatoEncerradoPor", fields: [encerradoPorId], references: [id], onDelete: SetNull)
+  userId      String?  @unique
+  user        User?    @relation("RhCandidatoUsuario", fields: [userId], references: [id], onDelete: SetNull)
+  contratadoEm DateTime?
+  historico   RhCandidatoHistorico[]
+  treinamentos RhTreinamento[]
+  documentos  RhDocumento[]
+  agendamentos Agendamento[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, etapa])
+  @@index([tenantId, entradaEm])
+  @@map("rh_candidatos")
+}
+
+model RhCandidatoHistorico {
+  id          String  @id @default(uuid())
+  tenantId    String
+  candidatoId String
+  candidato   RhCandidato @relation(fields: [candidatoId], references: [id], onDelete: Cascade)
+  deEtapa     RhEtapa?
+  paraEtapa   RhEtapa
+  motivo      String  @default("")
+  autorId     String?
+  autor       User?   @relation(fields: [autorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([candidatoId, createdAt])
+  @@map("rh_candidato_historicos")
+}
+
+model RhTreinamento {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  titulo      String
+  data        DateTime
+  observacoes String   @default("")
+  candidatoId String?
+  candidato   RhCandidato? @relation(fields: [candidatoId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?    @relation("RhTreinamentoUsuario", fields: [userId], references: [id], onDelete: Cascade)
+  autorId     String?
+  autor       User?    @relation("RhTreinamentoAutor", fields: [autorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, data])
+  @@index([userId])
+  @@index([candidatoId])
+  @@map("rh_treinamentos")
+}
+
+model RhModeloContrato {
+  id           String       @id @default(uuid())
+  tenantId     String
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tipo         RhModeloTipo
+  nome         String
+  mime         String
+  nomeArquivo  String
+  conteudo     Bytes
+  autorId      String?
+  autor        User?        @relation(fields: [autorId], references: [id], onDelete: SetNull)
+  createdAt    DateTime     @default(now())
+
+  @@index([tenantId, tipo])
+  @@map("rh_modelos_contrato")
+}
+
+model RhDocumento {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nome         String
+  mime         String
+  nomeArquivo  String
+  conteudo     Bytes
+  candidatoId  String?
+  candidato    RhCandidato? @relation(fields: [candidatoId], references: [id], onDelete: Cascade)
+  userId       String?
+  user         User?    @relation("RhDocumentoUsuario", fields: [userId], references: [id], onDelete: Cascade)
+  autorId      String?
+  autor        User?    @relation("RhDocumentoAutor", fields: [autorId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId, userId])
+  @@index([tenantId, candidatoId])
+  @@map("rh_documentos")
 }

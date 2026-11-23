@@ -48,6 +48,7 @@ export class ImportUserItemDto {
       Role.analista,
       Role.treinee,
       Role.financeiro,
+      Role.rh,
       Role.assistente,
     ],
     { message: 'Acesso inválido. Use corretor, gerente, administrador, analista, trainee ou financeiro.' },

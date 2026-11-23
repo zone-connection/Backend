@@ -314,7 +314,9 @@ export class UsersService {
     if (requester.role === Role.admin) return;
 
     if (
-      (requester.role === Role.gerente || requester.role === Role.analista) &&
+      (requester.role === Role.gerente ||
+        requester.role === Role.analista ||
+        requester.role === Role.rh) &&
       role === Role.corretor
     ) {
       return;

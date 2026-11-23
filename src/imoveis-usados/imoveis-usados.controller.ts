@@ -99,6 +99,15 @@ export class ImoveisUsadosController {
     return this.fluxo.listTodasPropostas(user);
   }
 
+  @Post('propostas')
+  @Roles(...IMOVEIS_USADOS_ROLES)
+  createPropostaSemImovel(
+    @Body() dto: CreatePropostaUsadoDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.fluxo.createProposta(null, dto, user);
+  }
+
   @Get('pos-vendas')
   @Roles(...IMOVEIS_USADOS_ROLES)
   listPosVendas(@CurrentUser() user: AuthenticatedUser) {

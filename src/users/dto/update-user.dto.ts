@@ -100,6 +100,7 @@ export class UpdateUserDto {
       Role.analista,
       Role.treinee,
       Role.financeiro,
+      Role.rh,
       Role.assistente,
     ],
     {

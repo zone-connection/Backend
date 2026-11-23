@@ -105,6 +105,7 @@ export class CreateUserDto {
       Role.analista,
       Role.treinee,
       Role.financeiro,
+      Role.rh,
       Role.assistente,
     ],
     {

@@ -41,6 +41,7 @@ import { GrupoZapModule } from './grupozap/grupozap.module';
 import { PropostasModule } from './propostas/propostas.module';
 import { FinanceiroModule } from './financeiro/financeiro.module';
 import { FuncionariosModule } from './funcionarios/funcionarios.module';
+import { RhModule } from './rh/rh.module';
 import { PresencaModule } from './presenca/presenca.module';
 import { MuralChavesModule } from './mural-chaves/mural-chaves.module';
 import { CadastroVendasModule } from './cadastro-vendas/cadastro-vendas.module';
@@ -89,6 +90,7 @@ import { EvolutionModule } from './evolution/evolution.module';
     PropostasModule,
     FinanceiroModule,
     FuncionariosModule,
+    RhModule,
     PresencaModule,
     MuralChavesModule,
     CadastroVendasModule,

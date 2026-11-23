@@ -79,9 +79,16 @@ import {
   type OzapChatMessage,
 } from '../ozap/ozap-api.client';
 
-/** Dígitos nacionais (DDD + número), ignora DDI 55. */
+/** Chave de duplicidade. +55 vira número nacional; outro país guarda o E.164 inteiro. */
 function nationalPhoneKey(value: string): string {
-  let digits = value.replace(/\D/g, '');
+  const trimmed = value.trim();
+  let digits = trimmed.replace(/\D/g, '');
+  const brasil =
+    digits.startsWith('55') && (digits.length === 12 || digits.length === 13);
+  if (trimmed.startsWith('+')) {
+    if (brasil) return digits.slice(2, 13);
+    return digits.slice(0, 15);
+  }
   if (digits.startsWith('55') && digits.length >= 12) {
     digits = digits.slice(2);
   }
@@ -206,6 +213,7 @@ export class LeadsService {
     await this.ensureStageIsValid(tenantId, stage, placement.funilId);
 
     const telefone = dto.telefone.trim();
+    await this.assertTelefoneDisponivel(tenantId, telefone);
     const phoneDigits = telefone.replace(/\D/g, "");
     const emailRaw = dto.email?.trim().toLowerCase() || "";
     const email =
@@ -1706,6 +1714,10 @@ export class LeadsService {
           currentStage?.funilId,
         )
       : null;
+
+    if (dto.telefone !== undefined) {
+      await this.assertTelefoneDisponivel(tenantId, dto.telefone, id);
+    }
 
     const antesPublico = await this.prisma.lead.findFirst({
       where: { id, tenantId },
@@ -3402,19 +3414,43 @@ export class LeadsService {
     return { tipo: kindLabel, phones, emails };
   }
 
+  private async assertTelefoneDisponivel(
+    tenantId: string,
+    telefone: string,
+    ignoreId?: string,
+  ) {
+    const key = nationalPhoneKey(telefone);
+    if (!key) return;
+    const rows = await this.prisma.lead.findMany({
+      where: {
+        tenantId,
+        perdidoAt: null,
+        ...(ignoreId ? { id: { not: ignoreId } } : {}),
+      },
+      select: { nome: true, telefone: true, tipo: true },
+    });
+    const duplicado = rows.find((row) => nationalPhoneKey(row.telefone) === key);
+    if (!duplicado) return;
+    const kind = duplicado.tipo === ContatoTipo.cliente ? 'cliente' : 'lead';
+    throw new ConflictException(
+      `Já existe um ${kind} com este telefone (${duplicado.nome}).`,
+    );
+  }
+
   private async loadImportExistingIndex(
     tenantId: string,
     tipo: ContatoTipo,
   ) {
     const rows = await this.prisma.lead.findMany({
-      where: { tenantId, tipo, perdidoAt: null },
-      select: { nome: true, telefone: true, email: true },
+      where: { tenantId, perdidoAt: null },
+      select: { nome: true, telefone: true, email: true, tipo: true },
     });
     const phone = new Map<string, string>();
     const email = new Map<string, string>();
     for (const row of rows) {
       const phoneKey = nationalPhoneKey(row.telefone);
       if (phoneKey && !phone.has(phoneKey)) phone.set(phoneKey, row.nome);
+      if (row.tipo !== tipo) continue;
       const emailKey = row.email.trim().toLowerCase();
       if (!isSyntheticEmail(emailKey) && !email.has(emailKey)) {
         email.set(emailKey, row.nome);

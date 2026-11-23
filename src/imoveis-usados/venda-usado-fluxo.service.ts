@@ -128,13 +128,15 @@ export class VendaUsadoFluxoService {
       });
       return rows.map((row) => ({
         ...this.exposeProposta(row),
-        vendaUsado: {
-          ...row.vendaUsado,
-          imovel: {
-            ...row.vendaUsado.imovel,
-            titulo: imovelTitulo(row.vendaUsado.imovel),
-          },
-        },
+        vendaUsado: row.vendaUsado
+          ? {
+              ...row.vendaUsado,
+              imovel: {
+                ...row.vendaUsado.imovel,
+                titulo: imovelTitulo(row.vendaUsado.imovel),
+              },
+            }
+          : null,
       }));
     } catch {
       return [];
@@ -310,19 +312,21 @@ export class VendaUsadoFluxoService {
   }
 
   async createProposta(
-    vendaId: string,
+    vendaId: string | null,
     dto: CreatePropostaUsadoDto,
     user: AuthenticatedUser,
   ) {
     const tenantId = requireTenantId(user);
-    const venda = await this.requireVenda(vendaId, tenantId);
-    this.assertComercializavel(venda.status);
+    const venda = vendaId ? await this.requireVenda(vendaId, tenantId) : null;
+    if (venda) this.assertComercializavel(venda.status);
     if (!(dto.valor > 0)) {
       throw new BadRequestException('O valor da proposta deve ser maior que zero.');
     }
     const interessado = await this.requireInteressado(dto.interessadoId, tenantId);
     await this.requireResponsavel(dto.responsavelId, tenantId);
-    await this.ensureVinculo(tenantId, vendaId, interessado.id, user);
+    if (vendaId) {
+      await this.ensureVinculo(tenantId, vendaId, interessado.id, user);
+    }
 
     const created = await this.prisma.$transaction(async (tx) => {
       const proposta = await tx.vendaUsadoProposta.create({
@@ -356,17 +360,27 @@ export class VendaUsadoFluxoService {
           responsavelId: dto.responsavelId,
         },
       });
-      await tx.vendaUsadoHistorico.create({
-        data: {
-          tenantId,
-          vendaUsadoId: vendaId,
-          tipo: VendaUsadoHistoricoTipo.proposta,
-          texto: `${user.name} criou proposta de ${interessado.nome} no valor de ${formatBrlHistorico(dto.valor)}.`,
-          autorId: user.id,
-        },
-      });
+      if (vendaId) {
+        await tx.vendaUsadoHistorico.create({
+          data: {
+            tenantId,
+            vendaUsadoId: vendaId,
+            tipo: VendaUsadoHistoricoTipo.proposta,
+            texto: `${user.name} criou proposta de ${interessado.nome} no valor de ${formatBrlHistorico(dto.valor)}.`,
+            autorId: user.id,
+          },
+        });
+      }
       return proposta.id;
     });
+    if (!vendaId) {
+      const item = await this.prisma.vendaUsadoProposta.findFirst({
+        where: { id: created, tenantId },
+        include: propostaInclude,
+      });
+      if (!item) throw new NotFoundException('Proposta não encontrada.');
+      return { ...this.exposeProposta(item), vendaUsado: null };
+    }
     return this.getProposta(vendaId, created, user);
   }
 

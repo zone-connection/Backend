@@ -31,8 +31,9 @@ export class CreateLeadDto {
   nome!: string;
 
   @IsString()
-  @Matches(/^\(\d{2}\) \d{4,5}-\d{4}$/, {
-    message: 'Telefone inválido. Use o formato (81) 99999-9999.',
+  @Matches(/^(\(\d{2}\) \d{4,5}-\d{4}|\+[1-9]\d{7,14})$/, {
+    message:
+      'Telefone inválido. Use (81) 99999-9999 ou um número internacional, ex.: +351912345678.',
   })
   @MaxLength(20)
   telefone!: string;
