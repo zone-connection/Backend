@@ -200,6 +200,10 @@ model Tenant {
   emailOperacional Boolean @default(true)
   /// Corretores, gerentes e demais subordinados veem datas de previsão.
   exibirPrevisaoSubordinados Boolean @default(true)
+  /// Sequência de ações esperadas no acompanhamento do lead.
+  cadenciaAtiva Boolean @default(false)
+  /// Checklist de qualidade do atendimento.
+  checklistAtivo Boolean @default(false)
   /// Quantidade de leads atrasados que dispara um e-mail. 0 = desligado.
   leadsAtrasadosLimite Int @default(0)
   /// Último dia em que o resumo de leads atrasados foi enviado.
@@ -279,6 +283,8 @@ model Tenant {
   funcionarios                   Funcionario[]
   contracheques                  Contracheque[]
   leadReatribuicoes              LeadReatribuicao[]
+  cadenciaEtapas                 CadenciaEtapa[]
+  checklistModelos               ChecklistModelo[]
   cadastroVendas                 CadastroVenda[]
   presencaTipos                  PresencaTipo[]
   presencaLancamentos            PresencaLancamento[]
@@ -483,6 +489,8 @@ model User {
   leadsPerdidosPor Lead[] @relation("LeadPerdidoPor")
 
   atribuicoesFeitas LeadReatribuicao[] @relation("LeadAtribuicaoActor")
+  cadenciaExecucoes CadenciaExecucao[] @relation("CadenciaExecucaoAutor")
+  checklistMarcacoes ChecklistMarcacao[] @relation("ChecklistMarcacaoAutor")
 
   // Relatos de triagem criados por este corretor.
   triagemEvents TriagemEvent[] @relation("TriagemAutor")
@@ -801,6 +809,8 @@ model Lead {
 
   triagemEvents TriagemEvent[]
   reatribuicoes LeadReatribuicao[]
+  cadenciaExecucoes CadenciaExecucao[]
+  checklistMarcacoes ChecklistMarcacao[]
   inscricoesCampanha LeadInscricaoCampanha[]
   prazoAdiamentos LeadPrazoAdiamento[]
   documentacoes Documentacao[]
@@ -1184,6 +1194,88 @@ model TriagemEvent {
 }
 
 /// Troca de corretor/equipe: o anterior perdeu o lead na reatribuição.
+model CadenciaEtapa {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ordem     Int
+  dia       Int
+  acao      String
+  descricao String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  execucoes CadenciaExecucao[]
+
+  @@index([tenantId, ordem])
+  @@map("cadencia_etapas")
+}
+
+model CadenciaExecucao {
+  id          String        @id @default(uuid())
+  tenantId    String
+  leadId      String
+  lead        Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  etapaId     String?
+  etapa       CadenciaEtapa? @relation(fields: [etapaId], references: [id], onDelete: SetNull)
+  dia         Int
+  acao        String
+  descricao   String        @default("")
+  concluidaEm DateTime      @default(now())
+  autorId     String
+  autor       User          @relation("CadenciaExecucaoAutor", fields: [autorId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, leadId])
+  @@index([etapaId])
+  @@map("cadencia_execucoes")
+}
+
+model ChecklistModelo {
+  id       String  @id @default(uuid())
+  tenantId String
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nome     String
+  funilId  String?
+  funil    Funil?  @relation(fields: [funilId], references: [id], onDelete: SetNull)
+  ordem    Int     @default(0)
+  itens    ChecklistItem[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, ordem])
+  @@map("checklist_modelos")
+}
+
+model ChecklistItem {
+  id          String   @id @default(uuid())
+  modeloId    String
+  modelo      ChecklistModelo @relation(fields: [modeloId], references: [id], onDelete: Cascade)
+  ordem       Int
+  texto       String
+  obrigatorio Boolean @default(false)
+  marcacoes   ChecklistMarcacao[]
+
+  @@index([modeloId, ordem])
+  @@map("checklist_itens")
+}
+
+model ChecklistMarcacao {
+  id          String   @id @default(uuid())
+  tenantId    String
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  itemId      String?
+  item        ChecklistItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  texto       String
+  obrigatorio Boolean
+  concluidaEm DateTime @default(now())
+  autorId     String
+  autor       User     @relation("ChecklistMarcacaoAutor", fields: [autorId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, leadId])
+  @@index([itemId])
+  @@map("checklist_marcacoes")
+}
+
 model LeadReatribuicao {
   id             String        @id @default(uuid())
   tenantId       String
@@ -2254,6 +2346,7 @@ model Funil {
 
   etapas FunilEtapa[]
   leads Lead[]
+  checklistModelos ChecklistModelo[]
   captacoes Captacao[]
   vendasUsado VendaUsado[]
   posVendas VendaUsadoPosVenda[]

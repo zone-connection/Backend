@@ -7,6 +7,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { LeadsModule } from './leads/leads.module';
+import { AtendimentoModule } from './atendimento/atendimento.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { FunisModule } from './funis/funis.module';
 import { TriagemModule } from './triagem/triagem.module';
@@ -67,6 +68,7 @@ import { EvolutionModule } from './evolution/evolution.module';
     AuthModule,
     UsersModule,
     LeadsModule,
+    AtendimentoModule,
     CatalogModule,
     FunisModule,
     TriagemModule,
