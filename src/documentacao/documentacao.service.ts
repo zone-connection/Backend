@@ -503,6 +503,7 @@ export class DocumentacaoService {
             nome: linha.empreendimento.trim(),
             construtoraId: construtora.id,
             finalidade: 'lancamento',
+            externalKey: `importacao-${norm(linha.empreendimento).replace(/[^a-z0-9]+/g, '-').slice(0, 40)}-${Date.now()}-${index}`,
           },
           select: { id: true, nome: true, construtoraId: true },
         });
