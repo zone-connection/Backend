@@ -34,6 +34,7 @@ import { CreateDocumentacaoDto } from './dto/create-documentacao.dto';
 import { UpdateDocumentacaoDto } from './dto/update-documentacao.dto';
 import { QueryDocumentacaoDto } from './dto/query-documentacao.dto';
 import { RegistrarVendaFunilDto } from './dto/registrar-venda-funil.dto';
+import { ImportVendasDto } from './dto/import-vendas.dto';
 
 const userMini = {
   select: { id: true, name: true, cor: true, role: true },
@@ -417,6 +418,132 @@ export class DocumentacaoService {
       await this.syncLeadDocumentacaoTags(created.leadId, tenantId);
     }
     return created;
+  }
+
+  async importarVendas(dto: ImportVendasDto, requester: AuthenticatedUser) {
+    if (requester.role !== Role.admin && requester.role !== Role.gerente) {
+      throw new ForbiddenException('Só administrador ou gerente importa vendas.');
+    }
+    const tenantId = requireTenantId(requester);
+    const norm = (value: string) =>
+      value
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '');
+
+    const [users, equipes, construtoras, empreendimentos] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { tenantId, status: UserStatus.ativo },
+        select: { id: true, name: true, role: true, equipeId: true },
+      }),
+      this.prisma.equipe.findMany({
+        where: { tenantId, status: UserStatus.ativo },
+        select: { id: true, name: true, gerenteId: true },
+      }),
+      this.prisma.construtora.findMany({
+        where: { tenantId },
+        select: { id: true, nome: true },
+      }),
+      this.prisma.empreendimento.findMany({
+        where: { tenantId },
+        select: { id: true, nome: true, construtoraId: true },
+      }),
+    ]);
+
+    const erros: { linha: number; mensagem: string }[] = [];
+    let criadas = 0;
+
+    for (const [index, linha] of dto.linhas.entries()) {
+      const n = index + 2;
+      const corretores = users.filter(
+        (user) =>
+          user.role === Role.corretor && norm(user.name) === norm(linha.corretor),
+      );
+      if (corretores.length !== 1) {
+        erros.push({
+          linha: n,
+          mensagem:
+            corretores.length === 0
+              ? `Corretor não encontrado: ${linha.corretor}`
+              : `Mais de um corretor com o nome ${linha.corretor}`,
+        });
+        continue;
+      }
+      const equipe = equipes.find((item) => norm(item.name) === norm(linha.equipe));
+      if (!equipe) {
+        erros.push({ linha: n, mensagem: `Equipe não encontrada: ${linha.equipe}` });
+        continue;
+      }
+      const data = new Date(`${linha.dataVenda.slice(0, 10)}T12:00:00.000Z`);
+      if (Number.isNaN(data.getTime())) {
+        erros.push({ linha: n, mensagem: 'Data de venda inválida.' });
+        continue;
+      }
+
+      let construtora = construtoras.find(
+        (item) => norm(item.nome) === norm(linha.construtora),
+      );
+      if (!construtora) {
+        construtora = await this.prisma.construtora.create({
+          data: { tenantId, nome: linha.construtora.trim() },
+          select: { id: true, nome: true },
+        });
+        construtoras.push(construtora);
+      }
+      let empreendimento = empreendimentos.find(
+        (item) =>
+          norm(item.nome) === norm(linha.empreendimento) &&
+          item.construtoraId === construtora.id,
+      );
+      if (!empreendimento) {
+        empreendimento = await this.prisma.empreendimento.create({
+          data: {
+            tenantId,
+            nome: linha.empreendimento.trim(),
+            construtoraId: construtora.id,
+            finalidade: 'lancamento',
+          },
+          select: { id: true, nome: true, construtoraId: true },
+        });
+        empreendimentos.push(empreendimento);
+      }
+
+      const corretor = corretores[0];
+      if (corretor.equipeId !== equipe.id) {
+        await this.prisma.user.update({
+          where: { id: corretor.id },
+          data: { equipeId: equipe.id },
+        });
+        corretor.equipeId = equipe.id;
+      }
+
+      await this.garantirVendaSemProposta();
+      await this.prisma.documentacao.create({
+        data: {
+          tenantId,
+          autorId: requester.id,
+          tipoContato: ContatoTipo.cliente,
+          stageSituacao: '',
+          nome: linha.empreendimento.trim(),
+          construtoraId: construtora.id,
+          empreendimentoId: empreendimento.id,
+          fonte: 'Outro',
+          origem: 'lancamento',
+          status1: 'Aprovado',
+          status2: 'Vendido',
+          corretorId: corretor.id,
+          gerenteId: equipe.gerenteId,
+          dataVenda: data,
+          vgv: linha.vgv,
+          vendaSemProposta: true,
+          obs: 'Importada pela planilha de vendas.',
+        },
+      });
+      criadas += 1;
+    }
+
+    return { criadas, erros };
   }
 
   async update(

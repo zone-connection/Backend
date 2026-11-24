@@ -21,6 +21,7 @@ import { RegistrarVendaFunilDto } from './dto/registrar-venda-funil.dto';
 import { UpdateDocumentacaoDto } from './dto/update-documentacao.dto';
 import { QueryDocumentacaoDto } from './dto/query-documentacao.dto';
 import { DocumentacaoService } from './documentacao.service';
+import { ImportVendasDto } from './dto/import-vendas.dto';
 
 @Controller('documentacao')
 @UseGuards(RolesGuard)
@@ -85,6 +86,15 @@ export class DocumentacaoController {
     @CurrentUser() requester: AuthenticatedUser,
   ) {
     return this.documentacaoService.abrirFichaGuiada(dto, requester);
+  }
+
+  @Post('importar-vendas')
+  @Roles(Role.admin, Role.gerente)
+  importarVendas(
+    @Body() dto: ImportVendasDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.documentacaoService.importarVendas(dto, requester);
   }
 
   @Post()
