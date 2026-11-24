@@ -103,6 +103,15 @@ export class UsersController {
     return this.usersService.update(id, dto, requester);
   }
 
+  @Post(':id/demonstracao')
+  @Roles(Role.admin)
+  popularDemonstracao(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.usersService.popularDemonstracao(id, requester);
+  }
+
   @Patch(':id/status')
   @Roles(Role.admin, Role.super_admin)
   updateStatus(

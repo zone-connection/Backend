@@ -323,10 +323,7 @@ export class DashboardService {
           tenantId,
           inicio: { lte: now },
           fim: { gt: now },
-          OR: [
-            { corretorId: requester.id },
-            { escopo: MetaEscopo.imobiliaria },
-          ],
+          corretorId: requester.id,
         },
         include: {
           corretor: {

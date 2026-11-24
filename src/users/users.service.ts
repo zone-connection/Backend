@@ -7,7 +7,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  ContatoTipo,
   CreciProcessoStatus,
+  FunilTipo,
+  MetaEscopo,
+  MetaOrigem,
+  MetaPeriodo,
+  MetaTipo,
   Prisma,
   Role,
   TenantPlano,
@@ -1139,6 +1145,110 @@ export class UsersService {
     if (existing && existing.id !== ignoreId) {
       throw new ConflictException('Já existe um usuário com este e-mail.');
     }
+  }
+
+  async popularDemonstracao(id: string, requester: AuthenticatedUser) {
+    if (requester.role !== Role.admin && requester.role !== Role.super_admin) {
+      throw new ForbiddenException('Só o administrador popula a carteira de demonstração.');
+    }
+    const tenantId = requireTenantId(requester);
+    const corretor = await this.prisma.user.findFirst({
+      where: { id, tenantId, role: Role.corretor, status: UserStatus.ativo },
+      select: { id: true, name: true, equipe: { select: { gerenteId: true } } },
+    });
+    if (!corretor) {
+      throw new NotFoundException('Corretor ativo não encontrado.');
+    }
+    const jaTem = await this.prisma.lead.count({
+      where: { tenantId, corretorId: corretor.id, tags: { has: 'Demonstração' } },
+    });
+    if (jaTem > 0) {
+      throw new ConflictException('Este corretor já tem dados de demonstração.');
+    }
+
+    const funil = await this.prisma.funil.findFirst({
+      where: { tenantId, tipo: FunilTipo.comercial, ativo: true },
+      include: {
+        etapas: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
+      },
+    });
+    const etapas = funil?.etapas ?? [];
+    const amostras = [
+      ['Ana Beatriz Costa', '(81) 98823-1001', 'lead'],
+      ['Carlos Mendes', '(81) 98823-1002', 'lead'],
+      ['Lúcia Ferreira', '(81) 98823-1003', 'lead'],
+      ['Pedro Almeida', '(81) 98823-1004', 'cliente'],
+      ['Sofia Ramos Demo', '(81) 98823-1005', 'cliente'],
+    ] as const;
+    for (const [index, [nome, telefone, tipo]] of amostras.entries()) {
+      const etapa = etapas[Math.min(index, Math.max(etapas.length - 1, 0))];
+      if (!funil || !etapa) continue;
+      await this.prisma.lead.create({
+        data: {
+          tenantId,
+          tipo: tipo === 'cliente' ? ContatoTipo.cliente : ContatoTipo.lead,
+          nome,
+          telefone,
+          email: `demo.${index}.${corretor.id.slice(0, 8)}@exemplo.local`,
+          origem: 'Demonstração',
+          interesse: 'Comprar',
+          cidade: 'Recife',
+          bairro: 'Boa Viagem',
+          stage: etapa.slug,
+          funilId: funil.id,
+          prioridade: 'Média',
+          tags: ['Demonstração'],
+          corretorId: corretor.id,
+        },
+      });
+    }
+
+    const vendas = [
+      ['Residencial Demonstração', 250000],
+      ['Edifício Demonstração', 180000],
+    ] as const;
+    for (const [nome, vgv] of vendas) {
+      await this.prisma.documentacao.create({
+        data: {
+          tenantId,
+          autorId: requester.id,
+          tipoContato: ContatoTipo.cliente,
+          stageSituacao: '',
+          nome,
+          fonte: 'Outro',
+          origem: 'lancamento',
+          status1: 'Aprovado',
+          status2: 'Vendido',
+          corretorId: corretor.id,
+          gerenteId: corretor.equipe?.gerenteId ?? null,
+          dataVenda: new Date(),
+          vgv,
+          vendaSemProposta: true,
+          obs: 'Demonstração do corretor selecionado.',
+        },
+      });
+    }
+
+    const agora = new Date();
+    const inicio = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), 1));
+    const fim = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() + 1, 1));
+    await this.prisma.meta.create({
+      data: {
+        tenantId,
+        escopo: MetaEscopo.corretor,
+        corretorId: corretor.id,
+        criadorId: requester.id,
+        origem: MetaOrigem.admin,
+        tipo: MetaTipo.vgv,
+        periodo: MetaPeriodo.mensal,
+        titulo: 'VGV do corretor',
+        valor: 500000,
+        inicio,
+        fim,
+      },
+    });
+
+    return { ok: true, corretor: corretor.name, leads: amostras.length, vendas: vendas.length };
   }
 
   /** Senha temporária aleatória que atende à política (maiúscula, minúscula e número). */
