@@ -470,9 +470,12 @@ export class DocumentacaoService {
         });
         continue;
       }
-      const equipe = equipes.find((item) => norm(item.name) === norm(linha.equipe));
-      if (!equipe) {
-        erros.push({ linha: n, mensagem: `Equipe não encontrada: ${linha.equipe}` });
+      const nomeEquipe = linha.equipe?.trim() ?? '';
+      const equipe = nomeEquipe
+        ? equipes.find((item) => norm(item.name) === norm(nomeEquipe))
+        : undefined;
+      if (nomeEquipe && !equipe) {
+        erros.push({ linha: n, mensagem: `Equipe não encontrada: ${nomeEquipe}` });
         continue;
       }
       const data = new Date(`${linha.dataVenda.slice(0, 10)}T12:00:00.000Z`);
@@ -511,13 +514,17 @@ export class DocumentacaoService {
       }
 
       const corretor = corretores[0];
-      if (corretor.equipeId !== equipe.id) {
+      if (equipe && corretor.equipeId !== equipe.id) {
         await this.prisma.user.update({
           where: { id: corretor.id },
           data: { equipeId: equipe.id },
         });
         corretor.equipeId = equipe.id;
       }
+      const gerenteId =
+        equipe?.gerenteId ??
+        equipes.find((item) => item.id === corretor.equipeId)?.gerenteId ??
+        null;
 
       await this.garantirVendaSemProposta();
       await this.prisma.documentacao.create({
@@ -534,7 +541,7 @@ export class DocumentacaoService {
           status1: 'Aprovado',
           status2: 'Vendido',
           corretorId: corretor.id,
-          gerenteId: equipe.gerenteId,
+          gerenteId,
           dataVenda: data,
           vgv: linha.vgv,
           vendaSemProposta: true,

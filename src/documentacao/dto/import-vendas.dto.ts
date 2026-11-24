@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
+  IsOptional,
   IsString,
   Min,
   ValidateNested,
@@ -13,8 +14,9 @@ export class ImportVendaLinhaDto {
   @IsString()
   corretor!: string;
 
+  @IsOptional()
   @IsString()
-  equipe!: string;
+  equipe?: string;
 
   @IsString()
   dataVenda!: string;
