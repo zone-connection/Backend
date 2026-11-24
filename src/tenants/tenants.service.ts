@@ -1463,6 +1463,7 @@ export class TenantsService {
       imoveisUsados: dto.imoveisUsados,
       locacao: dto.locacao,
       parcerias: dto.parcerias,
+      rh: dto.rh,
     });
     if (typeof dto.hideClientesNav === 'boolean') {
       merged.hideClientesNav = dto.hideClientesNav;

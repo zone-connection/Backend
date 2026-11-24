@@ -18,6 +18,7 @@ describe('operações do tenant', () => {
     assert.equal(isTenantOperationEnabled({}, 'imoveisUsados'), false);
     assert.equal(isTenantOperationEnabled({}, 'locacao'), false);
     assert.equal(isTenantOperationEnabled({}, 'parcerias'), false);
+    assert.equal(isTenantOperationEnabled({}, 'rh'), true);
   });
 
   it('respeita true/false gravados no JSON', () => {

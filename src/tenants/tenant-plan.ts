@@ -68,6 +68,7 @@ const OPERACOES = [
   'imoveisUsados',
   'locacao',
   'parcerias',
+  'rh',
 ] as const;
 
 const ALL = [
@@ -166,6 +167,7 @@ const OPERACAO_DEFAULT: Record<(typeof OPERACOES)[number], boolean> = {
   imoveisUsados: false,
   locacao: false,
   parcerias: false,
+  rh: true,
 };
 
 function applyOperationDefaults(next: Record<string, boolean>) {
@@ -288,6 +290,8 @@ export function normalizeModulesForPlano(
     for (const k of OPERACOES) {
       if (k === 'comercial') {
         next[k] = true;
+      } else if (k === 'rh') {
+        next[k] = modules[k] !== false;
       } else {
         next[k] = modules[k] === true;
       }

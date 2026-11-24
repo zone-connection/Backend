@@ -18,6 +18,11 @@ export class UpdateTenantOperationModulesDto {
   @IsBoolean()
   parcerias?: boolean;
 
+  /** Módulo de RH. Nasce ligado. */
+  @IsOptional()
+  @IsBoolean()
+  rh?: boolean;
+
   /** Oculta Clientes e Funil de Clientes do menu (telas continuam acessíveis). */
   @IsOptional()
   @IsBoolean()
