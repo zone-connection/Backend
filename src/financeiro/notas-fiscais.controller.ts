@@ -31,8 +31,6 @@ const roles = [
   Role.gerente,
   Role.financeiro,
   Role.super_admin,
-  Role.corretor,
-  Role.treinee,
 ] as const;
 
 @Controller('financeiro/notas-fiscais')
