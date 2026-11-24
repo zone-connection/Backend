@@ -1159,12 +1159,32 @@ export class UsersService {
     if (!corretor) {
       throw new NotFoundException('Corretor ativo não encontrado.');
     }
-    const jaTem = await this.prisma.lead.count({
+    const anteriores = await this.prisma.lead.findMany({
       where: { tenantId, corretorId: corretor.id, tags: { has: 'Demonstração' } },
+      select: { id: true },
     });
-    if (jaTem > 0) {
-      throw new ConflictException('Este corretor já tem dados de demonstração.');
+    if (anteriores.length > 0) {
+      await this.prisma.agendamento.deleteMany({
+        where: { tenantId, leadId: { in: anteriores.map((item) => item.id) } },
+      });
+      await this.prisma.lead.deleteMany({
+        where: { id: { in: anteriores.map((item) => item.id) } },
+      });
     }
+    await this.prisma.documentacao.deleteMany({
+      where: {
+        tenantId,
+        corretorId: corretor.id,
+        obs: 'Demonstração do corretor selecionado.',
+      },
+    });
+    await this.prisma.meta.deleteMany({
+      where: {
+        tenantId,
+        corretorId: corretor.id,
+        titulo: { in: ['VGV do corretor', 'Vendas do corretor', 'Leads do corretor'] },
+      },
+    });
 
     const funil = await this.prisma.funil.findFirst({
       where: { tenantId, tipo: FunilTipo.comercial, ativo: true },
@@ -1173,82 +1193,162 @@ export class UsersService {
       },
     });
     const etapas = funil?.etapas ?? [];
-    const amostras = [
-      ['Ana Beatriz Costa', '(81) 98823-1001', 'lead'],
-      ['Carlos Mendes', '(81) 98823-1002', 'lead'],
-      ['Lúcia Ferreira', '(81) 98823-1003', 'lead'],
-      ['Pedro Almeida', '(81) 98823-1004', 'cliente'],
-      ['Sofia Ramos Demo', '(81) 98823-1005', 'cliente'],
-    ] as const;
-    for (const [index, [nome, telefone, tipo]] of amostras.entries()) {
-      const etapa = etapas[Math.min(index, Math.max(etapas.length - 1, 0))];
-      if (!funil || !etapa) continue;
-      await this.prisma.lead.create({
-        data: {
-          tenantId,
-          tipo: tipo === 'cliente' ? ContatoTipo.cliente : ContatoTipo.lead,
-          nome,
-          telefone,
-          email: `demo.${index}.${corretor.id.slice(0, 8)}@exemplo.local`,
-          origem: 'Demonstração',
-          interesse: 'Comprar',
-          cidade: 'Recife',
-          bairro: 'Boa Viagem',
-          stage: etapa.slug,
-          funilId: funil.id,
-          prioridade: 'Média',
-          tags: ['Demonstração'],
-          corretorId: corretor.id,
-        },
+    const nomes = [
+      'Ana Beatriz Costa', 'Carlos Mendes', 'Lúcia Ferreira', 'Pedro Almeida',
+      'Sofia Nunes', 'Rafael Lima', 'Camila Borges', 'Henrique Dias',
+      'Marina Prado', 'João Pacheco', 'Fernanda Alves', 'Paulo Nunes',
+      'Laura Vasconcelos', 'Eduardo Melo', 'Beatriz Rocha', 'Thiago Andrade',
+      'Juliana Freitas', 'Bruno Carvalho', 'Patricia Gomes', 'Diego Martins',
+      'Aline Souza', 'Felipe Barros', 'Renata Duarte', 'Gustavo Pinto',
+      'Helena Castro', 'Marcelo Tavares', 'Icaro Bezerra', 'Natalia Gomes',
+      'Vinicius Araújo', 'Larissa Moura', 'André Farias', 'Bianca Lopes',
+      'Caio Ribeiro', 'Daniela Cruz', 'Emanuel Silva', 'Flavia Teixeira',
+      'Gabriel Nogueira', 'Isabela Campos', 'Jonas Pereira', 'Karina Lopes',
+    ];
+    const bairros = ['Boa Viagem', 'Casa Forte', 'Pina', 'Espinheiro', 'Graças', 'Madalena', 'Derby', 'Aflitos'];
+    const origens = ['WhatsApp', 'Instagram', 'Indicação', 'Site', 'Facebook', 'Portal'];
+    const prioridades = ['Alta', 'Média', 'Baixa'];
+    const prefixo = corretor.id.slice(0, 8);
+    let leads = 0;
+    if (funil && etapas.length > 0) {
+      await this.prisma.lead.createMany({
+        data: nomes.map((nome, index) => {
+          const cliente = index >= 28;
+          const etapa = etapas[index % etapas.length];
+          return {
+            tenantId,
+            tipo: cliente ? ContatoTipo.cliente : ContatoTipo.lead,
+            nome,
+            telefone: `(81) 98823-${String(2000 + index).padStart(4, '0')}`,
+            email: `demo.${index}.${prefixo}@exemplo.local`,
+            origem: origens[index % origens.length],
+            interesse: 'Comprar',
+            cidade: 'Recife',
+            bairro: bairros[index % bairros.length],
+            stage: etapa.slug,
+            funilId: funil.id,
+            prioridade: prioridades[index % prioridades.length],
+            renda: 4500 + (index % 8) * 1500,
+            tags: ['Demonstração'],
+            corretorId: corretor.id,
+          };
+        }),
       });
+      leads = nomes.length;
     }
 
-    const vendas = [
-      ['Residencial Demonstração', 250000],
-      ['Edifício Demonstração', 180000],
-    ] as const;
-    for (const [nome, vgv] of vendas) {
-      await this.prisma.documentacao.create({
-        data: {
+    const empreendimentos = [
+      'Residencial Boa Viagem', 'Edifício Casa Forte', 'Sphera Recife',
+      'Reserva Pina', 'Alto Espinheiro', 'Vila das Graças', 'Jardim Derby',
+      'Parque Madalena', 'Torre Aflitos', 'Marina Olinda', 'Solar Piedade',
+      'Bosque Jaqueira', 'Vista Rio Capibaribe', 'Plaza Derby', 'Maré Boa Viagem',
+    ];
+    const agora = new Date();
+    await this.prisma.documentacao.createMany({
+      data: empreendimentos.map((nome, index) => {
+        const vendido = index < 10;
+        const mesesAtras = index % 4;
+        const dataVenda = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() - mesesAtras, 4 + (index % 20), 15));
+        return {
           tenantId,
           autorId: requester.id,
           tipoContato: ContatoTipo.cliente,
           stageSituacao: '',
           nome,
           fonte: 'Outro',
-          origem: 'lancamento',
-          status1: 'Aprovado',
-          status2: 'Vendido',
+          origem: index % 5 === 0 ? 'usado' : 'lancamento',
+          status1: vendido ? 'Aprovado' : 'Análise',
+          status2: vendido ? 'Vendido' : 'Andamento',
           corretorId: corretor.id,
           gerenteId: corretor.equipe?.gerenteId ?? null,
-          dataVenda: new Date(),
-          vgv,
+          dataVenda: vendido ? dataVenda : null,
+          vgv: 180000 + index * 47000,
           vendaSemProposta: true,
           obs: 'Demonstração do corretor selecionado.',
-        },
+        };
+      }),
+    });
+
+    const criados = funil
+      ? await this.prisma.lead.findMany({
+          where: { tenantId, corretorId: corretor.id, tags: { has: 'Demonstração' } },
+          select: { id: true, nome: true },
+          take: 12,
+        })
+      : [];
+    const tiposAgenda = ['visita', 'ligacao', 'reuniao', 'tarefa'] as const;
+    if (criados.length > 0) {
+      await this.prisma.agendamento.createMany({
+        data: criados.map((lead, index) => {
+          const inicioComp = new Date(agora.getTime() + (index - 4) * 36 * 60 * 60 * 1000);
+          inicioComp.setUTCHours(13 + (index % 5), 0, 0, 0);
+          return {
+            tenantId,
+            leadId: lead.id,
+            autorId: corretor.id,
+            titulo: `${tiposAgenda[index % tiposAgenda.length] === 'visita' ? 'Visita' : tiposAgenda[index % tiposAgenda.length] === 'ligacao' ? 'Ligação' : tiposAgenda[index % tiposAgenda.length] === 'reuniao' ? 'Reunião' : 'Tarefa'} · ${lead.nome}`,
+            tipo: tiposAgenda[index % tiposAgenda.length],
+            status: index < 3 ? 'concluido' as const : 'agendado' as const,
+            startsAt: inicioComp,
+            endsAt: new Date(inicioComp.getTime() + 60 * 60 * 1000),
+            observacoes: 'Demonstração do corretor selecionado.',
+          };
+        }),
       });
     }
 
-    const agora = new Date();
     const inicio = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), 1));
     const fim = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() + 1, 1));
-    await this.prisma.meta.create({
-      data: {
-        tenantId,
-        escopo: MetaEscopo.corretor,
-        corretorId: corretor.id,
-        criadorId: requester.id,
-        origem: MetaOrigem.admin,
-        tipo: MetaTipo.vgv,
-        periodo: MetaPeriodo.mensal,
-        titulo: 'VGV do corretor',
-        valor: 500000,
-        inicio,
-        fim,
-      },
+    await this.prisma.meta.createMany({
+      data: [
+        {
+          tenantId,
+          escopo: MetaEscopo.corretor,
+          corretorId: corretor.id,
+          criadorId: requester.id,
+          origem: MetaOrigem.admin,
+          tipo: MetaTipo.vgv,
+          periodo: MetaPeriodo.mensal,
+          titulo: 'VGV do corretor',
+          valor: 1500000,
+          inicio,
+          fim,
+        },
+        {
+          tenantId,
+          escopo: MetaEscopo.corretor,
+          corretorId: corretor.id,
+          criadorId: requester.id,
+          origem: MetaOrigem.admin,
+          tipo: MetaTipo.vendas,
+          periodo: MetaPeriodo.mensal,
+          titulo: 'Vendas do corretor',
+          valor: 6,
+          inicio,
+          fim,
+        },
+        {
+          tenantId,
+          escopo: MetaEscopo.corretor,
+          corretorId: corretor.id,
+          criadorId: requester.id,
+          origem: MetaOrigem.admin,
+          tipo: MetaTipo.leads,
+          periodo: MetaPeriodo.mensal,
+          titulo: 'Leads do corretor',
+          valor: 30,
+          inicio,
+          fim,
+        },
+      ],
     });
 
-    return { ok: true, corretor: corretor.name, leads: amostras.length, vendas: vendas.length };
+    return {
+      ok: true,
+      corretor: corretor.name,
+      leads,
+      vendas: empreendimentos.filter((_, index) => index < 10).length,
+    };
   }
 
   /** Senha temporária aleatória que atende à política (maiúscula, minúscula e número). */
