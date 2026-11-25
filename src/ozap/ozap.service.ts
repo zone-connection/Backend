@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, UserStatus } from '@prisma/client';
+import { CatalogType, Prisma, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OzapWebhookDto } from './dto/ozap-webhook.dto';
 import { LeadNotifyService } from '../lead-notify/lead-notify.service';
@@ -307,6 +307,26 @@ export class OzapService {
       lead = await tx.lead.update({
         where: { id: lead.id },
         data: { nome: contactName },
+      });
+    }
+
+    if (lead.origem?.trim().toLowerCase() === 'whatsapp') {
+      await tx.catalogItem.upsert({
+        where: {
+          tenantId_type_label: {
+            tenantId,
+            type: CatalogType.origem,
+            label: 'WhatsApp',
+          },
+        },
+        create: {
+          tenantId,
+          type: CatalogType.origem,
+          label: 'WhatsApp',
+          slug: 'whatsapp',
+          sortOrder: 0,
+        },
+        update: { active: true },
       });
     }
 
