@@ -14,6 +14,9 @@ export class ImportVendaLinhaDto {
   @IsString()
   corretor!: string;
 
+  @IsString()
+  lead!: string;
+
   @IsOptional()
   @IsString()
   equipe?: string;

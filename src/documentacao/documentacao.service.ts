@@ -7,10 +7,13 @@ import {
 import {
   CatalogType,
   ContatoTipo,
+  FunilEtapaPapel,
+  FunilTipo,
   Prisma,
   Role,
   UserStatus,
 } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../equipes/team-scope.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
@@ -432,7 +435,7 @@ export class DocumentacaoService {
         .normalize('NFD')
         .replace(/\p{M}/gu, '');
 
-    const [users, equipes, construtoras, empreendimentos] = await Promise.all([
+    const [users, equipes, construtoras, empreendimentos, funil] = await Promise.all([
       this.prisma.user.findMany({
         where: { tenantId, status: UserStatus.ativo },
         select: { id: true, name: true, role: true, equipeId: true },
@@ -449,26 +452,54 @@ export class DocumentacaoService {
         where: { tenantId },
         select: { id: true, nome: true, construtoraId: true },
       }),
+      this.prisma.funil.findFirst({
+        where: { tenantId, tipo: FunilTipo.comercial, ativo: true },
+        include: {
+          etapas: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
+        },
+      }),
     ]);
+    const etapaVenda =
+      funil?.etapas.find((etapa) => etapa.papel === FunilEtapaPapel.aprovado) ??
+      funil?.etapas.find((etapa) => etapa.papel === FunilEtapaPapel.venda) ??
+      funil?.etapas[funil.etapas.length - 1];
 
     const erros: { linha: number; mensagem: string }[] = [];
     let criadas = 0;
 
     for (const [index, linha] of dto.linhas.entries()) {
       const n = index + 2;
-      const corretores = users.filter(
+      const nomeLead = linha.lead?.trim() ?? '';
+      if (!nomeLead) {
+        erros.push({ linha: n, mensagem: 'Lead obrigatório.' });
+        continue;
+      }
+      let corretores = users.filter(
         (user) =>
           user.role === Role.corretor && norm(user.name) === norm(linha.corretor),
       );
-      if (corretores.length !== 1) {
+      if (corretores.length > 1) {
         erros.push({
           linha: n,
-          mensagem:
-            corretores.length === 0
-              ? `Corretor não encontrado: ${linha.corretor}`
-              : `Mais de um corretor com o nome ${linha.corretor}`,
+          mensagem: `Mais de um corretor com o nome ${linha.corretor}`,
         });
         continue;
+      }
+      if (corretores.length === 0) {
+        const slug = norm(linha.corretor).replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '') || 'corretor';
+        const criado = await this.prisma.user.create({
+          data: {
+            tenantId,
+            name: linha.corretor.trim(),
+            email: `${slug}.${Date.now()}.${index}@importacao.local`,
+            password: await bcrypt.hash(`Imp${Date.now()}a`, 8),
+            role: Role.corretor,
+            status: UserStatus.ativo,
+          },
+          select: { id: true, name: true, role: true, equipeId: true },
+        });
+        users.push(criado);
+        corretores = [criado];
       }
       const nomeEquipe = linha.equipe?.trim() ?? '';
       const equipe = nomeEquipe
@@ -481,6 +512,10 @@ export class DocumentacaoService {
       const data = new Date(`${linha.dataVenda.slice(0, 10)}T12:00:00.000Z`);
       if (Number.isNaN(data.getTime())) {
         erros.push({ linha: n, mensagem: 'Data de venda inválida.' });
+        continue;
+      }
+      if (!funil || !etapaVenda) {
+        erros.push({ linha: n, mensagem: 'Funil comercial sem etapa de aprovado ou venda.' });
         continue;
       }
 
@@ -526,14 +561,57 @@ export class DocumentacaoService {
         equipes.find((item) => item.id === corretor.equipeId)?.gerenteId ??
         null;
 
+      let leadId: string | null = null;
+      if (funil && etapaVenda) {
+        const existentes = await this.prisma.lead.findMany({
+          where: { tenantId, nome: { equals: nomeLead, mode: 'insensitive' } },
+          select: { id: true, corretorId: true },
+        });
+        const doCorretor = existentes.find((item) => item.corretorId === corretor.id) ?? existentes[0];
+        if (doCorretor) {
+          leadId = doCorretor.id;
+          await this.prisma.lead.update({
+            where: { id: doCorretor.id },
+            data: {
+              tipo: ContatoTipo.cliente,
+              corretorId: corretor.id,
+              stage: etapaVenda.slug,
+              funilId: funil.id,
+            },
+          });
+        } else {
+          const criado = await this.prisma.lead.create({
+            data: {
+              tenantId,
+              tipo: ContatoTipo.cliente,
+              nome: nomeLead,
+              telefone: '(81) 90000-0000',
+              email: `lead.${norm(nomeLead).replace(/[^a-z0-9]+/g, '.')}.${Date.now()}.${index}@importacao.local`,
+              origem: 'Importação de vendas',
+              interesse: 'Comprar',
+              cidade: 'Não informado',
+              bairro: 'Não informado',
+              stage: etapaVenda.slug,
+              funilId: funil.id,
+              prioridade: 'Média',
+              tags: ['Importação de vendas'],
+              corretorId: corretor.id,
+            },
+            select: { id: true },
+          });
+          leadId = criado.id;
+        }
+      }
+
       await this.garantirVendaSemProposta();
       await this.prisma.documentacao.create({
         data: {
           tenantId,
           autorId: requester.id,
+          leadId,
           tipoContato: ContatoTipo.cliente,
-          stageSituacao: '',
-          nome: linha.empreendimento.trim(),
+          stageSituacao: etapaVenda?.slug ?? '',
+          nome: nomeLead,
           construtoraId: construtora.id,
           empreendimentoId: empreendimento.id,
           fonte: 'Outro',
