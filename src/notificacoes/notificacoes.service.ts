@@ -156,7 +156,7 @@ export class NotificacoesService {
     });
   }
 
-  /** Lembrete de compromisso próximo (1 dia / 2h / 1h). Idempotente por tipo+agendamento. */
+  /** Lembrete de compromisso (1 dia / 2h / 1h / 15 min / na hora). Idempotente por tipo+agendamento. */
   async createAgendaLembrete(params: {
     userId: string;
     agendamentoId: string;
@@ -170,7 +170,9 @@ export class NotificacoesService {
     tipo:
       | typeof NotificacaoTipo.agenda_lembrete_1d
       | typeof NotificacaoTipo.agenda_lembrete_2h
-      | typeof NotificacaoTipo.agenda_lembrete_1h;
+      | typeof NotificacaoTipo.agenda_lembrete_1h
+      | typeof NotificacaoTipo.agenda_lembrete_15m
+      | typeof NotificacaoTipo.agenda_lembrete_agora;
   }) {
     const existing = await this.prisma.notificacao.findFirst({
       where: {
@@ -183,19 +185,30 @@ export class NotificacoesService {
     if (existing) return null;
 
     const janela =
-      params.tipo === NotificacaoTipo.agenda_lembrete_1h
-        ? '1 hora'
-        : params.tipo === NotificacaoTipo.agenda_lembrete_2h
-          ? '2 horas'
-          : '1 dia';
+      params.tipo === NotificacaoTipo.agenda_lembrete_agora
+        ? 'agora'
+        : params.tipo === NotificacaoTipo.agenda_lembrete_15m
+          ? '15 minutos'
+          : params.tipo === NotificacaoTipo.agenda_lembrete_1h
+            ? '1 hora'
+            : params.tipo === NotificacaoTipo.agenda_lembrete_2h
+              ? '2 horas'
+              : '1 dia';
 
     const envolvidos = params.envolvidos?.trim() ?? '';
+    const naHora = params.tipo === NotificacaoTipo.agenda_lembrete_agora;
     const titulo = params.tomInformativo
       ? `Agenda da equipe — ${params.titulo}`
-      : `Lembrete (${janela}) — ${params.titulo}`;
+      : naHora
+        ? `Agora — ${params.titulo}`
+        : `Lembrete (${janela}) — ${params.titulo}`;
     const corpo = params.tomInformativo
-      ? `Aviso informativo: compromisso da equipe "${params.titulo}"${envolvidos} em ${params.quando}.`
-      : `Seu compromisso "${params.titulo}"${envolvidos} começa em ${params.quando}.`;
+      ? naHora
+        ? `Aviso informativo: compromisso da equipe "${params.titulo}"${envolvidos} está começando (${params.quando}).`
+        : `Aviso informativo: compromisso da equipe "${params.titulo}"${envolvidos} em ${params.quando}.`
+      : naHora
+        ? `Seu compromisso "${params.titulo}"${envolvidos} está começando agora (${params.quando}).`
+        : `Seu compromisso "${params.titulo}"${envolvidos} começa em ${params.quando}.`;
 
     const tenantId = await this.resolveTenantId(params.userId);
 

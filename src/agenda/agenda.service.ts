@@ -28,6 +28,7 @@ import { TeamScopeService } from '../equipes/team-scope.service';
 import { NotificacoesService } from '../notificacoes/notificacoes.service';
 import { LeadMonitoramentoService } from '../leads/monitoramento/lead-monitoramento.service';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
+import { EvolutionService } from '../evolution/evolution.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { resolveFinanceiroTenantId as requireTenantId } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
@@ -135,6 +136,7 @@ export class AgendaService {
     private readonly notificacoes: NotificacoesService,
     private readonly monitoramento: LeadMonitoramentoService,
     private readonly googleCalendar: GoogleCalendarService,
+    private readonly evolution: EvolutionService,
   ) {}
 
   /** Compromissos no calendário/tabela.
@@ -736,7 +738,7 @@ export class AgendaService {
   }
 
   /**
-   * Sincroniza lembretes (1d / 2h / 1h) e retorna alerta para badge + card.
+   * Sincroniza lembretes (1d / 2h / 1h / 15 min / na hora) e retorna alerta para badge + card.
    * Chamado no login/polling do front — sem cron no servidor.
    */
   async syncLembretes(requester: AuthenticatedUser) {
@@ -753,15 +755,17 @@ export class AgendaService {
 
     const now = new Date();
     const horizon = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const MS_15M = 15 * 60 * 1000;
     const MS_1H = 60 * 60 * 1000;
     const MS_2H = 2 * MS_1H;
     const MS_1D = 24 * MS_1H;
+    const desde = new Date(now.getTime() - MS_15M);
 
     const upcoming = (
       await this.list(
         {
           status: AgendamentoStatus.agendado,
-          from: now.toISOString(),
+          from: desde.toISOString(),
           to: horizon.toISOString(),
         },
         requester,
@@ -809,11 +813,13 @@ export class AgendaService {
       if (msRestante <= MS_1H) nivel = 'uma_hora';
       else if (msRestante <= MS_2H) nivel = 'duas_horas';
 
-      if (nivel === 'uma_hora') urgencia = 'uma_hora';
-      else if (nivel === 'duas_horas' && urgencia !== 'uma_hora') {
-        urgencia = 'duas_horas';
-      } else if (urgencia === 'nenhuma') {
-        urgencia = 'dia';
+      if (msRestante > 0) {
+        if (nivel === 'uma_hora') urgencia = 'uma_hora';
+        else if (nivel === 'duas_horas' && urgencia !== 'uma_hora') {
+          urgencia = 'duas_horas';
+        } else if (urgencia === 'nenhuma') {
+          urgencia = 'dia';
+        }
       }
 
       const corretorId =
@@ -883,7 +889,7 @@ export class AgendaService {
     for (const item of upcoming) {
       const startsAt = new Date(item.startsAt);
       const msRestante = startsAt.getTime() - now.getTime();
-      if (msRestante <= 0) continue;
+      if (msRestante <= -MS_15M) continue;
 
       const quando = startsAt.toLocaleString('pt-BR', {
         dateStyle: 'short',
@@ -914,18 +920,23 @@ export class AgendaService {
 
       const janelas: Array<{
         maxMs: number;
+        minMs: number;
         tipo:
           | typeof NotificacaoTipo.agenda_lembrete_1d
           | typeof NotificacaoTipo.agenda_lembrete_2h
-          | typeof NotificacaoTipo.agenda_lembrete_1h;
+          | typeof NotificacaoTipo.agenda_lembrete_1h
+          | typeof NotificacaoTipo.agenda_lembrete_15m
+          | typeof NotificacaoTipo.agenda_lembrete_agora;
       }> = [
-        { maxMs: MS_1D, tipo: NotificacaoTipo.agenda_lembrete_1d },
-        { maxMs: MS_2H, tipo: NotificacaoTipo.agenda_lembrete_2h },
-        { maxMs: MS_1H, tipo: NotificacaoTipo.agenda_lembrete_1h },
+        { maxMs: MS_1D, minMs: 0, tipo: NotificacaoTipo.agenda_lembrete_1d },
+        { maxMs: MS_2H, minMs: 0, tipo: NotificacaoTipo.agenda_lembrete_2h },
+        { maxMs: MS_1H, minMs: 0, tipo: NotificacaoTipo.agenda_lembrete_1h },
+        { maxMs: MS_15M, minMs: 0, tipo: NotificacaoTipo.agenda_lembrete_15m },
+        { maxMs: 0, minMs: -MS_15M, tipo: NotificacaoTipo.agenda_lembrete_agora },
       ];
 
       for (const janela of janelas) {
-        if (msRestante > janela.maxMs) continue;
+        if (msRestante > janela.maxMs || msRestante <= janela.minMs) continue;
         const created = await this.notificacoes.createAgendaLembrete({
           userId: requester.id,
           agendamentoId: item.id,
@@ -943,17 +954,28 @@ export class AgendaService {
             titulo: created.titulo,
             corpo: created.corpo,
           });
+          const tenantId = requester.tenantId;
+          if (tenantId) {
+            void this.evolution.enqueueAgendaLembrete({
+              tenantId,
+              userId: requester.id,
+              agendamentoId: item.id,
+              leadId: item.leadId,
+              notificationType: janela.tipo,
+            });
+          }
         }
       }
     }
 
     const solicitacoes = await this.countSolicitacoes(requester);
+    const futuros = proximos.filter((item) => item.msRestante > 0);
 
     return {
       urgencia,
-      proximosCount: proximos.length,
+      proximosCount: futuros.length,
       solicitacoesCount: solicitacoes.count,
-      proximos,
+      proximos: futuros,
       novasNotificacoes: criadas.filter(Boolean),
     };
   }

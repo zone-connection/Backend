@@ -2151,6 +2151,7 @@ model Agendamento {
   updatedAt DateTime @updatedAt
 
   googleCalendarEvents UserGoogleCalendarEvent[]
+  whatsappNotifications WhatsappNotification[]
   historico            AgendamentoHistorico[]
   tarefas              Tarefa[]
   tarefaEspelho        Tarefa?  @relation("TarefaAgendaEspelho")
@@ -2242,6 +2243,8 @@ enum NotificacaoTipo {
   agenda_lembrete_1d
   agenda_lembrete_2h
   agenda_lembrete_1h
+  agenda_lembrete_15m
+  agenda_lembrete_agora
   lead_prazo_proximo
   lead_prazo_ultrapassado
   lead_sem_atendimento
@@ -5057,8 +5060,10 @@ model WhatsappNotification {
   tenant           Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   userId           String
   user             User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  leadId           String
-  lead             Lead                       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId           String?
+  lead             Lead?                      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  agendamentoId    String?
+  agendamento      Agendamento?               @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
   notificationType String
   status           WhatsappNotificationStatus @default(pending)
   errorMessage     String?
@@ -5067,6 +5072,7 @@ model WhatsappNotification {
   createdAt        DateTime                   @default(now())
 
   @@index([tenantId, userId, leadId])
+  @@index([tenantId, userId, agendamentoId, notificationType])
   @@index([status, attempts])
   @@index([tenantId, userId])
   @@map("whatsapp_notifications")

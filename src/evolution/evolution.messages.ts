@@ -1,4 +1,29 @@
 export const NOVO_LEAD_NOTIFICATION = 'novo_lead';
+export const AGENDA_LEMBRETE_1D = 'agenda_lembrete_1d';
+export const AGENDA_LEMBRETE_2H = 'agenda_lembrete_2h';
+export const AGENDA_LEMBRETE_1H = 'agenda_lembrete_1h';
+export const AGENDA_LEMBRETE_15M = 'agenda_lembrete_15m';
+export const AGENDA_LEMBRETE_AGORA = 'agenda_lembrete_agora';
+
+const AGENDA_LEMBRETES = new Set([
+  AGENDA_LEMBRETE_1D,
+  AGENDA_LEMBRETE_2H,
+  AGENDA_LEMBRETE_1H,
+  AGENDA_LEMBRETE_15M,
+  AGENDA_LEMBRETE_AGORA,
+]);
+
+export function isAgendaLembrete(notificationType: string): boolean {
+  return AGENDA_LEMBRETES.has(notificationType);
+}
+
+export function agendaLembreteJanela(notificationType: string): string {
+  if (notificationType === AGENDA_LEMBRETE_AGORA) return 'agora';
+  if (notificationType === AGENDA_LEMBRETE_15M) return '15 minutos';
+  if (notificationType === AGENDA_LEMBRETE_1H) return '1 hora';
+  if (notificationType === AGENDA_LEMBRETE_2H) return '2 horas';
+  return '1 dia';
+}
 export const MAX_WHATSAPP_ATTEMPTS = 3;
 
 export type LeadWhatsappFields = {
@@ -26,6 +51,34 @@ export function leadWhatsappMessage(fields: LeadWhatsappFields): string {
     '',
     'Zone Connection CRM.',
   ].join('\n');
+}
+
+export function agendaLembreteWhatsApp(fields: {
+  nomeCorretor: string;
+  titulo: string;
+  quando: string;
+  janela: string;
+  envolvidos?: string | null;
+  informativo?: boolean;
+}): string {
+  const nome = fields.nomeCorretor.trim() || 'corretor';
+  const titulo = fields.titulo.trim() || 'Compromisso';
+  const abertura = fields.informativo
+    ? 'Há um compromisso da equipe no Zone Connection.'
+    : 'Você tem um compromisso no Zone Connection.';
+  const lines = [
+    `Olá, ${nome}!`,
+    '',
+    abertura,
+    '',
+    `Compromisso: ${titulo}`,
+    `Quando: ${fields.quando}`,
+    fields.janela === 'agora' ? 'Está começando agora.' : `Falta: ${fields.janela}`,
+  ];
+  const envolvidos = fields.envolvidos?.replace(/^\s*—\s*/, '').trim();
+  if (envolvidos) lines.push(envolvidos);
+  lines.push('', 'Acesse a agenda no CRM para ver os detalhes.', '', 'Zone Connection CRM.');
+  return lines.join('\n');
 }
 
 export function instanceNameForUser(userId: string): string {
