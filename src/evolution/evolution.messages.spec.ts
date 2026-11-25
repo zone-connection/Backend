@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   instanceNameForUser,
   whatsappDestination,
+  agendaLembreteWhatsApp,
   leadWhatsappMessage,
   mapEvolutionState,
   parseEvolutionWebhook,
@@ -23,6 +24,21 @@ describe('mensagem de lead no WhatsApp do corretor', () => {
     assert.match(text, /Interesse: Comprar/);
     assert.match(text, /Origem: Meta/);
     assert.equal(text.includes('119'), false);
+  });
+});
+
+describe('lembrete de agenda no WhatsApp', () => {
+  it('avisa o compromisso, o horário e a janela', () => {
+    const text = agendaLembreteWhatsApp({
+      nomeCorretor: 'Ana',
+      titulo: 'Visita no Jardins',
+      quando: '26/11/2026, 10:00',
+      janela: '1 hora',
+    });
+    assert.match(text, /Olá, Ana!/);
+    assert.match(text, /Compromisso: Visita no Jardins/);
+    assert.match(text, /Quando: 26\/11\/2026, 10:00/);
+    assert.match(text, /Falta: 1 hora/);
   });
 });
 

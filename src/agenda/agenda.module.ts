@@ -3,6 +3,7 @@ import { EquipesModule } from '../equipes/equipes.module';
 import { NotificacoesModule } from '../notificacoes/notificacoes.module';
 import { LeadMonitoramentoModule } from '../leads/lead-monitoramento.module';
 import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
+import { EvolutionModule } from '../evolution/evolution.module';
 import { AgendaController } from './agenda.controller';
 import { AgendaService } from './agenda.service';
 
@@ -12,6 +13,7 @@ import { AgendaService } from './agenda.service';
     NotificacoesModule,
     LeadMonitoramentoModule,
     GoogleCalendarModule,
+    EvolutionModule,
   ],
   controllers: [AgendaController],
   providers: [AgendaService],

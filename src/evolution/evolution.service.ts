@@ -18,6 +18,10 @@ import { EvolutionApiClient, EvolutionApiError } from './evolution-api.client';
 import {
   MAX_WHATSAPP_ATTEMPTS,
   NOVO_LEAD_NOTIFICATION,
+  agendaLembreteJanela,
+  agendaLembreteWhatsApp,
+  AGENDA_LEMBRETE_AGORA,
+  isAgendaLembrete,
   digitsOnly,
   whatsappDestination,
   instanceNameForUser,
@@ -294,16 +298,82 @@ export class EvolutionService implements OnModuleInit {
     }
   }
 
+  /** Lembrete de agenda (1 dia, 2 horas ou 1 hora). Um envio por usuário e janela. */
+  async enqueueAgendaLembrete(params: {
+    tenantId: string;
+    userId: string;
+    agendamentoId: string;
+    leadId?: string | null;
+    notificationType: string;
+  }): Promise<void> {
+    if (!isAgendaLembrete(params.notificationType)) return;
+    try {
+      const existing = await this.prisma.whatsappNotification.findFirst({
+        where: {
+          tenantId: params.tenantId,
+          userId: params.userId,
+          agendamentoId: params.agendamentoId,
+          notificationType: params.notificationType,
+        },
+        select: { id: true },
+      });
+      if (existing) return;
+      const created = await this.prisma.whatsappNotification.create({
+        data: {
+          tenantId: params.tenantId,
+          userId: params.userId,
+          leadId: params.leadId ?? null,
+          agendamentoId: params.agendamentoId,
+          notificationType: params.notificationType,
+          status: WhatsappNotificationStatus.pending,
+        },
+        select: { id: true },
+      });
+      void this.deliver(created.id);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return;
+      }
+      this.logger.warn(
+        `Fila WhatsApp não gravada agenda=${params.agendamentoId}: ${
+          error instanceof Error ? error.message : 'erro'
+        }`,
+      );
+    }
+  }
+
   private async deliver(id: string): Promise<void> {
     const row = await this.prisma.whatsappNotification.findUnique({
       where: { id },
       include: {
-        user: { select: { name: true, whatsapp: true, phone: true } },
+        user: { select: { name: true, role: true, whatsapp: true, phone: true } },
         lead: { select: { nome: true, interesse: true, origem: true, tenantId: true } },
+        agendamento: {
+          select: {
+            titulo: true,
+            startsAt: true,
+            status: true,
+            tenantId: true,
+            lead: { select: { nome: true } },
+          },
+        },
       },
     });
     if (!row || row.status === WhatsappNotificationStatus.sent) return;
-    if (row.lead.tenantId !== row.tenantId) {
+    const agenda = isAgendaLembrete(row.notificationType);
+    if (agenda) {
+      if (
+        !row.agendamento ||
+        row.agendamento.tenantId !== row.tenantId ||
+        row.agendamento.status !== 'agendado' ||
+        (row.notificationType === AGENDA_LEMBRETE_AGORA
+          ? Date.now() - row.agendamento.startsAt.getTime() > 15 * 60 * 1000
+          : row.agendamento.startsAt.getTime() <= Date.now())
+      ) {
+        await this.finish(row.id, WhatsappNotificationStatus.skipped, 'Compromisso indisponível.');
+        return;
+      }
+    } else if (!row.lead || row.lead.tenantId !== row.tenantId) {
       await this.finish(row.id, WhatsappNotificationStatus.skipped, 'Lead de outra imobiliária.');
       return;
     }
@@ -333,16 +403,28 @@ export class EvolutionService implements OnModuleInit {
       await this.api.createInstance(sender, this.webhookUrl()).catch((error: unknown) => {
         if (!this.alreadyExists(error)) throw error;
       });
-      await this.api.sendText(
-        sender,
-        phone,
-        leadWhatsappMessage({
-          nomeCorretor: row.user.name,
-          nomeLead: row.lead.nome,
-          interesse: row.lead.interesse,
-          origem: row.lead.origem,
-        }),
-      );
+      const text = agenda
+        ? agendaLembreteWhatsApp({
+            nomeCorretor: row.user.name,
+            titulo: row.agendamento!.titulo,
+            quando: row.agendamento!.startsAt.toLocaleString('pt-BR', {
+              dateStyle: 'short',
+              timeStyle: 'short',
+              timeZone: 'America/Sao_Paulo',
+            }),
+            janela: agendaLembreteJanela(row.notificationType),
+            envolvidos: row.agendamento!.lead?.nome
+              ? `Lead: ${row.agendamento!.lead.nome}`
+              : null,
+            informativo: row.user.role === 'admin',
+          })
+        : leadWhatsappMessage({
+            nomeCorretor: row.user.name,
+            nomeLead: row.lead!.nome,
+            interesse: row.lead!.interesse,
+            origem: row.lead!.origem,
+          });
+      await this.api.sendText(sender, phone, text);
       await this.prisma.whatsappNotification.update({
         where: { id: row.id },
         data: {
