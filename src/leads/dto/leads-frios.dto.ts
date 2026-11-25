@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -41,12 +42,31 @@ export class LeadFrioRowDto {
   @IsString()
   @MaxLength(80)
   origem?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  tipoRenda?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  estadoCivil?: string;
+
+  @IsOptional()
+  @IsNumber()
+  renda?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  empreendimento?: string;
 }
 
 export class ImportLeadsFriosDto {
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(600)
+  @ArrayMaxSize(5000)
   @ValidateNested({ each: true })
   @Type(() => LeadFrioRowDto)
   rows!: LeadFrioRowDto[];

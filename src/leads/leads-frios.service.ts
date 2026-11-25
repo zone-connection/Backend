@@ -58,14 +58,40 @@ export class LeadsFriosService {
     const tenantId = requireTenantId(requester);
     const placement = await this.funis.comercialPlacement(tenantId);
     const now = new Date();
+    const empreendimentos = await this.prisma.empreendimento.findMany({
+      where: { tenantId },
+      select: { id: true, nome: true },
+    });
+    const porNome = new Map(
+      empreendimentos.map((item) => [item.nome.trim().toLowerCase(), item.id]),
+    );
     let created = 0;
-    for (const row of dto.rows) {
+    for (const [index, row] of dto.rows.entries()) {
       const telefone = row.telefone.trim();
       const digits = telefone.replace(/\D/g, '');
       if (digits.length < 8) continue;
+      const nomeEmpreendimento = row.empreendimento?.trim() ?? '';
+      let empreendimentoId: string | null = null;
+      if (nomeEmpreendimento) {
+        const chave = nomeEmpreendimento.toLowerCase();
+        empreendimentoId = porNome.get(chave) ?? null;
+        if (!empreendimentoId) {
+          const criado = await this.prisma.empreendimento.create({
+            data: {
+              tenantId,
+              nome: nomeEmpreendimento,
+              finalidade: 'lancamento',
+              externalKey: `base-fria-${chave.replace(/[^a-z0-9]+/g, '-').slice(0, 40)}-${Date.now()}-${index}`,
+            },
+            select: { id: true },
+          });
+          empreendimentoId = criado.id;
+          porNome.set(chave, criado.id);
+        }
+      }
       const email =
         row.email?.trim().toLowerCase() ||
-        `contato.${digits}@sem-email.local`;
+        `frio.${digits}.${index}@sem-email.local`;
       await this.prisma.lead.create({
         data: {
           tenantId,
@@ -77,6 +103,10 @@ export class LeadsFriosService {
           interesse: 'Comprar',
           cidade: row.cidade?.trim() || '',
           bairro: row.bairro?.trim() || '',
+          renda: typeof row.renda === 'number' ? Math.round(row.renda) : null,
+          tipoRenda: row.tipoRenda?.trim() || null,
+          estadoCivil: row.estadoCivil?.trim() || null,
+          empreendimentoId,
           stage: placement.stage,
           funilId: placement.funilId,
           prioridade: 'Média',
