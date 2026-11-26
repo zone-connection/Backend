@@ -199,6 +199,9 @@ describe('permissões por usuário', () => {
   });
 
   it('mapeia rotas que antes ficavam sem módulo', () => {
+    assert.deepEqual(modulesForApiPath('/api/users'), ['usuarios']);
+    assert.deepEqual(modulesForApiPath('/api/users/presence/today'), ['usuarios']);
+    assert.deepEqual(modulesForApiPath('/api/cadastro-vendas'), ['vendas']);
     assert.deepEqual(modulesForApiPath('/leads-frios'), ['leads']);
     assert.deepEqual(modulesForApiPath('/tarefas'), ['agenda']);
     assert.deepEqual(modulesForApiPath('/rh/funcionarios'), ['usuarios']);
