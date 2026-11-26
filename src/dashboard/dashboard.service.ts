@@ -571,6 +571,7 @@ export class DashboardService {
     const leadCriadoWhere = (periodo: Periodo): Prisma.LeadWhereInput => ({
       ...leadScope,
       tipo: ContatoTipo.lead,
+      baseFria: false,
       perdidoAt: null,
       createdAt: { gte: periodo.inicio, lt: periodo.fim },
       ...origemWhere,
