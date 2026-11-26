@@ -572,6 +572,7 @@ export class DashboardService {
       ...leadScope,
       tipo: ContatoTipo.lead,
       baseFria: false,
+      origemBaseFria: false,
       perdidoAt: null,
       createdAt: { gte: periodo.inicio, lt: periodo.fim },
       ...origemWhere,
@@ -650,6 +651,9 @@ export class DashboardService {
       metasAtivas,
       comissaoMes,
       comissaoMesAnt,
+      friosTotal,
+      friosEntraramMes,
+      friosSairam,
     ] = await Promise.all([
       this.prisma.lead.groupBy({
         by: ['stage'],
@@ -850,6 +854,40 @@ export class DashboardService {
         corretorIds,
         ...(documentoOrigem ? { documentoOrigem } : {}),
       }),
+      requester.tenantModules?.leadsFrios === true
+        ? this.prisma.lead.count({
+            where: {
+              ...leadScope,
+              tipo: ContatoTipo.lead,
+              perdidoAt: null,
+              baseFria: true,
+              ...origemWhere,
+            },
+          })
+        : Promise.resolve(0),
+      requester.tenantModules?.leadsFrios === true
+        ? this.prisma.lead.count({
+            where: {
+              ...leadScope,
+              tipo: ContatoTipo.lead,
+              perdidoAt: null,
+              baseFria: true,
+              baseFriaEm: { gte: mesAtual.inicio, lt: mesAtual.fim },
+              ...origemWhere,
+            },
+          })
+        : Promise.resolve(0),
+      requester.tenantModules?.leadsFrios === true
+        ? this.prisma.lead.count({
+            where: {
+              ...leadScope,
+              tipo: ContatoTipo.lead,
+              baseFria: false,
+              origemBaseFria: true,
+              ...origemWhere,
+            },
+          })
+        : Promise.resolve(0),
     ]);
 
     const motivosAntMap = new Map(
@@ -1018,6 +1056,14 @@ export class DashboardService {
             semana: mostrarSnapshotAtual ? entradasSemana : 0,
             mes: metric(entradasMes, entradasMesAnt),
           },
+      leadsFrios:
+        requester.tenantModules?.leadsFrios === true
+          ? {
+              total: friosTotal,
+              entraramMes: friosEntraramMes,
+              sairam: friosSairam,
+            }
+          : null,
       funil: vistaUsados
         ? funil.map((item) => ({ etapa: item.stage, total: 0 }))
         : mostrarSnapshotAtual
