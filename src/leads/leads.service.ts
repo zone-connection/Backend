@@ -3170,11 +3170,7 @@ export class LeadsService {
           return this.canManageRetrabalho(requester);
         }
         if (!lead.corretorId) {
-          if (
-            requester.role === Role.admin ||
-            requester.role === Role.super_admin ||
-            requester.role === Role.analista
-          ) {
+          if (requester.role === Role.analista) {
             return true;
           }
           if (requester.role === Role.gerente) {
@@ -3184,9 +3180,7 @@ export class LeadsService {
           return false;
         }
         if (
-          (requester.role === Role.admin ||
-            requester.role === Role.super_admin ||
-            requester.role === Role.gerente) &&
+          requester.role === Role.gerente &&
           lead.corretorId === requester.id
         ) {
           return true;
