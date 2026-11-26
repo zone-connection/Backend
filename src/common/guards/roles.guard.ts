@@ -12,6 +12,7 @@ import { AuthenticatedUser } from '../types/authenticated-user';
 import {
   hasAnyUserModule,
   hasModuleVerb,
+  hasUserAction,
   hasUserModule,
   httpPermissionVerb,
   modulesForApiPath,
@@ -70,6 +71,25 @@ export class RolesGuard implements CanActivate {
           'Você não tem permissão para acessar este recurso.',
         );
       }
+    }
+
+    const path = rawPath.replace(/^\/+/, '').toLowerCase().replace(/^api\//, '');
+    if (path.startsWith('documentacao/importar-vendas')) {
+      if (user.permissions?.actions?.['vendas.importar'] === false) {
+        throw new ForbiddenException(
+          'Você não tem permissão para importar a planilha de vendas.',
+        );
+      }
+      const roleOk = requiredRoles.some((role) => String(role) === String(user.role));
+      if (
+        roleOk ||
+        hasUserAction(user.role, user.permissions, 'vendas.importar')
+      ) {
+        return true;
+      }
+      throw new ForbiddenException(
+        'Você não tem permissão para importar a planilha de vendas.',
+      );
     }
 
     const userRole = String(user.role);

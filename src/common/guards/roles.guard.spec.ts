@@ -4,6 +4,7 @@ import { Role } from '@prisma/client';
 import {
   hasAnyUserModule,
   hasModuleVerb,
+  hasUserAction,
   httpPermissionVerb,
   modulesForApiPath,
 } from '../utils/user-permissions';
@@ -15,6 +16,14 @@ function wouldAllow(
   method: string,
   permissions: { modules: Record<string, boolean>; actions: Record<string, boolean> } | null,
 ) {
+  const normalized = path.replace(/^\/+/, '').toLowerCase().replace(/^api\//, '');
+  if (normalized.startsWith('documentacao/importar-vendas')) {
+    if (permissions?.actions?.['vendas.importar'] === false) return false;
+    return (
+      requiredRoles.some((item) => item === role) ||
+      hasUserAction(role, permissions, 'vendas.importar')
+    );
+  }
   const allowed = requiredRoles.some((item) => item === role);
   const modules = modulesForApiPath(path, method);
   const moduleOk = hasAnyUserModule(role, permissions, modules);
@@ -124,6 +133,31 @@ describe('RolesGuard + módulos concedidos', () => {
       wouldAllow(Role.corretor, [Role.admin, Role.gerente, Role.analista], '/api/users', 'GET', {
         modules: { vendas: true },
         actions: {},
+      }),
+      false,
+    );
+  });
+
+  it('importar planilha de vendas só com a permissão específica', () => {
+    const roles = [Role.admin, Role.gerente];
+    assert.equal(
+      wouldAllow(Role.corretor, roles, '/api/documentacao/importar-vendas', 'POST', {
+        modules: { vendas: true },
+        actions: { 'vendas.importar': true },
+      }),
+      true,
+    );
+    assert.equal(
+      wouldAllow(Role.corretor, roles, '/api/documentacao/importar-vendas', 'POST', {
+        modules: { vendas: true },
+        actions: {},
+      }),
+      false,
+    );
+    assert.equal(
+      wouldAllow(Role.admin, roles, '/api/documentacao/importar-vendas', 'POST', {
+        modules: { vendas: true },
+        actions: { 'vendas.importar': false },
       }),
       false,
     );
