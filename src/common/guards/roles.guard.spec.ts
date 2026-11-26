@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import { Role } from '@prisma/client';
 import {
   hasAnyUserModule,
+  hasModuleVerb,
+  httpPermissionVerb,
   modulesForApiPath,
 } from '../utils/user-permissions';
 
@@ -10,11 +12,26 @@ function wouldAllow(
   role: Role,
   requiredRoles: Role[],
   path: string,
-  _method: string,
+  method: string,
   permissions: { modules: Record<string, boolean>; actions: Record<string, boolean> } | null,
 ) {
-  if (requiredRoles.some((allowed) => allowed === role)) return true;
-  return hasAnyUserModule(role, permissions, modulesForApiPath(path));
+  const allowed = requiredRoles.some((item) => item === role);
+  const modules = modulesForApiPath(path);
+  const moduleOk = hasAnyUserModule(role, permissions, modules);
+  if (!allowed && !moduleOk) return false;
+  const verb = httpPermissionVerb(method);
+  if (verb && modules.length > 0) {
+    const explicitDeny = modules.every(
+      (moduleKey) => permissions?.actions?.[`${moduleKey}.${verb}`] === false,
+    );
+    if (explicitDeny) return false;
+    if (!allowed) {
+      return modules.some((moduleKey) =>
+        hasModuleVerb(role, permissions, moduleKey, verb),
+      );
+    }
+  }
+  return true;
 }
 
 describe('RolesGuard + módulos concedidos', () => {
@@ -75,6 +92,23 @@ describe('RolesGuard + módulos concedidos', () => {
     assert.equal(
       wouldAllow(Role.corretor, [Role.admin, Role.financeiro], '/financeiro/titulos', 'POST', null),
       false,
+    );
+  });
+
+  it('corretor só com visualizar não cria lead', () => {
+    assert.equal(
+      wouldAllow(Role.corretor, [Role.admin, Role.corretor], '/leads', 'POST', {
+        modules: { leads: true },
+        actions: { 'leads.create': false },
+      }),
+      false,
+    );
+    assert.equal(
+      wouldAllow(Role.corretor, [Role.admin, Role.corretor], '/leads', 'GET', {
+        modules: { leads: true },
+        actions: { 'leads.view': true, 'leads.create': false },
+      }),
+      true,
     );
   });
 

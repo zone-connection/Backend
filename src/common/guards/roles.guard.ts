@@ -11,7 +11,9 @@ import { ROLES_KEY } from '../decorators/roles.decorator';
 import { AuthenticatedUser } from '../types/authenticated-user';
 import {
   hasAnyUserModule,
+  hasModuleVerb,
   hasUserModule,
+  httpPermissionVerb,
   modulesForApiPath,
 } from '../utils/user-permissions';
 import { operationModuleForApiPath, isTenantOperationEnabled } from '../../tenants/tenant-operation.util';
@@ -72,21 +74,37 @@ export class RolesGuard implements CanActivate {
 
     const userRole = String(user.role);
     const allowed = requiredRoles.some((role) => String(role) === userRole);
-    if (allowed) {
-      return true;
+    const modules = modulesForApiPath(rawPath);
+    const moduleOk = hasAnyUserModule(user.role, user.permissions, modules);
+    if (!allowed && !moduleOk) {
+      throw new ForbiddenException(
+        'Você não tem permissão para acessar este recurso.',
+      );
     }
 
-    const moduleOk = hasAnyUserModule(
-      user.role,
-      user.permissions,
-      modulesForApiPath(rawPath),
-    );
-    if (moduleOk) {
-      return true;
+    const verb = httpPermissionVerb(request.method);
+    if (verb && modules.length > 0) {
+      const explicitDeny = modules.every(
+        (moduleKey) =>
+          user.permissions?.actions?.[`${moduleKey}.${verb}`] === false,
+      );
+      if (explicitDeny) {
+        throw new ForbiddenException(
+          'Você não tem permissão para esta ação.',
+        );
+      }
+      if (!allowed) {
+        const actionOk = modules.some((moduleKey) =>
+          hasModuleVerb(user.role, user.permissions, moduleKey, verb),
+        );
+        if (!actionOk) {
+          throw new ForbiddenException(
+            'Você não tem permissão para esta ação.',
+          );
+        }
+      }
     }
 
-    throw new ForbiddenException(
-      'Você não tem permissão para acessar este recurso.',
-    );
+    return true;
   }
 }
