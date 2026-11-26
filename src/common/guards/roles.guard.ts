@@ -74,7 +74,7 @@ export class RolesGuard implements CanActivate {
 
     const userRole = String(user.role);
     const allowed = requiredRoles.some((role) => String(role) === userRole);
-    const modules = modulesForApiPath(rawPath);
+    const modules = modulesForApiPath(rawPath, request.method);
     const moduleOk = hasAnyUserModule(user.role, user.permissions, modules);
     if (!allowed && !moduleOk) {
       throw new ForbiddenException(

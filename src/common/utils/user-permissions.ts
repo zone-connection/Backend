@@ -588,7 +588,7 @@ const SENSITIVE_WRITE_PREFIXES = ['users', 'tenants', 'equipes', 'presenca'] as 
  * Módulos de permissão que liberam um path da API além do @Roles.
  * Um path pode mapear para mais de um módulo (ex.: ranking serve Dashboard e Taxa).
  */
-export function modulesForApiPath(rawPath: string): string[] {
+export function modulesForApiPath(rawPath: string, method?: string): string[] {
   const path = rawPath
     .split('?')[0]
     .replace(/^\/+/, '')
@@ -628,8 +628,17 @@ export function modulesForApiPath(rawPath: string): string[] {
   if (path.startsWith('atendimento')) return ['leads'];
   if (path.startsWith('listas-documentos')) return ['documentacao'];
   if (path.startsWith('arquivos')) return ['documentacao', 'leads'];
+  if (path.startsWith('users/') && path.includes('/presence')) {
+    return ['usuarios', 'presenca'];
+  }
   if (path.startsWith('users')) return ['usuarios'];
-  if (path.startsWith('equipes')) return ['equipes'];
+  if (path.startsWith('equipes')) {
+    const reading =
+      httpPermissionVerb(method ?? 'GET') === 'view' && !path.includes('/opcoes/');
+    return reading
+      ? ['equipes', 'vendas', 'documentacao', 'corretores', 'leads', 'funil', 'agenda']
+      : ['equipes'];
+  }
   if (path.startsWith('analise')) return ['analise'];
   if (path.startsWith('metas')) return ['metas'];
   if (path.startsWith('catalog')) return ['configuracoes'];
