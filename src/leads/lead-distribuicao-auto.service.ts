@@ -139,6 +139,7 @@ export class LeadDistribuicaoAutoService
       where: {
         tenantId,
         tipo: ContatoTipo.lead,
+        baseFria: false,
         perdidoAt: null,
         motivoPerda: null,
         corretorId: null,

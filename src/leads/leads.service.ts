@@ -2986,6 +2986,7 @@ export class LeadsService {
     return {
       tenantId,
       tipo: ContatoTipo.lead,
+      baseFria: false,
       perdidoAt: null,
       corretorId: null,
       equipeId: null,
