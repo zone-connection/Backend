@@ -16,7 +16,7 @@ function wouldAllow(
   permissions: { modules: Record<string, boolean>; actions: Record<string, boolean> } | null,
 ) {
   const allowed = requiredRoles.some((item) => item === role);
-  const modules = modulesForApiPath(path);
+  const modules = modulesForApiPath(path, method);
   const moduleOk = hasAnyUserModule(role, permissions, modules);
   if (!allowed && !moduleOk) return false;
   const verb = httpPermissionVerb(method);
@@ -91,6 +91,40 @@ describe('RolesGuard + módulos concedidos', () => {
     );
     assert.equal(
       wouldAllow(Role.corretor, [Role.admin, Role.financeiro], '/financeiro/titulos', 'POST', null),
+      false,
+    );
+  });
+
+  it('corretor com Vendas consulta equipes e não cria equipe', () => {
+    assert.equal(
+      wouldAllow(Role.corretor, [Role.admin, Role.gerente], '/api/equipes', 'GET', {
+        modules: { vendas: true },
+        actions: {},
+      }),
+      true,
+    );
+    assert.equal(
+      wouldAllow(Role.corretor, [Role.admin, Role.gerente], '/api/equipes', 'POST', {
+        modules: { vendas: true },
+        actions: {},
+      }),
+      false,
+    );
+  });
+
+  it('corretor com Usuários lista a imobiliária e sem o módulo continua bloqueado', () => {
+    assert.equal(
+      wouldAllow(Role.corretor, [Role.admin, Role.gerente, Role.analista], '/api/users', 'GET', {
+        modules: { usuarios: true },
+        actions: {},
+      }),
+      true,
+    );
+    assert.equal(
+      wouldAllow(Role.corretor, [Role.admin, Role.gerente, Role.analista], '/api/users', 'GET', {
+        modules: { vendas: true },
+        actions: {},
+      }),
       false,
     );
   });

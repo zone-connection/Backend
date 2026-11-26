@@ -31,6 +31,7 @@ import {
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { requireTenantId } from '../common/utils/tenant';
 import { isCorretorLike } from '../common/utils/roles';
+import { hasUserModule } from '../common/utils/user-permissions';
 import { prismaTableOrderBy } from '../common/utils/table-sort';
 import { publicUserSelect, PublicUser } from '../common/utils/user-select';
 import { normalizeCor } from '../common/utils/cor';
@@ -402,7 +403,7 @@ export class UsersService {
   ): Promise<PaginatedUsers> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const teamFilter = await this.teamUserFilter(requester);
+    const teamFilter = await this.teamUserFilter(requester, 'users');
 
     const where: Prisma.UserWhereInput = {
       ...teamFilter,
@@ -453,7 +454,7 @@ export class UsersService {
     requester: AuthenticatedUser,
   ): Promise<{ data: UserPresenceToday[] }> {
     const tenantId = requireTenantId(requester);
-    const teamFilter = await this.teamUserFilter(requester);
+    const teamFilter = await this.teamUserFilter(requester, 'presence');
     const users = await this.prisma.user.findMany({
       where: teamFilter,
       select: { id: true },
@@ -887,6 +888,7 @@ export class UsersService {
   /** Gerente: só membros da própria equipe (+ ele mesmo). Admin: todos do tenant. */
   private async teamUserFilter(
     requester: AuthenticatedUser,
+    purpose: 'users' | 'presence',
   ): Promise<Prisma.UserWhereInput> {
     if (requester.role === Role.super_admin) {
       return { tenantId: null, role: Role.super_admin };
@@ -903,6 +905,13 @@ export class UsersService {
     }
 
     if (requester.role !== Role.gerente) {
+      const canSeeTenant =
+        (purpose === 'users' &&
+          hasUserModule(requester.role, requester.permissions, 'usuarios')) ||
+        (purpose === 'presence' &&
+          (hasUserModule(requester.role, requester.permissions, 'usuarios') ||
+            hasUserModule(requester.role, requester.permissions, 'presenca')));
+      if (canSeeTenant) return { tenantId };
       throw new ForbiddenException('Acesso negado.');
     }
 
@@ -923,6 +932,12 @@ export class UsersService {
     }
 
     if (requester.role !== Role.gerente) {
+      if (
+        hasUserModule(requester.role, requester.permissions, 'usuarios') ||
+        hasUserModule(requester.role, requester.permissions, 'presenca')
+      ) {
+        return;
+      }
       throw new ForbiddenException('Acesso negado.');
     }
     if (user.id === requester.id) return;
