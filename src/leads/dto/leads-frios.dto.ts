@@ -3,14 +3,38 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsIn,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+export class QueryLeadsFriosDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10000)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsIn([20, 50])
+  pageSize?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  q?: string;
+}
 
 export class LeadFrioRowDto {
   @IsString()
@@ -76,6 +100,14 @@ export class LeadFrioIdsDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(200)
+  @IsUUID('4', { each: true })
+  ids!: string[];
+}
+
+export class EnviarLeadsFriosDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(5000)
   @IsUUID('4', { each: true })
   ids!: string[];
 }

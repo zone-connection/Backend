@@ -18,6 +18,20 @@ function podeApagar(lead: { baseFria: boolean }) {
   return lead.baseFria === true;
 }
 
+function podeEnviar(
+  lead: { tipo: string; baseFria: boolean; perdidoAt: Date | null; corretorId: string | null },
+  gestor: boolean,
+  userId: string,
+) {
+  if (lead.tipo !== 'lead' || lead.baseFria || lead.perdidoAt) return false;
+  return gestor || lead.corretorId === userId;
+}
+
+function paginaSegura(page: number, total: number, pageSize: number) {
+  const last = Math.max(1, Math.ceil(total / pageSize));
+  return Math.min(page, last);
+}
+
 describe('leads frios não escondem a carteira', () => {
   it('lead que já existia continua na lista', () => {
     assert.equal(
@@ -43,6 +57,23 @@ describe('leads frios não escondem a carteira', () => {
       podeDevolver({ origemBaseFria: false, baseFria: false }),
       false,
     );
+  });
+
+  it('envio para a base aceita lead comum e recusa perdido, cliente e quem já está frio', () => {
+    const comum = { tipo: 'lead', baseFria: false, perdidoAt: null, corretorId: 'c1' };
+    assert.equal(podeEnviar(comum, true, 'admin'), true);
+    assert.equal(podeEnviar(comum, false, 'c1'), true);
+    assert.equal(podeEnviar(comum, false, 'outro'), false);
+    assert.equal(podeEnviar({ ...comum, perdidoAt: new Date() }, true, 'admin'), false);
+    assert.equal(podeEnviar({ ...comum, tipo: 'cliente' }, true, 'admin'), false);
+    assert.equal(podeEnviar({ ...comum, baseFria: true }, true, 'admin'), false);
+  });
+
+  it('a página pedida não passa da última', () => {
+    assert.equal(paginaSegura(1, 0, 20), 1);
+    assert.equal(paginaSegura(1, 45, 20), 1);
+    assert.equal(paginaSegura(9, 45, 20), 3);
+    assert.equal(paginaSegura(2, 60, 50), 2);
   });
 
   it('apagar só alcança quem ainda está na base', () => {
