@@ -12,7 +12,7 @@ import { AuthenticatedUser } from '../types/authenticated-user';
 import {
   hasAnyUserModule,
   hasModuleVerb,
-  hasUserAction,
+  canImportVendasPlanilha,
   hasUserModule,
   httpPermissionVerb,
   modulesForApiPath,
@@ -75,16 +75,7 @@ export class RolesGuard implements CanActivate {
 
     const path = rawPath.replace(/^\/+/, '').toLowerCase().replace(/^api\//, '');
     if (path.startsWith('documentacao/importar-vendas')) {
-      if (user.permissions?.actions?.['vendas.importar'] === false) {
-        throw new ForbiddenException(
-          'Você não tem permissão para importar a planilha de vendas.',
-        );
-      }
-      const roleOk = requiredRoles.some((role) => String(role) === String(user.role));
-      if (
-        roleOk ||
-        hasUserAction(user.role, user.permissions, 'vendas.importar')
-      ) {
+      if (canImportVendasPlanilha(user.role, user.permissions)) {
         return true;
       }
       throw new ForbiddenException(

@@ -4,7 +4,7 @@ import { Role } from '@prisma/client';
 import {
   hasAnyUserModule,
   hasModuleVerb,
-  hasUserAction,
+  canImportVendasPlanilha,
   httpPermissionVerb,
   modulesForApiPath,
 } from '../utils/user-permissions';
@@ -18,11 +18,7 @@ function wouldAllow(
 ) {
   const normalized = path.replace(/^\/+/, '').toLowerCase().replace(/^api\//, '');
   if (normalized.startsWith('documentacao/importar-vendas')) {
-    if (permissions?.actions?.['vendas.importar'] === false) return false;
-    return (
-      requiredRoles.some((item) => item === role) ||
-      hasUserAction(role, permissions, 'vendas.importar')
-    );
+    return canImportVendasPlanilha(role, permissions);
   }
   const allowed = requiredRoles.some((item) => item === role);
   const modules = modulesForApiPath(path, method);
@@ -150,6 +146,13 @@ describe('RolesGuard + módulos concedidos', () => {
     assert.equal(
       wouldAllow(Role.corretor, roles, '/api/documentacao/importar-vendas', 'POST', {
         modules: { vendas: true },
+        actions: {},
+      }),
+      true,
+    );
+    assert.equal(
+      wouldAllow(Role.corretor, roles, '/api/documentacao/importar-vendas', 'POST', {
+        modules: {},
         actions: {},
       }),
       false,
