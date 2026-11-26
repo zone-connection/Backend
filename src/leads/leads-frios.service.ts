@@ -10,7 +10,7 @@ import { isCorretorLike } from '../common/utils/roles';
 import { requireTenantId } from '../common/utils/tenant';
 import { FunisService } from '../funis/funis.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { ImportLeadsFriosDto, LeadFrioIdsDto } from './dto/leads-frios.dto';
+import { EnviarLeadsFriosDto, ImportLeadsFriosDto, LeadFrioIdsDto, QueryLeadsFriosDto } from './dto/leads-frios.dto';
 import { leadSelect } from './lead-select';
 
 const frioSelect = {
@@ -30,20 +30,38 @@ export class LeadsFriosService {
     }
   }
 
-  list(requester: AuthenticatedUser) {
+  async list(requester: AuthenticatedUser, query: QueryLeadsFriosDto) {
     this.assertAtivo(requester);
     const tenantId = requireTenantId(requester);
-    return this.prisma.lead.findMany({
-      where: {
-        tenantId,
-        baseFria: true,
-        perdidoAt: null,
-        tipo: ContatoTipo.lead,
-      },
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize === 50 ? 50 : 20;
+    const q = query.q?.trim();
+    const where: Prisma.LeadWhereInput = {
+      tenantId,
+      baseFria: true,
+      perdidoAt: null,
+      tipo: ContatoTipo.lead,
+      ...(q
+        ? {
+            OR: [
+              { nome: { contains: q, mode: 'insensitive' } },
+              { telefone: { contains: q } },
+              { cidade: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+    const total = await this.prisma.lead.count({ where });
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, lastPage);
+    const items = await this.prisma.lead.findMany({
+      where,
       select: frioSelect,
-      orderBy: { baseFriaEm: 'asc' },
-      take: 500,
+      orderBy: [{ baseFriaEm: 'asc' }, { id: 'asc' }],
+      skip: (safePage - 1) * pageSize,
+      take: pageSize,
     });
+    return { items, total, page: safePage, pageSize };
   }
 
   async importRows(dto: ImportLeadsFriosDto, requester: AuthenticatedUser) {
@@ -148,6 +166,36 @@ export class LeadsFriosService {
       },
     });
     return { updated: updated.count };
+  }
+
+  /** Tira leads ativos do funil e coloca na base fria, sem exigir origem fria. */
+  async enviar(dto: EnviarLeadsFriosDto, requester: AuthenticatedUser) {
+    this.assertAtivo(requester);
+    const tenantId = requireTenantId(requester);
+    const gestor =
+      requester.role === Role.admin ||
+      requester.role === Role.super_admin ||
+      requester.role === Role.gerente;
+    const now = new Date();
+    const updated = await this.prisma.lead.updateMany({
+      where: {
+        tenantId,
+        id: { in: dto.ids },
+        tipo: ContatoTipo.lead,
+        baseFria: false,
+        perdidoAt: null,
+        ...(gestor ? {} : { corretorId: requester.id }),
+      },
+      data: {
+        baseFria: true,
+        origemBaseFria: true,
+        baseFriaEm: now,
+        corretorId: null,
+        equipeId: null,
+        lastMovementAt: now,
+      },
+    });
+    return { updated: updated.count, skipped: dto.ids.length - updated.count };
   }
 
   async devolver(id: string, requester: AuthenticatedUser) {

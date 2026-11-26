@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
-import { ImportLeadsFriosDto, LeadFrioIdsDto } from './dto/leads-frios.dto';
+import { EnviarLeadsFriosDto, ImportLeadsFriosDto, LeadFrioIdsDto, QueryLeadsFriosDto } from './dto/leads-frios.dto';
 import { LeadsFriosService } from './leads-frios.service';
 
 @Controller('leads-frios')
@@ -20,8 +20,8 @@ export class LeadsFriosController {
   constructor(private readonly frios: LeadsFriosService) {}
 
   @Get()
-  list(@CurrentUser() user: AuthenticatedUser) {
-    return this.frios.list(user);
+  list(@CurrentUser() user: AuthenticatedUser, @Query() query: QueryLeadsFriosDto) {
+    return this.frios.list(user, query);
   }
 
   @Post('importar')
@@ -35,6 +35,11 @@ export class LeadsFriosController {
   @Post('puxar')
   puxar(@CurrentUser() user: AuthenticatedUser, @Body() dto: LeadFrioIdsDto) {
     return this.frios.puxar(dto, user);
+  }
+
+  @Post('enviar')
+  enviar(@CurrentUser() user: AuthenticatedUser, @Body() dto: EnviarLeadsFriosDto) {
+    return this.frios.enviar(dto, user);
   }
 
   @Post(':id/devolver')
