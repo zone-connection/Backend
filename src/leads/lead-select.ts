@@ -101,7 +101,7 @@ export const leadSelect = {
   perdidoAt: true,
   motivoPerda: true,
   perdidoPorId: true,
-  perdidoPor: { select: { id: true, name: true } },
+  perdidoPor: { select: { id: true, name: true, role: true } },
   stageEnteredAt: true,
   lastMovementAt: true,
   lastStageChangeAt: true,
