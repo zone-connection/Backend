@@ -3125,6 +3125,9 @@ export class LeadsService {
     },
     requester: AuthenticatedUser,
   ): Promise<void> {
+    if (requester.role === Role.admin || requester.role === Role.super_admin) {
+      return;
+    }
     const allowed = await this.teamScope.canAccessCorretor(
       requester,
       lead.corretorId,
@@ -3157,6 +3160,12 @@ export class LeadsService {
 
     return rows
       .filter((lead) => {
+        if (
+          requester.role === Role.admin ||
+          requester.role === Role.super_admin
+        ) {
+          return true;
+        }
         if (lead.origemAtrasoLiberacao === AtrasoLiberacaoDestino.retrabalho) {
           return this.canManageRetrabalho(requester);
         }
