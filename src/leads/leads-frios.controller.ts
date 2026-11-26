@@ -37,6 +37,11 @@ export class LeadsFriosController {
     return this.frios.puxar(dto, user);
   }
 
+  @Post('enviar/conferir')
+  conferirEnvio(@CurrentUser() user: AuthenticatedUser, @Body() dto: EnviarLeadsFriosDto) {
+    return this.frios.conferirEnvio(dto, user);
+  }
+
   @Post('enviar')
   enviar(@CurrentUser() user: AuthenticatedUser, @Body() dto: EnviarLeadsFriosDto) {
     return this.frios.enviar(dto, user);

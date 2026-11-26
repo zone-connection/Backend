@@ -168,24 +168,104 @@ export class LeadsFriosService {
     return { updated: updated.count };
   }
 
-  /** Tira leads ativos do funil e coloca na base fria, sem exigir origem fria. */
-  async enviar(dto: EnviarLeadsFriosDto, requester: AuthenticatedUser) {
+  private phoneKey(value: string) {
+    const trimmed = value.trim();
+    let digits = trimmed.replace(/\D/g, '');
+    const brasil =
+      digits.startsWith('55') && (digits.length === 12 || digits.length === 13);
+    if (trimmed.startsWith('+')) {
+      if (brasil) return digits.slice(2, 13);
+      return digits.slice(0, 15);
+    }
+    if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2);
+    return digits.slice(0, 11);
+  }
+
+  private async classificarEnvio(dto: EnviarLeadsFriosDto, requester: AuthenticatedUser) {
     this.assertAtivo(requester);
     const tenantId = requireTenantId(requester);
     const gestor =
       requester.role === Role.admin ||
       requester.role === Role.super_admin ||
       requester.role === Role.gerente;
+    const [selecionados, frios] = await Promise.all([
+      this.prisma.lead.findMany({
+        where: {
+          tenantId,
+          id: { in: dto.ids },
+          tipo: ContatoTipo.lead,
+          ...(gestor ? {} : { corretorId: requester.id }),
+        },
+        select: {
+          id: true,
+          nome: true,
+          telefone: true,
+          email: true,
+          cidade: true,
+          baseFria: true,
+          perdidoAt: true,
+        },
+      }),
+      this.prisma.lead.findMany({
+        where: { tenantId, baseFria: true, perdidoAt: null, tipo: ContatoTipo.lead },
+        select: { id: true, telefone: true, nome: true },
+      }),
+    ]);
+    const frioPorTelefone = new Map<string, { id: string; nome: string }>();
+    for (const frio of frios) {
+      const key = this.phoneKey(frio.telefone);
+      if (key.length >= 8 && !frioPorTelefone.has(key)) {
+        frioPorTelefone.set(key, { id: frio.id, nome: frio.nome });
+      }
+    }
+    const prontos: Array<{ id: string; nome: string; telefone: string; email: string; cidade: string }> = [];
+    const jaNoBolsao: Array<{
+      id: string;
+      nome: string;
+      telefone: string;
+      email: string;
+      cidade: string;
+      existente: string;
+    }> = [];
+    for (const lead of selecionados) {
+      const row = {
+        id: lead.id,
+        nome: lead.nome,
+        telefone: lead.telefone,
+        email: lead.email,
+        cidade: lead.cidade,
+      };
+      if (lead.baseFria || lead.perdidoAt) continue;
+      const key = this.phoneKey(lead.telefone);
+      const existente = key.length >= 8 ? frioPorTelefone.get(key) : undefined;
+      if (existente && existente.id !== lead.id) {
+        jaNoBolsao.push({ ...row, existente: existente.nome });
+        continue;
+      }
+      prontos.push(row);
+    }
+    return { prontos, jaNoBolsao };
+  }
+
+  async conferirEnvio(dto: EnviarLeadsFriosDto, requester: AuthenticatedUser) {
+    const { prontos, jaNoBolsao } = await this.classificarEnvio(dto, requester);
+    return {
+      prontos,
+      jaNoBolsao,
+      prontosCount: prontos.length,
+      repetidosCount: jaNoBolsao.length,
+    };
+  }
+
+  /** Tira leads ativos do funil e coloca na base fria, sem criar segunda cópia. */
+  async enviar(dto: EnviarLeadsFriosDto, requester: AuthenticatedUser) {
+    const { prontos, jaNoBolsao } = await this.classificarEnvio(dto, requester);
+    if (prontos.length === 0) {
+      return { updated: 0, skipped: jaNoBolsao.length };
+    }
     const now = new Date();
     const updated = await this.prisma.lead.updateMany({
-      where: {
-        tenantId,
-        id: { in: dto.ids },
-        tipo: ContatoTipo.lead,
-        baseFria: false,
-        perdidoAt: null,
-        ...(gestor ? {} : { corretorId: requester.id }),
-      },
+      where: { id: { in: prontos.map((lead) => lead.id) } },
       data: {
         baseFria: true,
         origemBaseFria: true,
@@ -195,7 +275,7 @@ export class LeadsFriosService {
         lastMovementAt: now,
       },
     });
-    return { updated: updated.count, skipped: dto.ids.length - updated.count };
+    return { updated: updated.count, skipped: jaNoBolsao.length };
   }
 
   async devolver(id: string, requester: AuthenticatedUser) {
