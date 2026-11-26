@@ -561,6 +561,19 @@ export function effectivePermissions(
   return merged;
 }
 
+/** Planilha de vendas: permissão explícita, ou módulo Vendas ligado sem essa ação desligada. */
+export function canImportVendasPlanilha(
+  role: Role,
+  stored: UserPermissions | null | undefined,
+): boolean {
+  if (stored?.actions?.['vendas.importar'] === false) return false;
+  if (stored?.actions?.['vendas.importar'] === true) return true;
+  if (role === Role.admin || role === Role.gerente || role === Role.super_admin) {
+    return true;
+  }
+  return stored?.modules?.vendas === true && stored?.actions?.['vendas.create'] !== false;
+}
+
 export function hasUserAction(
   role: Role,
   stored: UserPermissions | null | undefined,

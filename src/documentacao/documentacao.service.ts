@@ -31,7 +31,7 @@ import {
   FICHA_ANALISE_GUIADA_KEY,
   VENDA_DIRETA_FUNIL_KEY,
 } from '../tenants/tenant-plan';
-import { hasUserAction, hasUserModule } from '../common/utils/user-permissions';
+import { canImportVendasPlanilha, hasUserModule } from '../common/utils/user-permissions';
 import { prismaTableOrderBy } from '../common/utils/table-sort';
 import { CreateDocumentacaoDto } from './dto/create-documentacao.dto';
 import { UpdateDocumentacaoDto } from './dto/update-documentacao.dto';
@@ -424,7 +424,7 @@ export class DocumentacaoService {
   }
 
   async importarVendas(dto: ImportVendasDto, requester: AuthenticatedUser) {
-    if (!hasUserAction(requester.role, requester.permissions, 'vendas.importar')) {
+    if (!canImportVendasPlanilha(requester.role, requester.permissions)) {
       throw new ForbiddenException(
         'Você não tem permissão para importar a planilha de vendas.',
       );
