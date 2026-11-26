@@ -589,7 +589,11 @@ const SENSITIVE_WRITE_PREFIXES = ['users', 'tenants', 'equipes', 'presenca'] as 
  * Um path pode mapear para mais de um módulo (ex.: ranking serve Dashboard e Taxa).
  */
 export function modulesForApiPath(rawPath: string): string[] {
-  const path = rawPath.split('?')[0].replace(/^\/+/, '').toLowerCase();
+  const path = rawPath
+    .split('?')[0]
+    .replace(/^\/+/, '')
+    .toLowerCase()
+    .replace(/^api\//, '');
 
   if (path.startsWith('leads-frios')) return ['leads'];
   if (path.startsWith('leads/monitoramento')) return ['atrasos'];

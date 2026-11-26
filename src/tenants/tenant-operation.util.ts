@@ -59,7 +59,11 @@ export function mergeOperationModules(
 export function operationModuleForApiPath(
   rawPath: string,
 ): TenantOperationKey | null {
-  const path = rawPath.split('?')[0].replace(/^\/+/, '').toLowerCase();
+  const path = rawPath
+    .split('?')[0]
+    .replace(/^\/+/, '')
+    .toLowerCase()
+    .replace(/^api\//, '');
   // Imóvel pronto e proprietário pertencem ao catálogo de Imóveis.
   if (
     path.startsWith('captacao/imoveis') ||
