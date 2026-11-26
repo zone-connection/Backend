@@ -18,6 +18,8 @@ export function canFinanceiroAction(
   user: Pick<AuthenticatedUser, 'role' | 'financeiroPerms' | 'permissions'>,
   action: FinanceiroAcao,
 ): boolean {
+  const stored = user.permissions?.actions;
+  if (stored?.[`financeiro.${action}`] === false) return false;
   if (
     user.role === Role.admin ||
     user.role === Role.super_admin ||

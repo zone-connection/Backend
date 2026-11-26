@@ -6,6 +6,7 @@ import {
   defaultsFromRole,
   hasAnyUserModule,
   hasUserAction,
+  hasModuleVerb,
   hasUserModule,
   isSensitiveApiWrite,
   moduleGrantedBeyondRole,
@@ -195,5 +196,41 @@ describe('permissões por usuário', () => {
       permissions: null,
     };
     assert.equal(canFinanceiroAction(user, 'view'), false);
+  });
+
+  it('mapeia rotas que antes ficavam sem módulo', () => {
+    assert.deepEqual(modulesForApiPath('/leads-frios'), ['leads']);
+    assert.deepEqual(modulesForApiPath('/tarefas'), ['agenda']);
+    assert.deepEqual(modulesForApiPath('/rh/funcionarios'), ['usuarios']);
+    assert.deepEqual(modulesForApiPath('/listas-documentos'), ['documentacao']);
+  });
+
+  it('view não libera criar, e false explícito bloqueia o cargo', () => {
+    const viewOnly = {
+      modules: { leads: true },
+      actions: { 'leads.view': true, 'leads.create': false },
+    };
+    assert.equal(hasModuleVerb(Role.corretor, viewOnly, 'leads', 'view'), true);
+    assert.equal(hasModuleVerb(Role.corretor, viewOnly, 'leads', 'create'), false);
+    assert.equal(
+      hasModuleVerb(Role.admin, { modules: {}, actions: { 'leads.delete': false } }, 'leads', 'delete'),
+      false,
+    );
+  });
+
+  it('módulo concedido sem ações explícitas continua com acesso total', () => {
+    const extra = { modules: { financeiro: true }, actions: {} };
+    assert.equal(hasModuleVerb(Role.corretor, extra, 'financeiro', 'create'), true);
+    assert.equal(hasModuleVerb(Role.corretor, extra, 'financeiro', 'delete'), true);
+  });
+
+  it('financeiro.create false bloqueia o administrador', () => {
+    const user = {
+      role: Role.admin,
+      financeiroPerms: undefined,
+      permissions: { modules: { financeiro: true }, actions: { 'financeiro.create': false } },
+    };
+    assert.equal(canFinanceiroAction(user, 'create'), false);
+    assert.equal(canFinanceiroAction(user, 'view'), true);
   });
 });

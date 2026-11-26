@@ -399,9 +399,19 @@ export function sanitizeUserPermissions(raw: unknown): UserPermissions {
   }
   if (obj.actions && typeof obj.actions === 'object') {
     const actions = obj.actions as Record<string, unknown>;
-    for (const item of PERMISSION_ACTIONS) {
-      if (typeof actions[item.key] === 'boolean') {
-        next.actions[item.key] = actions[item.key] as boolean;
+    const verbs = new Set(['view', 'create', 'edit', 'delete']);
+    for (const [key, value] of Object.entries(actions)) {
+      if (typeof value !== 'boolean') continue;
+      if (PERMISSION_ACTIONS.some((item) => item.key === key)) {
+        next.actions[key] = value;
+        continue;
+      }
+      const [moduleKey, verb] = key.split('.');
+      if (
+        verbs.has(verb) &&
+        PERMISSION_MODULES.some((item) => item.key === moduleKey)
+      ) {
+        next.actions[key] = value;
       }
     }
   }
@@ -466,6 +476,20 @@ export function defaultsFromRole(role: Role): UserPermissions {
       role === Role.admin || role === Role.super_admin,
   };
 
+  for (const item of PERMISSION_MODULES) {
+    if (modules[item.key] !== true) continue;
+    const view = `${item.key}.view`;
+    const create = `${item.key}.create`;
+    const edit = `${item.key}.edit`;
+    const remove = `${item.key}.delete`;
+    if (actions[view] === undefined) actions[view] = true;
+    if (actions[create] === undefined) actions[create] = true;
+    if (actions[edit] === undefined) actions[edit] = true;
+    if (actions[remove] === undefined) {
+      actions[remove] = role === Role.admin || role === Role.super_admin;
+    }
+  }
+
   return { modules, actions };
 }
 
@@ -514,6 +538,7 @@ function grantActionsOfExtraModules(
       const financeiro =
         item.key === 'financeiro' && action.module === 'financeiro';
       if (sameModule || comissao || financeiro) {
+        if (stored.actions?.[action.key] === false) continue;
         merged.actions[action.key] = true;
       }
     }
@@ -566,6 +591,7 @@ const SENSITIVE_WRITE_PREFIXES = ['users', 'tenants', 'equipes', 'presenca'] as 
 export function modulesForApiPath(rawPath: string): string[] {
   const path = rawPath.split('?')[0].replace(/^\/+/, '').toLowerCase();
 
+  if (path.startsWith('leads-frios')) return ['leads'];
   if (path.startsWith('leads/monitoramento')) return ['atrasos'];
   if (path.startsWith('leads/perdidos') || path.startsWith('leads/clientes-perdidos')) {
     return path.includes('clientes-perdidos')
@@ -591,7 +617,13 @@ export function modulesForApiPath(rawPath: string): string[] {
   if (path.startsWith('contratos')) return ['contratos'];
   if (path.startsWith('funis')) return ['funil'];
   if (path.startsWith('leads')) return ['leads'];
-  if (path.startsWith('agenda')) return ['agenda'];
+  if (path.startsWith('agenda') || path.startsWith('tarefas') || path.startsWith('lembretes')) {
+    return ['agenda'];
+  }
+  if (path.startsWith('rh') || path.startsWith('funcionarios')) return ['usuarios'];
+  if (path.startsWith('atendimento')) return ['leads'];
+  if (path.startsWith('listas-documentos')) return ['documentacao'];
+  if (path.startsWith('arquivos')) return ['documentacao', 'leads'];
   if (path.startsWith('users')) return ['usuarios'];
   if (path.startsWith('equipes')) return ['equipes'];
   if (path.startsWith('analise')) return ['analise'];
@@ -621,6 +653,36 @@ export function modulesForApiPath(rawPath: string): string[] {
   if (path.startsWith('captacao')) return ['captacao'];
   if (path.startsWith('locacao')) return ['locacao'];
   return [];
+}
+
+export type HttpPermissionVerb = 'view' | 'create' | 'edit' | 'delete';
+
+export function httpPermissionVerb(method: string): HttpPermissionVerb | null {
+  const verb = method.toUpperCase();
+  if (verb === 'GET' || verb === 'HEAD') return 'view';
+  if (verb === 'POST') return 'create';
+  if (verb === 'PUT' || verb === 'PATCH') return 'edit';
+  if (verb === 'DELETE') return 'delete';
+  return null;
+}
+
+/** Ação do método HTTP no módulo. `false` explícito no JSON bloqueia, mesmo com o cargo. */
+export function hasModuleVerb(
+  role: Role,
+  stored: UserPermissions | null | undefined,
+  moduleKey: string,
+  verb: HttpPermissionVerb,
+): boolean {
+  const key = `${moduleKey}.${verb}`;
+  if (stored?.actions?.[key] === false) return false;
+  const effective = effectivePermissions(role, stored);
+  if (effective.actions[key] === true) return true;
+  if (verb === 'view' && effective.modules[moduleKey] === true) return true;
+  return (
+    stored?.actions?.[key] === undefined &&
+    stored?.modules?.[moduleKey] === true &&
+    defaultsFromRole(role).modules[moduleKey] !== true
+  );
 }
 
 export function isSensitiveApiWrite(rawPath: string, method: string): boolean {
