@@ -4,13 +4,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ContatoTipo, Prisma, Role } from '@prisma/client';
+import { ContatoTipo, LeadAtribuicaoAcao, Prisma, Role, UserStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { isCorretorLike } from '../common/utils/roles';
 import { requireTenantId } from '../common/utils/tenant';
 import { FunisService } from '../funis/funis.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { EnviarLeadsFriosDto, ImportLeadsFriosDto, LeadFrioIdsDto, QueryLeadsFriosDto } from './dto/leads-frios.dto';
+import { DistribuirLeadsFriosDto, EnviarLeadsFriosDto, ImportLeadsFriosDto, LeadFrioIdsDto, QueryLeadsFriosDto } from './dto/leads-frios.dto';
+import { registrarAtribuicoes } from './lead-atribuicao-historico';
 import { leadSelect } from './lead-select';
 
 const frioSelect = {
@@ -148,11 +149,23 @@ export class LeadsFriosService {
   async puxar(dto: LeadFrioIdsDto, requester: AuthenticatedUser) {
     this.assertAtivo(requester);
     const tenantId = requireTenantId(requester);
-    const corretorId = requester.id;
+    const dono = await this.prisma.user.findFirst({
+      where: { id: requester.id, tenantId },
+      select: { id: true, equipeId: true, role: true },
+    });
+    let equipeId = dono?.equipeId ?? null;
+    if (dono?.role === Role.gerente) {
+      const equipe = await this.prisma.equipe.findFirst({
+        where: { gerenteId: requester.id, tenantId },
+        select: { id: true },
+      });
+      equipeId = equipe?.id ?? equipeId;
+    }
+    const ids = [...new Set(dto.ids)];
     const updated = await this.prisma.lead.updateMany({
       where: {
         tenantId,
-        id: { in: dto.ids },
+        id: { in: ids },
         baseFria: true,
         perdidoAt: null,
       },
@@ -160,12 +173,118 @@ export class LeadsFriosService {
         baseFria: false,
         origemBaseFria: true,
         baseFriaEm: null,
-        corretorId,
-        equipeId: null,
+        corretorId: requester.id,
+        equipeId,
         lastMovementAt: new Date(),
       },
     });
+    await registrarAtribuicoes(
+      this.prisma,
+      ids.map((leadId) => ({
+        tenantId,
+        leadId,
+        acao: LeadAtribuicaoAcao.distribuicao,
+        actorId: requester.id,
+        toCorretorId: requester.id,
+        toEquipeId: equipeId,
+      })),
+    );
     return { updated: updated.count };
+  }
+
+  async distribuir(dto: DistribuirLeadsFriosDto, requester: AuthenticatedUser) {
+    this.assertAtivo(requester);
+    if (
+      requester.role !== Role.admin &&
+      requester.role !== Role.super_admin &&
+      requester.role !== Role.gerente
+    ) {
+      throw new ForbiddenException('Só a gestão redistribui a base fria.');
+    }
+    const tenantId = requireTenantId(requester);
+    const ids = [...new Set(dto.ids)];
+    const totalPedido = dto.alocacoes.reduce((sum, item) => sum + item.quantidade, 0);
+    if (totalPedido !== ids.length) {
+      throw new BadRequestException(
+        'A soma das quantidades precisa ser igual aos leads selecionados.',
+      );
+    }
+    const corretorIds = [...new Set(dto.alocacoes.map((item) => item.corretorId))];
+    const pessoas = await this.prisma.user.findMany({
+      where: {
+        tenantId,
+        id: { in: corretorIds },
+        status: UserStatus.ativo,
+        role: { in: [Role.corretor, Role.treinee, Role.gerente, Role.admin] },
+      },
+      select: { id: true, equipeId: true, role: true },
+    });
+    if (pessoas.length !== corretorIds.length) {
+      throw new BadRequestException('Um ou mais destinos são inválidos ou inativos.');
+    }
+    const frios = await this.prisma.lead.findMany({
+      where: {
+        tenantId,
+        id: { in: ids },
+        baseFria: true,
+        perdidoAt: null,
+        tipo: ContatoTipo.lead,
+      },
+      select: { id: true },
+    });
+    if (frios.length !== ids.length) {
+      throw new BadRequestException('Só dá para redistribuir leads que ainda estão na base fria.');
+    }
+    const porId = new Map(pessoas.map((pessoa) => [pessoa.id, pessoa]));
+    let offset = 0;
+    let updated = 0;
+    await this.prisma.$transaction(async (tx) => {
+      for (const aloc of dto.alocacoes) {
+        const pessoa = porId.get(aloc.corretorId)!;
+        let equipeId = pessoa.equipeId;
+        if (pessoa.role === Role.gerente) {
+          const equipe = await tx.equipe.findFirst({
+            where: { gerenteId: pessoa.id, tenantId },
+            select: { id: true },
+          });
+          equipeId = equipe?.id ?? equipeId;
+        }
+        const slice = ids.slice(offset, offset + aloc.quantidade);
+        offset += aloc.quantidade;
+        const result = await tx.lead.updateMany({
+          where: {
+            tenantId,
+            id: { in: slice },
+            baseFria: true,
+            perdidoAt: null,
+          },
+          data: {
+            baseFria: false,
+            origemBaseFria: true,
+            baseFriaEm: null,
+            corretorId: pessoa.id,
+            equipeId,
+            lastMovementAt: new Date(),
+          },
+        });
+        if (result.count !== slice.length) {
+          throw new BadRequestException('A redistribuição mudou no meio do caminho. Nada foi gravado.');
+        }
+        updated += result.count;
+        await registrarAtribuicoes(
+          tx,
+          slice.map((leadId) => ({
+            tenantId,
+            leadId,
+            acao: LeadAtribuicaoAcao.distribuicao,
+            actorId: requester.id,
+            toCorretorId: pessoa.id,
+            toEquipeId: equipeId,
+          })),
+        );
+      }
+    });
+    return { updated };
   }
 
   private phoneKey(value: string) {

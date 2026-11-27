@@ -213,6 +213,10 @@ export class LeadsService {
     await this.ensureStageIsValid(tenantId, stage, placement.funilId);
 
     const telefone = dto.telefone.trim();
+    const frio = await this.leadFrioPorTelefone(tenantId, telefone);
+    if (frio) {
+      return this.adotarLeadFrio(frio.id, dto, requester, tenantId, assignment, stage, placement.funilId);
+    }
     await this.assertTelefoneDisponivel(tenantId, telefone);
     const phoneDigits = telefone.replace(/\D/g, "");
     const emailRaw = dto.email?.trim().toLowerCase() || "";
@@ -3416,6 +3420,124 @@ export class LeadsService {
       if (nome) emails[key] = nome;
     }
     return { tipo: kindLabel, phones, emails };
+  }
+
+  private async leadFrioPorTelefone(tenantId: string, telefone: string) {
+    const key = nationalPhoneKey(telefone);
+    if (!key) return null;
+    const rows = await this.prisma.lead.findMany({
+      where: {
+        tenantId,
+        baseFria: true,
+        perdidoAt: null,
+        tipo: ContatoTipo.lead,
+      },
+      select: { id: true, telefone: true },
+    });
+    return rows.find((row) => nationalPhoneKey(row.telefone) === key) ?? null;
+  }
+
+  /**
+   * Cadastro com telefone que já está na base fria tira o lead de lá
+   * e entrega para quem tentou criar (ou para o corretor escolhido no formulário).
+   */
+  private async adotarLeadFrio(
+    id: string,
+    dto: CreateLeadDto,
+    requester: AuthenticatedUser,
+    tenantId: string,
+    assignment: { corretorId: string | null; equipeId: string | null },
+    stage: string,
+    funilId: string,
+  ): Promise<LeadEntity> {
+    let corretorId = assignment.corretorId;
+    let equipeId = assignment.equipeId;
+    if (!corretorId) {
+      corretorId = requester.id;
+      const self = await this.prisma.user.findFirst({
+        where: { id: requester.id, tenantId },
+        select: { equipeId: true, role: true },
+      });
+      equipeId = self?.equipeId ?? null;
+      if (self?.role === Role.gerente) {
+        const equipe = await this.prisma.equipe.findFirst({
+          where: { gerenteId: requester.id, tenantId },
+          select: { id: true },
+        });
+        equipeId = equipe?.id ?? equipeId;
+      }
+    }
+    const telefone = dto.telefone.trim();
+    const phoneDigits = telefone.replace(/\D/g, '');
+    const emailRaw = dto.email?.trim().toLowerCase() || '';
+    const email =
+      emailRaw ||
+      `contato.${phoneDigits || Date.now()}@sem-email.local`;
+    const prospeccao = sanitizeProspeccao(dto.prospeccao);
+    const timing = await this.monitoramento.stageChangeData(
+      tenantId,
+      stage,
+      new Date(),
+      funilId,
+    );
+    const updated = await this.prisma.lead.update({
+      where: { id },
+      data: {
+        nome: dto.nome.trim(),
+        telefone,
+        email,
+        origem: dto.origem?.trim() || '',
+        interesse: dto.interesse,
+        categoria: dto.categoria || null,
+        cidade: dto.cidade.trim(),
+        bairro: dto.bairro.trim(),
+        stage,
+        funilId,
+        prioridade: dto.prioridade ?? 'Média',
+        renda: dto.renda ?? null,
+        tipoRenda: dto.tipoRenda?.trim() || null,
+        estadoCivil: dto.estadoCivil?.trim() || null,
+        cpf: dto.cpf?.trim() || null,
+        rg: dto.rg?.trim() || null,
+        endereco: dto.endereco?.trim() || null,
+        cep: dto.cep?.trim() || null,
+        orcamentoMax: dto.orcamentoMax ?? null,
+        quartosMin: dto.quartosMin ?? null,
+        vagasMin: dto.vagasMin ?? null,
+        ...(prospeccao !== undefined ? { prospeccao } : {}),
+        tags: dto.tags ?? [],
+        corretorId,
+        equipeId,
+        baseFria: false,
+        origemBaseFria: true,
+        baseFriaEm: null,
+        ...timing,
+      },
+      select: leadSelect,
+    });
+    await registrarAtribuicoes(this.prisma, [
+      {
+        tenantId,
+        leadId: updated.id,
+        acao: LeadAtribuicaoAcao.distribuicao,
+        actorId: requester.id,
+        toCorretorId: corretorId,
+        toEquipeId: equipeId,
+      },
+    ]);
+    await this.seedInteresses(
+      updated.id,
+      tenantId,
+      dto.empreendimentoIds,
+      dto.imovelIds,
+      corretorId,
+    );
+    void this.leadNotify.notifyNewLead({
+      tenantId,
+      lead: this.notifySnapshot(updated),
+      actorUserId: requester.id,
+    });
+    return this.decorateOne(updated, requester);
   }
 
   private async assertTelefoneDisponivel(

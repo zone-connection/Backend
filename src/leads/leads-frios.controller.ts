@@ -4,7 +4,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
-import { EnviarLeadsFriosDto, ImportLeadsFriosDto, LeadFrioIdsDto, QueryLeadsFriosDto } from './dto/leads-frios.dto';
+import { DistribuirLeadsFriosDto, EnviarLeadsFriosDto, ImportLeadsFriosDto, LeadFrioIdsDto, QueryLeadsFriosDto } from './dto/leads-frios.dto';
 import { LeadsFriosService } from './leads-frios.service';
 
 @Controller('leads-frios')
@@ -35,6 +35,14 @@ export class LeadsFriosController {
   @Post('puxar')
   puxar(@CurrentUser() user: AuthenticatedUser, @Body() dto: LeadFrioIdsDto) {
     return this.frios.puxar(dto, user);
+  }
+
+  @Post('distribuir')
+  distribuir(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: DistribuirLeadsFriosDto,
+  ) {
+    return this.frios.distribuir(dto, user);
   }
 
   @Post('enviar/conferir')

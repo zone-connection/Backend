@@ -104,6 +104,32 @@ export class LeadFrioIdsDto {
   ids!: string[];
 }
 
+export class DistribuirFrioAlocacaoDto {
+  @IsUUID()
+  corretorId!: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  quantidade!: number;
+}
+
+export class DistribuirLeadsFriosDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('4', { each: true })
+  ids!: string[];
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => DistribuirFrioAlocacaoDto)
+  alocacoes!: DistribuirFrioAlocacaoDto[];
+}
+
 export class EnviarLeadsFriosDto {
   @IsArray()
   @ArrayMinSize(1)
