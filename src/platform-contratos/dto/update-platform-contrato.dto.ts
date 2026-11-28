@@ -46,6 +46,18 @@ export class UpdatePlatformContratoDto {
   valor?: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Valor de adesão inválido.' })
+  @Min(0)
+  valorAdesao?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Valor de mensalidade inválido.' })
+  @Min(0)
+  valorMensalidade?: number;
+
+  @IsOptional()
   @IsDateString({}, { message: 'Data de início inválida.' })
   dataInicio?: string;
 

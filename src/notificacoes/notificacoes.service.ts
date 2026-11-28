@@ -12,6 +12,8 @@ const notifSelect = {
   leadId: true,
   analiseId: true,
   agendamentoId: true,
+  empreendimentoId: true,
+  propostaId: true,
   createdAt: true,
 } satisfies Prisma.NotificacaoSelect;
 
@@ -154,7 +156,7 @@ export class NotificacoesService {
     });
   }
 
-  /** Lembrete de compromisso próximo (1 dia / 2h / 1h). Idempotente por tipo+agendamento. */
+  /** Lembrete de compromisso (1 dia / 2h / 1h / 15 min / na hora). Idempotente por tipo+agendamento. */
   async createAgendaLembrete(params: {
     userId: string;
     agendamentoId: string;
@@ -168,7 +170,9 @@ export class NotificacoesService {
     tipo:
       | typeof NotificacaoTipo.agenda_lembrete_1d
       | typeof NotificacaoTipo.agenda_lembrete_2h
-      | typeof NotificacaoTipo.agenda_lembrete_1h;
+      | typeof NotificacaoTipo.agenda_lembrete_1h
+      | typeof NotificacaoTipo.agenda_lembrete_15m
+      | typeof NotificacaoTipo.agenda_lembrete_agora;
   }) {
     const existing = await this.prisma.notificacao.findFirst({
       where: {
@@ -181,19 +185,30 @@ export class NotificacoesService {
     if (existing) return null;
 
     const janela =
-      params.tipo === NotificacaoTipo.agenda_lembrete_1h
-        ? '1 hora'
-        : params.tipo === NotificacaoTipo.agenda_lembrete_2h
-          ? '2 horas'
-          : '1 dia';
+      params.tipo === NotificacaoTipo.agenda_lembrete_agora
+        ? 'agora'
+        : params.tipo === NotificacaoTipo.agenda_lembrete_15m
+          ? '15 minutos'
+          : params.tipo === NotificacaoTipo.agenda_lembrete_1h
+            ? '1 hora'
+            : params.tipo === NotificacaoTipo.agenda_lembrete_2h
+              ? '2 horas'
+              : '1 dia';
 
     const envolvidos = params.envolvidos?.trim() ?? '';
+    const naHora = params.tipo === NotificacaoTipo.agenda_lembrete_agora;
     const titulo = params.tomInformativo
       ? `Agenda da equipe — ${params.titulo}`
-      : `Lembrete (${janela}) — ${params.titulo}`;
+      : naHora
+        ? `Agora — ${params.titulo}`
+        : `Lembrete (${janela}) — ${params.titulo}`;
     const corpo = params.tomInformativo
-      ? `Aviso informativo: compromisso da equipe "${params.titulo}"${envolvidos} em ${params.quando}.`
-      : `Seu compromisso "${params.titulo}"${envolvidos} começa em ${params.quando}.`;
+      ? naHora
+        ? `Aviso informativo: compromisso da equipe "${params.titulo}"${envolvidos} está começando (${params.quando}).`
+        : `Aviso informativo: compromisso da equipe "${params.titulo}"${envolvidos} em ${params.quando}.`
+      : naHora
+        ? `Seu compromisso "${params.titulo}"${envolvidos} está começando agora (${params.quando}).`
+        : `Seu compromisso "${params.titulo}"${envolvidos} começa em ${params.quando}.`;
 
     const tenantId = await this.resolveTenantId(params.userId);
 
@@ -206,6 +221,375 @@ export class NotificacoesService {
         corpo,
         leadId: params.leadId ?? null,
         agendamentoId: params.agendamentoId,
+      },
+      select: notifSelect,
+    });
+  }
+
+  /**
+   * Alerta de prazo do lead. Idempotente por usuário + lead + tipo + eventoChave
+   * (ex.: entrada na etapa + deadline), para não repetir a cada polling.
+   */
+  async createLeadPrazoAlerta(params: {
+    userId: string;
+    leadId: string;
+    leadNome: string;
+    eventoChave: string;
+    tipo:
+      | typeof NotificacaoTipo.lead_prazo_proximo
+      | typeof NotificacaoTipo.lead_prazo_ultrapassado;
+    detalhe: string;
+  }) {
+    const existing = await this.prisma.notificacao.findFirst({
+      where: {
+        userId: params.userId,
+        leadId: params.leadId,
+        tipo: params.tipo,
+        eventoChave: params.eventoChave,
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+
+    const tenantId = await this.resolveTenantId(params.userId);
+    const proximo = params.tipo === NotificacaoTipo.lead_prazo_proximo;
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: params.tipo,
+        titulo: proximo
+          ? `Prazo próximo do vencimento — ${params.leadNome}`
+          : `Prazo da etapa ultrapassado — ${params.leadNome}`,
+        corpo: params.detalhe,
+        leadId: params.leadId,
+        eventoChave: params.eventoChave,
+      },
+      select: notifSelect,
+    });
+  }
+
+    /** Avisa o corretor sobre tarefa atribuída na agenda por gerente/admin. */
+  async createAgendaAtribuicao(params: {
+    userId: string;
+    agendamentoId: string;
+    titulo: string;
+    autorNome: string;
+    quando: string;
+  }) {
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: NotificacaoTipo.agenda_atribuicao,
+        titulo: `Nova tarefa na sua agenda — ${params.titulo}`,
+        corpo: `${params.autorNome} atribuiu a tarefa "${params.titulo}" para ${params.quando}.`,
+        agendamentoId: params.agendamentoId,
+      },
+      select: notifSelect,
+    });
+  }
+
+  /**
+   * Tarefa atrasada. Idempotente por usuário + agendamento.
+   * Destinatários: corretor, gerente da equipe e administradores.
+   */
+  async createTarefaAtrasada(params: {
+    userId: string;
+    leadId: string | null;
+    agendamentoId: string;
+    leadNome: string;
+    titulo: string;
+    prazoLabel: string;
+  }) {
+    const existing = await this.prisma.notificacao.findFirst({
+      where: {
+        userId: params.userId,
+        agendamentoId: params.agendamentoId,
+        tipo: NotificacaoTipo.tarefa_atrasada,
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+
+    const tenantId = await this.resolveTenantId(params.userId);
+    const contato = params.leadNome ? ` do contato ${params.leadNome}` : '';
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: NotificacaoTipo.tarefa_atrasada,
+        titulo: `Follow-up atrasado — ${params.titulo}`,
+        corpo: `O follow-up "${params.titulo}"${contato} ultrapassou o prazo (${params.prazoLabel}) sem conclusão.`,
+        leadId: params.leadId,
+        agendamentoId: params.agendamentoId,
+        eventoChave: params.agendamentoId,
+      },
+      select: notifSelect,
+    });
+  }
+
+  /**
+   * Match de imóvel compatível com a carteira do corretor.
+   * Idempotente por usuário + empreendimento + eventoChave.
+   */
+  async createImovelCompativel(params: {
+    userId: string;
+    empreendimentoId: string;
+    empreendimentoNome: string;
+    total: number;
+    muitoCompativeis: number;
+    comInteressePrevio: number;
+    eventoChave: string;
+  }) {
+    const existing = await this.prisma.notificacao.findFirst({
+      where: {
+        userId: params.userId,
+        empreendimentoId: params.empreendimentoId,
+        tipo: NotificacaoTipo.imovel_compativel,
+        eventoChave: params.eventoChave,
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+
+    const tenantId = await this.resolveTenantId(params.userId);
+    const partes = [
+      `${params.total} cliente${params.total === 1 ? '' : 's'} compatível${params.total === 1 ? '' : 'eis'}`,
+      `${params.muitoCompativeis} muito compatível${params.muitoCompativeis === 1 ? '' : 'eis'}`,
+    ];
+    if (params.comInteressePrevio > 0) {
+      partes.push(
+        `${params.comInteressePrevio} com interesse prévio em imóveis semelhantes`,
+      );
+    }
+
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: NotificacaoTipo.imovel_compativel,
+        titulo: `Novos matches — ${params.empreendimentoNome}`,
+        corpo: `Imóvel "${params.empreendimentoNome}": ${partes.join('; ')}.`,
+        empreendimentoId: params.empreendimentoId,
+        eventoChave: params.eventoChave,
+      },
+      select: notifSelect,
+    });
+  }
+
+  /**
+   * Lead parado sem atendimento (inatividade do funil).
+   * Idempotente por usuário + lead + lastMovementAt.
+   */
+  async createLeadSemAtendimento(params: {
+    userId: string;
+    leadId: string;
+    leadNome: string;
+    eventoChave: string;
+    detalhe: string;
+  }) {
+    const existing = await this.prisma.notificacao.findFirst({
+      where: {
+        userId: params.userId,
+        leadId: params.leadId,
+        tipo: NotificacaoTipo.lead_sem_atendimento,
+        eventoChave: params.eventoChave,
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: NotificacaoTipo.lead_sem_atendimento,
+        titulo: `Lead sem atendimento — ${params.leadNome}`,
+        corpo: params.detalhe,
+        leadId: params.leadId,
+        eventoChave: params.eventoChave,
+      },
+      select: notifSelect,
+    });
+  }
+
+  /**
+   * Proposta com validade próxima. Idempotente por usuário + proposta + validade.
+   */
+  async createPropostaVencimentoProximo(params: {
+    userId: string;
+    propostaId: string;
+    codigo: string;
+    clienteNome: string;
+    validadeLabel: string;
+    leadId?: string | null;
+    eventoChave: string;
+  }) {
+    const existing = await this.prisma.notificacao.findFirst({
+      where: {
+        userId: params.userId,
+        propostaId: params.propostaId,
+        tipo: NotificacaoTipo.proposta_vencimento_proximo,
+        eventoChave: params.eventoChave,
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: NotificacaoTipo.proposta_vencimento_proximo,
+        titulo: `Proposta próxima do vencimento — ${params.codigo}`,
+        corpo: `A proposta ${params.codigo} de ${params.clienteNome} vence em ${params.validadeLabel}.`,
+        propostaId: params.propostaId,
+        leadId: params.leadId ?? null,
+        eventoChave: params.eventoChave,
+      },
+      select: notifSelect,
+    });
+  }
+
+  async createPropostaPublica(params: {
+    userId: string;
+    propostaId: string;
+    tipo:
+      | typeof NotificacaoTipo.proposta_publica_recebida
+      | typeof NotificacaoTipo.proposta_publica_aceita;
+    titulo: string;
+    corpo: string;
+    eventoChave: string;
+  }) {
+    const existing = await this.prisma.notificacao.findFirst({
+      where: {
+        userId: params.userId,
+        propostaId: params.propostaId,
+        tipo: params.tipo,
+        eventoChave: params.eventoChave,
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: params.tipo,
+        titulo: params.titulo,
+        corpo: params.corpo,
+        propostaId: params.propostaId,
+        eventoChave: params.eventoChave,
+      },
+      select: notifSelect,
+    });
+  }
+
+  /** Lead atribuído ao corretor. Idempotente por usuário + eventoChave. */
+  async createLeadAtribuido(params: {
+    userId: string;
+    leadId: string | null;
+    titulo: string;
+    corpo: string;
+    eventoChave: string;
+  }) {
+    return this.createUniqueLeadAlert({
+      ...params,
+      tipo: NotificacaoTipo.lead_atribuido,
+    });
+  }
+
+  /** Lead novo no pool (sem corretor). Idempotente por usuário + lead. */
+  async createLeadPool(params: {
+    userId: string;
+    leadId: string | null;
+    titulo: string;
+    corpo: string;
+    eventoChave: string;
+  }) {
+    return this.createUniqueLeadAlert({
+      ...params,
+      tipo: NotificacaoTipo.lead_pool,
+    });
+  }
+
+  private async createUniqueLeadAlert(params: {
+    userId: string;
+    leadId: string | null;
+    titulo: string;
+    corpo: string;
+    eventoChave: string;
+    tipo:
+      | typeof NotificacaoTipo.lead_atribuido
+      | typeof NotificacaoTipo.lead_pool;
+  }) {
+    const existing = await this.prisma.notificacao.findFirst({
+      where: {
+        userId: params.userId,
+        tipo: params.tipo,
+        eventoChave: params.eventoChave,
+        ...(params.leadId ? { leadId: params.leadId } : {}),
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: params.tipo,
+        titulo: params.titulo,
+        corpo: params.corpo,
+        leadId: params.leadId,
+        eventoChave: params.eventoChave,
+      },
+      select: notifSelect,
+    });
+  }
+
+  async createProcessoPendencia(params: {
+    userId: string;
+    leadId: string;
+    processoNome: string;
+    tituloPendencia: string;
+    autorNome: string;
+  }) {
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: NotificacaoTipo.processo_pendencia,
+        titulo: `Pendência documental — ${params.processoNome}`,
+        corpo: `${params.autorNome} solicitou correção: ${params.tituloPendencia}. O processo voltou para retrabalho.`,
+        leadId: params.leadId,
+      },
+      select: notifSelect,
+    });
+  }
+
+  async createProcessoReenvio(params: {
+    userId: string;
+    leadId: string;
+    processoNome: string;
+    autorNome: string;
+  }) {
+    const tenantId = await this.resolveTenantId(params.userId);
+    return this.prisma.notificacao.create({
+      data: {
+        tenantId,
+        userId: params.userId,
+        tipo: NotificacaoTipo.processo_reenvio,
+        titulo: `Correção reenviada — ${params.processoNome}`,
+        corpo: `${params.autorNome} reenviou o processo após o retrabalho. Aguardando nova avaliação.`,
+        leadId: params.leadId,
       },
       select: notifSelect,
     });

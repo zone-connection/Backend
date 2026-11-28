@@ -27,6 +27,7 @@ export function validateEnv(config: Record<string, unknown>) {
   const accessSecret = String(config.JWT_ACCESS_SECRET ?? '');
   const refreshSecret = String(config.JWT_REFRESH_SECRET ?? '');
   const ozapWebhookSecret = String(config.OZAP_WEBHOOK_SECRET ?? '');
+  const grupoZapSecret = String(config.GRUPOZAP_SECRET_KEY ?? '');
   const metaAppSecret = String(config.META_APP_SECRET ?? '');
   const metaVerifyToken = String(config.META_VERIFY_TOKEN ?? '');
 
@@ -44,6 +45,20 @@ export function validateEnv(config: Record<string, unknown>) {
     }
   }
 
+  const apiJwt = String(config.API_JWT_SECRET ?? '');
+  if (apiJwt) {
+    if (apiJwt.length < MIN_SECRET_LENGTH) {
+      errors.push(
+        `API_JWT_SECRET deve ter ao menos ${MIN_SECRET_LENGTH} caracteres.`,
+      );
+    }
+    if (apiJwt === accessSecret || apiJwt === refreshSecret) {
+      errors.push(
+        'API_JWT_SECRET deve ser diferente de JWT_ACCESS_SECRET e JWT_REFRESH_SECRET.',
+      );
+    }
+  }
+
   if (accessSecret && accessSecret === refreshSecret) {
     errors.push(
       'JWT_ACCESS_SECRET e JWT_REFRESH_SECRET devem ser diferentes: com segredos iguais, um access token vale como refresh token.',
@@ -56,6 +71,12 @@ export function validateEnv(config: Record<string, unknown>) {
   ) {
     errors.push(
       `OZAP_WEBHOOK_SECRET deve ter ao menos ${MIN_SECRET_LENGTH} caracteres.`,
+    );
+  }
+
+  if (grupoZapSecret && grupoZapSecret.length < 16) {
+    errors.push(
+      'GRUPOZAP_SECRET_KEY deve ter ao menos 16 caracteres.',
     );
   }
 
@@ -82,8 +103,42 @@ export function validateEnv(config: Record<string, unknown>) {
     }
   }
 
+  const cloudinaryName = String(config.CLOUDINARY_CLOUD_NAME ?? '').trim();
+  const cloudinaryKey = String(config.CLOUDINARY_API_KEY ?? '').trim();
+  const cloudinarySecret = String(config.CLOUDINARY_API_SECRET ?? '').trim();
+  const cloudinaryPartial =
+    Boolean(cloudinaryName || cloudinaryKey || cloudinarySecret) &&
+    !(cloudinaryName && cloudinaryKey && cloudinarySecret);
+  if (cloudinaryPartial) {
+    errors.push(
+      'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY e CLOUDINARY_API_SECRET devem ser definidos juntos.',
+    );
+  }
+
+  const r2Keys = [
+    'R2_ACCOUNT_ID',
+    'R2_ACCESS_KEY_ID',
+    'R2_SECRET_ACCESS_KEY',
+    'R2_BUCKET_NAME',
+    'R2_ENDPOINT',
+  ] as const;
+  const r2Present = r2Keys.map((key) => String(config[key] ?? '').trim());
+  const r2Any = r2Present.some(Boolean);
+  const r2All = r2Present.every(Boolean);
+  if (r2Any && !r2All) {
+    errors.push(
+      'R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME e R2_ENDPOINT devem ser definidos juntos.',
+    );
+  }
+
   if (isProd && !config.FRONTEND_URL) {
     errors.push('FRONTEND_URL é obrigatório em produção (define o CORS).');
+  }
+
+  if (isProd && !String(config.TURNSTILE_SECRET_KEY ?? '').trim()) {
+    errors.push(
+      'TURNSTILE_SECRET_KEY é obrigatório em produção (captcha do login).',
+    );
   }
 
   // Admin de sistema: recomendado em production, mas não derruba o boot

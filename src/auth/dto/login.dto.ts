@@ -26,4 +26,10 @@ export class LoginDto {
     message: 'tenantSlug inválido.',
   })
   tenantSlug?: string;
+
+  /** Token do Cloudflare Turnstile. Obrigatório em produção. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  captchaToken?: string;
 }
