@@ -98,7 +98,7 @@ const docSelect = {
   updatedAt: true,
   autor: userMini,
   construtora: { select: { id: true, nome: true, cor: true } },
-  empreendimento: { select: { id: true, nome: true, cidade: true, cor: true } },
+  empreendimento: { select: { id: true, nome: true, cidade: true, cor: true, previsaoEntrega: true } },
   corretor: userMini,
   gerente: userMini,
   proposta: {
