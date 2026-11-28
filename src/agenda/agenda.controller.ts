@@ -18,12 +18,13 @@ import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { CreateAgendamentoDto } from './dto/create-agendamento.dto';
 import { UpdateAgendamentoDto } from './dto/update-agendamento.dto';
 import { QueryAgendamentoDto } from './dto/query-agendamento.dto';
+import { QueryDisponibilidadeDto } from './dto/query-disponibilidade.dto';
 import { RecusarAgendamentoDto } from './dto/recusar-agendamento.dto';
 import { AgendaService } from './agenda.service';
 
 @Controller('agenda')
 @UseGuards(RolesGuard)
-@Roles(Role.admin, Role.gerente, Role.corretor)
+@Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.super_admin)
 export class AgendaController {
   constructor(private readonly agendaService: AgendaService) {}
 
@@ -46,8 +47,36 @@ export class AgendaController {
   }
 
   @Get('lembretes')
+  @Roles(Role.admin, Role.gerente, Role.corretor, Role.treinee, Role.analista, Role.super_admin)
   syncLembretes(@CurrentUser() requester: AuthenticatedUser) {
     return this.agendaService.syncLembretes(requester);
+  }
+
+  @Get('disponibilidade')
+  disponibilidade(
+    @Query() query: QueryDisponibilidadeDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.agendaService.disponibilidadeVisitas(query, requester);
+  }
+
+  @Get('kpis')
+  kpis(
+    @Query() query: QueryAgendamentoDto,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.agendaService.kpis(requester, {
+      corretorId: query.corretorId,
+      equipeId: query.equipeId,
+    });
+  }
+
+  @Get(':id/historico')
+  historico(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() requester: AuthenticatedUser,
+  ) {
+    return this.agendaService.historicoVisita(id, requester);
   }
 
   @Get(':id')
@@ -95,8 +124,10 @@ export class AgendaController {
   @Delete(':id')
   remove(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('series') series: string | undefined,
     @CurrentUser() requester: AuthenticatedUser,
   ) {
-    return this.agendaService.remove(id, requester);
+    const seriesMode = series === 'all' ? 'all' : 'one';
+    return this.agendaService.remove(id, requester, seriesMode);
   }
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "triagem_events" ADD COLUMN IF NOT EXISTS "tipo" TEXT;
