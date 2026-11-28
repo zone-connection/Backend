@@ -24,6 +24,11 @@ export class LeadsFriosController {
     return this.frios.list(user, query);
   }
 
+  @Get('ids')
+  listIds(@CurrentUser() user: AuthenticatedUser, @Query() query: QueryLeadsFriosDto) {
+    return this.frios.listIds(user, query);
+  }
+
   @Post('importar')
   importar(
     @CurrentUser() user: AuthenticatedUser,
