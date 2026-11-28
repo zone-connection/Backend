@@ -31,27 +31,42 @@ export class LeadsFriosService {
     }
   }
 
+  private whereFrios(tenantId: string, q?: string): Prisma.LeadWhereInput {
+    const termo = q?.trim();
+    return {
+      tenantId,
+      baseFria: true,
+      perdidoAt: null,
+      tipo: ContatoTipo.lead,
+      ...(termo
+        ? {
+            OR: [
+              { nome: { contains: termo, mode: 'insensitive' } },
+              { telefone: { contains: termo } },
+              { cidade: { contains: termo, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+  }
+
+  async listIds(requester: AuthenticatedUser, query: QueryLeadsFriosDto) {
+    this.assertAtivo(requester);
+    const tenantId = requireTenantId(requester);
+    const rows = await this.prisma.lead.findMany({
+      where: this.whereFrios(tenantId, query.q),
+      select: { id: true },
+      orderBy: [{ baseFriaEm: 'asc' }, { id: 'asc' }],
+    });
+    return { ids: rows.map((row) => row.id) };
+  }
+
   async list(requester: AuthenticatedUser, query: QueryLeadsFriosDto) {
     this.assertAtivo(requester);
     const tenantId = requireTenantId(requester);
     const page = query.page ?? 1;
     const pageSize = query.pageSize === 50 ? 50 : 20;
-    const q = query.q?.trim();
-    const where: Prisma.LeadWhereInput = {
-      tenantId,
-      baseFria: true,
-      perdidoAt: null,
-      tipo: ContatoTipo.lead,
-      ...(q
-        ? {
-            OR: [
-              { nome: { contains: q, mode: 'insensitive' } },
-              { telefone: { contains: q } },
-              { cidade: { contains: q, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
-    };
+    const where = this.whereFrios(tenantId, query.q);
     const total = await this.prisma.lead.count({ where });
     const lastPage = Math.max(1, Math.ceil(total / pageSize));
     const safePage = Math.min(page, lastPage);
@@ -215,7 +230,7 @@ export class LeadsFriosService {
         tenantId,
         id: { in: corretorIds },
         status: UserStatus.ativo,
-        role: { in: [Role.corretor, Role.treinee, Role.gerente, Role.admin] },
+        role: { in: [Role.corretor, Role.treinee, Role.gerente] },
       },
       select: { id: true, equipeId: true, role: true },
     });

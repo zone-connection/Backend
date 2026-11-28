@@ -99,7 +99,7 @@ export class ImportLeadsFriosDto {
 export class LeadFrioIdsDto {
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(200)
+  @ArrayMaxSize(10000)
   @IsUUID('4', { each: true })
   ids!: string[];
 }
@@ -111,14 +111,14 @@ export class DistribuirFrioAlocacaoDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(500)
+  @Max(10000)
   quantidade!: number;
 }
 
 export class DistribuirLeadsFriosDto {
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(500)
+  @ArrayMaxSize(10000)
   @IsUUID('4', { each: true })
   ids!: string[];
 
